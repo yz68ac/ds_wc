@@ -1,10 +1,20 @@
 # 运行说明
 
-此文说明现有部署及完整使用流程。2026-10-20 14:11（UTC+08）已更新 Linux 队列版本。Windows 后续编辑仍需另行部署才生效。
+此文说明现有部署及完整使用流程。2026-10-20 22:02（UTC+08）已上线人物记忆及恢复保护，当前包含默认配置 JSON 提取；Windows 后续编辑仍需另行部署才生效。
 
 本文后面按时间记录的平铺模块名属于当时部署。当前分层结构见 [代码导读](CODE_GUIDE.md)，目录重组的最初本地备份见 [整理记录](../../archives/refactors/20261020-package-layout/README.md)。启动命令与配置位置保持不变。用户本轮已授权将分层代码、最新人格和联网搜索一起同步，验证结果、实际备份路径与游标见 [搜索部署记录](../../archives/deployments/20261020-websearch/README.md)。
 
-Windows 后续已将默认值提取到 `config.defaults.json`，此项尚未部署。下一次部署新版 `wxbridge/config.py` 时，必须同时携带源码根目录的 `config.defaults.json`；实际服务器 `config.json`、`.env` 继续保留，不用默认配置覆盖它们。
+默认值已提取到 `config.defaults.json` 并随本轮记忆功能部署。以后部署 `wxbridge/config.py` 时必须同时携带源码根目录的默认 JSON；实际服务器 `config.json`、`.env` 和人格继续保留，不用默认配置覆盖它们。
+
+## 22:02 人物记忆上线
+
+实现前 153 项既有离线测试通过，基线提交 `eb5ac6a`。本轮 Windows 176 项通过（3 项 Linux 专用测试跳过），Linux 176 项全部通过，另有解析、加密与 WAL 脚本；以服务账号回归实际安装组合也通过。
+
+后台采用 deepseek-flash、关闭思考，前台仍为 high。合成实际 API 验证完成两位成员的偏好提取、来源校验、私有写入和下一轮提示词注入，不读取真实聊天或发送群消息。真实「来打灰」两轮 @ 后，用户确认第二轮记住了偏好；后台修订 2、水位 614、涉及 2 位成员、3 条摘要，回复队列和后台队列均为空、无错误。未预导入全部群历史。
+
+首次备份 `/var/backups/wxbridge/memory-20261020-215144`，最终恢复保护补丁备份 `/var/backups/wxbridge/memory-20261020-220207`。最终切换前后游标均为 615，保留已有记忆；config.json、.env、prompts/system.md 的哈希未变。监听 active/running，记忆目录 `/opt/wxbridge/memory` 为 0700，memory.json 与 additional_prompt.md 为 0600，属主 wxbridge。微信会话未重启。
+
+恢复保护覆盖 JSON 写入失败不提前推进内存水位、投影失败不重复计分、旧任务先按遗忘水位跳过；额外验证晚同步的较早消息拥有更大 local_id 时也不重复计分。记忆命令及边界见 [MEMORY.md](MEMORY.md)；代码和脱敏部署证据在 [本轮记录](../../archives/deployments/20261020-memory/README.md)。
 
 ## 现有部署
 

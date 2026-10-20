@@ -37,10 +37,16 @@ def _work(connection, kind, payload):
                         result["vision"] = vision
                     if search is not None:
                         result["search"] = search
-                else:
+                elif kind == "memory":
+                    from wxbridge.ai.memory import extract
+                    cfg, snapshot = payload
+                    result = {"proposal": extract(cfg, snapshot)}
+                elif kind == "send":
                     from wxbridge.wechat.ui import Sender
                     cfg, chat, text = payload
                     result = {"ui": Sender(cfg).send(chat, text)}
+                else:
+                    raise ValueError("unknown_worker_kind")
                 connection.send({"ok": True, **result})
             except Exception as exc:
                 # 只返回类别，异常消息可能包含输入参数。

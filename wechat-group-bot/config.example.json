@@ -56,6 +56,15 @@
     "max_image_bytes": 8388608,
     "cache_wait_seconds": 3
   },
+  "memory": {
+    "enabled": true,
+    "directory": "memory",
+    "model": "deepseek-flash",
+    "min_interval_seconds": 60,
+    "prompt_max_chars": 1200,
+    "max_tokens": 2400,
+    "timeout_seconds": 30
+  },
   "ui": {
     "backend": "auto",
     "input_method": "auto",

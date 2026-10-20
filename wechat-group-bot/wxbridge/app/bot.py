@@ -10,6 +10,10 @@ import time
 
 from wxbridge.ai.context import context_bounds, message_time
 from wxbridge.ai.prompts import build_prompt
+from wxbridge.ai.memory import member_labels, snapshot
+from wxbridge.ai.context import select_context
+from wxbridge.config import PROJECT_ROOT
+from wxbridge.storage.person_memory import MemoryStore
 from wxbridge.storage.journal import Journal
 from wxbridge.wechat.messages import chunk_text, is_triggered
 from wxbridge.wechat.store import StoreError, WeChatStore
@@ -58,6 +62,17 @@ class WeChatDeepSeekBot:
         self.journal.recover(time.time())
         self.generators = {}
         self.ui_job = None
+        self.memory, self.memory_job, self.memory_error = None, None, ""
+        self.memory_pruned_at = 0
+        if cfg.get("memory", {}).get("enabled") and not cfg["ui"].get("dry_run") and not echo:
+            try:
+                directory = Path(cfg["memory"]["directory"])
+                if not directory.is_absolute():
+                    directory = PROJECT_ROOT/directory
+                self.memory = MemoryStore(directory, self.journal.get("identity"))
+            except Exception as exc:
+                self.memory_error = type(exc).__name__
+                log.error("记忆初始化失败 category=%s", self.memory_error)
         self.started_at = time.time()
         self.job_factory = ProcessJob
         self.status_path = Path(cfg["state_file"]).parent / "live-status.json"
@@ -151,12 +166,23 @@ class WeChatDeepSeekBot:
                 break
             if task["generation"] != "pending":
                 continue
+            if self.memory_job and len(self.generators)+1 >= min(2, int(self.cfg["queue"]["generation_concurrency"])):
+                self._pause_memory()
             task_id, version = task["id"], task["version"]
             try:
                 trigger = task["triggers"][-1]
                 start, end = context_bounds(self.cfg, trigger)
                 context = self.store.messages_in_window(self.chat_id, start, end)
-                prompt = build_prompt(self.cfg, context, trigger, self.chat_title, task["triggers"])
+                memory = None
+                if self.memory:
+                    try:
+                        labels = member_labels(select_context(self.cfg, context, trigger), task["triggers"], self.store.self_wxid)
+                        memory = dict(labels=labels, text=self.memory.prompt(labels, trigger["sender"], time.time(),
+                                      int(self.cfg["memory"]["prompt_max_chars"])))
+                    except Exception as exc:
+                        self.memory_error = type(exc).__name__
+                        log.warning("跳过记忆背景 category=%s", self.memory_error)
+                prompt = build_prompt(self.cfg, context, trigger, self.chat_title, task["triggers"], memory=memory)
                 echo = "[echo] " + "\n".join(m["text"] for m in task["triggers"]) if self.echo else None
                 timeout = 3 * float(self.cfg["deepseek"].get("timeout_seconds", 60)) + 15
                 if self.cfg.get("search", {}).get("enabled", True) and not self.echo:
@@ -172,10 +198,13 @@ class WeChatDeepSeekBot:
                             reference, depth = reference.get("reference"), depth+1
                 payload = (self.cfg, prompt, echo)
                 if images:
-                    payload += (dict(context=context, triggers=task["triggers"], chat_title=self.chat_title, images=images),)
+                    payload += (dict(context=context, triggers=task["triggers"], chat_title=self.chat_title, images=images,
+                                     memory=memory),)
                 job = self.job_factory("generate", payload, timeout=timeout)
                 with self.journal.db:
                     task["generation"] = "running"
+                    task["memory_used"] = dict(revision=self.memory.data["revision"] if self.memory and memory else None,
+                                               chars=len((memory or {}).get("text", "")))
                     self.journal.put(task)
                 self.generators[task_id] = (version, job)
                 log.info("开始生成 task=%s version=%s questions=%s references=%s", task_id, version,
@@ -229,7 +258,7 @@ class WeChatDeepSeekBot:
             for msg in rows:
                 if (msg["local_id"] > intent["baseline"] and msg.get("sender") == self.store.self_wxid
                         and msg.get("type") == 1 and msg.get("text") == text):
-                    self.journal.acknowledge(task["id"], msg["local_id"], time.time())
+                    self.journal.acknowledge(task["id"], msg["local_id"], time.time(), memory=self.memory is not None)
                     log.info("发送确认 task=%s part=%s local_id=%s", task["id"], intent["part"], msg["local_id"])
                     return
             if len(rows) < 100:
@@ -283,6 +312,80 @@ class WeChatDeepSeekBot:
                 current["intent"]["ui"] = {"error": type(exc).__name__}
                 self.journal.put(current)
 
+    def _pause_memory(self):
+        if self.memory_job:
+            record, _, worker = self.memory_job
+            worker.close()
+            self.memory_job = None
+            with self.journal.db:
+                record["state"] = "pending"
+                self.journal.put_memory(record)
+
+    def _memory_step(self):
+        if not self.memory:
+            return
+        now = time.time()
+        record = None
+        try:
+            if self.memory_job:
+                record, value, worker = self.memory_job
+                result = worker.poll()
+                if result is None:
+                    return
+                worker.close()
+                self.memory_job = None
+                if not result.get("ok"):
+                    raise ValueError("memory_worker_failed")
+                self.memory.apply(result["proposal"], value, now)
+                self.journal.finish_memory(record["id"], now)
+                log.info("记忆更新 task=%s revision=%s", record["id"], self.memory.data["revision"])
+            jobs = self.journal.memory_jobs()
+            if now-self.memory_pruned_at >= 60:
+                self.memory.prune(now)
+                self.memory_pruned_at = now
+            if not jobs or len(self.generators) >= min(2, int(self.cfg["queue"]["generation_concurrency"])):
+                return
+            record = jobs[0]
+            if max(m["local_id"] for m in record["triggers"]) <= self.memory.data["watermark"]:
+                self.journal.finish_memory(record["id"], self.journal.get("memory_last_update", 0))
+                return
+            if now < record["retry_at"] or now-self.journal.get("memory_last_update", 0) < self.cfg["memory"]["min_interval_seconds"]:
+                return
+            if any(t["generation"] == "pending" for t in self.journal.tasks()):
+                return
+            pointers = record["triggers"]
+            start, end = context_bounds(self.cfg, pointers[-1])
+            context = self.store.messages_in_window(self.chat_id, start, end)
+            ids = {m["local_id"] for m in pointers}
+            triggers = [m for m in context if m["local_id"] in ids]
+            if len(triggers) != len(ids):
+                raise ValueError("memory_source_unavailable")
+            value = snapshot(self.cfg, context, triggers, self.journal.get("identity"), self.memory, now)
+            if not value["messages"]:
+                # 遗忘水位或已处理的重叠窗口，不额外调用模型。
+                self.journal.finish_memory(record["id"], self.journal.get("memory_last_update", 0))
+                return
+            worker = self.job_factory("memory", (self.cfg, value),
+                                      timeout=self.cfg["memory"]["timeout_seconds"]+2)
+            with self.journal.db:
+                record["state"] = "running"
+                self.journal.put_memory(record)
+            self.memory_job = (record, value, worker)
+        except Exception as exc:
+            # 永不输出异常消息、模型输出或记忆正文。
+            if self.memory_job:
+                self.memory_job[2].close()
+                self.memory_job = None
+            with self.journal.db:
+                if record:
+                    record.update(state="pending", attempts=record["attempts"]+1,
+                                  retry_at=now+min(300, 60*(record["attempts"]+1)))
+                    self.journal.put_memory(record)
+                import re
+                code = str(exc) if re.fullmatch(r"memory_[a-z_]+", str(exc)) else type(exc).__name__
+                self.journal.set("memory_error", code)
+            log.warning("记忆延后 category=%s", code)
+
     def tick(self):
         self._poll_once()
         self.journal.seal(time.time())
@@ -294,6 +397,7 @@ class WeChatDeepSeekBot:
         self.journal.seal(time.time())
         self._generation_step()
         self._send_step()
+        self._memory_step()
         self.save_status()
 
     def save_status(self, *, stopped=False):
@@ -313,6 +417,8 @@ class WeChatDeepSeekBot:
                       dry_run=bool(self.cfg["ui"].get("dry_run")), echo=self.echo,
                       generation_workers=len(self.generators), context_window_seconds=600,
                       require_mention_metadata=True)
+        status["memory"] = dict(enabled=self.memory is not None, running=self.memory_job is not None,
+                                error=self.memory_error, **(self.memory.status(time.time()) if self.memory else {}))
         if stopped:
             status["phase"] = "stopped"
         self.status_path.parent.mkdir(parents=True, exist_ok=True)
@@ -323,6 +429,7 @@ class WeChatDeepSeekBot:
         os.replace(temp, self.status_path)
 
     def close(self):
+        self._pause_memory()
         for _, job in self.generators.values():
             job.close()
         if self.ui_job:

@@ -35,6 +35,7 @@ class PipelineTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(dir=parent)
         self.addCleanup(self.temp.cleanup)
         self.cfg = _deep_merge(DEFAULTS, {})
+        self.cfg["memory"]["enabled"] = False
         self.cfg["target"].update(chat="合成群", cooldown_seconds=0)
         self.cfg["ui"]["dry_run"] = False
         self.cfg["queue"]["file"] = str(Path(self.temp.name) / "queue.sqlite3")

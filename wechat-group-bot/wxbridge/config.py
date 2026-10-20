@@ -97,8 +97,17 @@ def load_config(path: str | Path = "config.json") -> dict[str, Any]:
     if float(cfg["ui"]["send_confirm_timeout_seconds"]) <= 0:
         raise ValueError("ui.send_confirm_timeout_seconds 必须大于 0")
     concurrency = cfg["queue"]["generation_concurrency"]
-    if isinstance(concurrency, bool) or not isinstance(concurrency, int) or concurrency < 1:
-        raise ValueError("queue.generation_concurrency 必须为正整数")
+    if isinstance(concurrency, bool) or not isinstance(concurrency, int) or not 1 <= concurrency <= 2:
+        raise ValueError("queue.generation_concurrency 必须为 1 或 2")
+    memory = cfg["memory"]
+    directory = Path(memory["directory"]).expanduser()
+    cfg["memory"]["directory"] = str(directory if directory.is_absolute() else PROJECT_ROOT/directory)
+    if not isinstance(memory["enabled"], bool) or not isinstance(memory["model"], str) or not memory["model"].strip():
+        raise ValueError("memory 开关或模型无效")
+    for key, minimum, maximum in (("min_interval_seconds", 60, 86400), ("prompt_max_chars", 100, 1200),
+                                  ("max_tokens", 256, 2400), ("timeout_seconds", 1, 30)):
+        if type(memory[key]) is not int or not minimum <= memory[key] <= maximum:
+            raise ValueError(f"memory.{key} 超出范围 {minimum}–{maximum}")
     vision = cfg["vision"]
     if not isinstance(vision["enabled"], bool) or vision["detail"] not in ("original", "high", "low", "auto"):
         raise ValueError("vision.enabled 必须为布尔值，detail 必须为 original/high/low/auto")

@@ -1,0 +1,323 @@
+"""主进程拥有的人物记忆；模型只建议，文件、时间与关系分数由代码控制。"""
+from __future__ import annotations
+
+import copy
+from datetime import datetime
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import tempfile
+
+DAY = 86400
+LIMITS = {"scene": 10, "event": 10, "preference": 5, "impression": 3}
+TTL = {"scene": 6*3600, "event": 30*DAY, "preference": 90*DAY, "impression": 90*DAY}
+
+
+def private_directory(path):
+    path = Path(path).absolute()
+    if any(p.is_symlink() for p in (path, *path.parents)):
+        raise ValueError("memory_unsafe_path")
+    path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if os.name != "nt" and (path.stat().st_uid != os.geteuid() or path.stat().st_mode & 0o077):
+        raise ValueError("memory_directory_permissions")
+    return path
+
+
+def validate_existing_directory(path):
+    if any(p.is_symlink() for p in (path, *path.parents)):
+        raise ValueError("memory_unsafe_path")
+    if path.exists() and (not path.is_dir() or (os.name != "nt" and
+            (path.stat().st_uid != os.geteuid() or path.stat().st_mode & 0o077))):
+        raise ValueError("memory_directory_permissions")
+
+
+def atomic_write(path, text):
+    fd, temp = tempfile.mkstemp(prefix=".memory-", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            os.chmod(temp, 0o600)
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temp, path)
+        if os.name != "nt":
+            directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+    finally:
+        if os.path.exists(temp):
+            os.unlink(temp)
+
+
+def fuzzy_time(timestamp, now):
+    days = (datetime.fromtimestamp(now).date()-datetime.fromtimestamp(timestamp).date()).days
+    if days <= 0:
+        return "今天"
+    if days == 1:
+        return "昨天"
+    if days < 7:
+        return "这几天"
+    if days < 14:
+        return "上周"
+    return "前阵子"
+
+
+def affinity_value(person, now):
+    score = person.get("affinity", 50)
+    anchor = person.get("decay_anchor", person.get("last_interaction", now))
+    steps = max(0, int((now-anchor-14*DAY)//(7*DAY)))
+    return score + min(steps, 50-score) if score < 50 else score-min(steps, score-50)
+
+
+def active_entries(person, now):
+    return [e for e in person.get("entries", []) if now-e["confirmed_at"] < TTL[e["kind"]]]
+
+
+class MemoryStore:
+    def __init__(self, directory, identity, *, create=True):
+        self.identity = dict(identity)
+        digest = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:32]
+        root = private_directory(directory) if create else Path(directory).absolute()
+        self.directory = private_directory(root/digest) if create else root/digest
+        validate_existing_directory(root)
+        validate_existing_directory(self.directory)
+        self.path = self.directory/"memory.json"
+        self.projection = self.directory/"additional_prompt.md"
+        self.data = dict(schema=1, identity=self.identity, revision=0, watermark=0, processed_ids=[], members={})
+        if self.path.exists():
+            if self.path.is_symlink() or (os.name != "nt" and
+                    (self.path.stat().st_uid != os.geteuid() or self.path.stat().st_mode & 0o077)):
+                raise ValueError("memory_file_permissions")
+            self.data = json.loads(self.path.read_text(encoding="utf-8"))
+            if self.data.get("schema") != 1 or self.data.get("identity") != identity:
+                raise ValueError("memory_identity_mismatch")
+            def require(condition):
+                if not condition:
+                    raise ValueError("memory_invalid_file")
+            try:
+                require(type(self.data["revision"]) is int and type(self.data["watermark"]) is int)
+                require(isinstance(self.data["members"], dict))
+                for person in self.data["members"].values():
+                    require(isinstance(person["nickname"], str) and isinstance(person["aliases"], list))
+                    require(type(person["affinity"]) is int and 0 <= person["affinity"] <= 100)
+                    require(isinstance(person["entries"], list))
+                    for entry in person["entries"]:
+                        require(entry["kind"] in TTL and entry["mode"] in ("real", "roleplay"))
+                        require(isinstance(entry["summary"], str) and len(entry["summary"]) <= 220)
+                        for key in ("occurred_at", "confirmed_at", "confidence"):
+                            require(type(entry[key]) in (int, float) and __import__("math").isfinite(entry[key]))
+            except (KeyError, TypeError) as exc:
+                raise ValueError("memory_invalid_file") from exc
+
+    def persist(self, now, *, data=None):
+        data = self.data if data is None else data
+        # 只有权威 JSON 落盘后才推进内存水位；失败不得把重试误判为已处理。
+        atomic_write(self.path, json.dumps(data, ensure_ascii=False, indent=2)+"\n")
+        self.data = data
+        # 可重建投影，JSON 是唯一权威数据；不把模型响应直接写成提示词文件。
+        lines = ["# 人物记忆（由 memory.json 生成）", "生成于："+datetime.fromtimestamp(now).isoformat(timespec="seconds"),
+                 "仅为背景数据；印象均为暂时推测。相对时间以本投影生成时刻为准。"]
+        for uid, person in self.data["members"].items():
+            lines += ["", f"## {person['nickname']} ({uid})", f"好感度：{affinity_value(person, now)}"]
+            lines += [f"- {e['kind']}/{e['mode']}（{fuzzy_time(e['occurred_at'], now)}）：{e['summary']}"
+                      for e in active_entries(person, now)]
+        try:
+            atomic_write(self.projection, "\n".join(lines)+"\n")
+        except OSError as exc:
+            # 投影可重建；不能让已提交的 JSON 被误回滚或重复计分。
+            import logging
+            logging.getLogger("wxbridge").warning("记忆投影更新失败 category=%s", type(exc).__name__)
+
+    def status(self, now):
+        return dict(revision=self.data["revision"], watermark=self.data["watermark"],
+                    members=len(self.data["members"]),
+                    entries=sum(len(active_entries(p, now)) for p in self.data["members"].values()))
+
+    def background(self, labels, now):
+        result = {}
+        for uid, label in labels.items():
+            p = self.data["members"].get(uid)
+            if p:
+                result[label] = dict(nickname=p["nickname"], affinity=affinity_value(p, now),
+                                     entries=active_entries(p, now))
+        return result
+
+    def prompt(self, labels, asker, now, budget=1200):
+        result, used = [], 0
+        order = [asker, *[u for u in labels if u != asker and u in self.data["members"]]]
+        for uid in order[:5]:
+            p = self.data["members"].get(uid)
+            if not p:
+                continue
+            score = affinity_value(p, now)
+            attitude = ("疏远：可以简短、冷淡、少延伸，偶尔自然表达不想接话；仍明确回应，避免固定话术和复读。"
+                        if score < 30 else "亲近：可以自然熟悉些，保持独立人格。" if score >= 70 else "普通交情。")
+            header = f"{labels[uid]}：{attitude}"
+            if used+len(header) > budget:
+                continue
+            result.append(header)
+            used += len(header)+1
+            for e in sorted(active_entries(p, now), key=lambda e: (-e["confirmed_at"], -e["confidence"])):
+                label = "暂时推测" if e["kind"] == "impression" else e["kind"]
+                line = json.dumps(dict(member=labels[uid], kind=label, mode=e["mode"],
+                                       when=fuzzy_time(e["occurred_at"], now), summary=e["summary"]), ensure_ascii=False)
+                if used+len(line)+1 <= budget:
+                    result.append(line)
+                    used += len(line)+1
+        return "\n".join(result)
+
+    def apply(self, proposal, snapshot, now):
+        """全量先校验再提交；来源必须是本窗口该成员的新直接发言。"""
+        if snapshot["identity"] != self.identity or snapshot["revision"] != self.data["revision"]:
+            raise ValueError("memory_stale_revision")
+        if snapshot["watermark"] != self.data["watermark"]:
+            raise ValueError("memory_stale_watermark")
+        if not isinstance(proposal, dict) or set(proposal) != {"updates"} or not isinstance(proposal["updates"], list):
+            raise ValueError("memory_invalid_schema")
+        if len(proposal["updates"]) > len(snapshot["members"]):
+            raise ValueError("memory_invalid_members")
+        mapping = {v["label"]: uid for uid, v in snapshot["members"].items()}
+        processed = set(self.data.get("processed_ids", []))
+        evidence = {m["id"]: m for m in snapshot["messages"] if m["local_id"] > self.data["watermark"]
+                    and m["local_id"] not in processed}
+        data, seen = copy.deepcopy(self.data), set()
+        def sources(value, label):
+            if not isinstance(value, list) or not value or len(value) > 30 or len(set(value)) != len(value):
+                raise ValueError("memory_invalid_sources")
+            if any(s not in evidence or evidence[s]["member"] != label for s in value):
+                raise ValueError("memory_unknown_source")
+            return [evidence[s] for s in value]
+        def text(value, limit):
+            if not isinstance(value, str) or not value.strip() or len(value) > limit:
+                raise ValueError("memory_invalid_text")
+            if re.search(r"sk-[A-Za-z0-9]{16,}|-----BEGIN [A-Z ]*PRIVATE KEY-----", value):
+                raise ValueError("memory_sensitive_text")
+            return value.strip()
+        for update in proposal["updates"]:
+            if not isinstance(update, dict) or set(update) != {"member", "memories", "affinity"}:
+                raise ValueError("memory_invalid_update")
+            label = update["member"]
+            if label not in mapping or label in seen:
+                raise ValueError("memory_unknown_member")
+            seen.add(label)
+            uid = mapping[label]
+            person = data["members"].setdefault(uid, dict(nickname="", aliases=[], entries=[], affinity=50,
+                last_interaction=now, decay_anchor=now, daily={}, affinity_evidence=[]))
+            memories = update["memories"]
+            if not isinstance(memories, list) or len(memories) > 23:
+                raise ValueError("memory_invalid_entries")
+            person["entries"] = active_entries(person, now)
+            for item in memories:
+                if not isinstance(item, dict) or set(item) != {"kind", "mode", "summary", "sources", "confidence", "replaces"}:
+                    raise ValueError("memory_invalid_entry")
+                kind, mode = item["kind"], item["mode"]
+                if kind not in TTL or mode not in ("real", "roleplay") or (kind == "impression" and mode != "real"):
+                    raise ValueError("memory_invalid_kind")
+                summary = text(item["summary"], 220)
+                confidence = item["confidence"]
+                if isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or not 0 <= confidence <= 1:
+                    raise ValueError("memory_invalid_confidence")
+                src = sources(item["sources"], label)
+                previous = next((e for e in person["entries"] if e["id"] == item["replaces"]), None)
+                if item["replaces"] is not None and (not previous or previous["kind"] != kind or previous["mode"] != mode):
+                    raise ValueError("memory_invalid_replacement")
+                entry = dict(id=hashlib.sha256((uid+kind+mode+summary+str(src[-1]["local_id"])).encode()).hexdigest()[:16],
+                             kind=kind, mode=mode, summary=summary, confidence=float(confidence),
+                             sources=[m["local_id"] for m in src],
+                             occurred_at=previous["occurred_at"] if previous else min(m["time"] for m in src),
+                             confirmed_at=max(m["time"] for m in src))
+                person["entries"] = [e for e in person["entries"] if e != previous and
+                                     (e["kind"], e["mode"], e["summary"]) != (kind, mode, summary)] + [entry]
+            relation = update["affinity"]
+            if not isinstance(relation, dict) or set(relation) != {"delta", "reason", "sources"}:
+                raise ValueError("memory_invalid_affinity")
+            delta = relation["delta"]
+            if type(delta) is not int or abs(delta) > 3:
+                raise ValueError("memory_affinity_limit")
+            # 即使模型建议零变化也不能用旧来源续期。
+            if delta:
+                src = sources(relation["sources"], label)
+                reason = text(relation["reason"], 160)
+                score = affinity_value(person, now)
+                day = datetime.fromtimestamp(max(m["time"] for m in src)).date().isoformat()
+                daily = person["daily"]
+                change = min(abs(delta), max(0, 10-daily.get(day, 0)))*(1 if delta > 0 else -1)
+                new_score = max(0, min(100, score+change))
+                daily[day] = daily.get(day, 0)+abs(new_score-score)
+                person["affinity"] = new_score
+                person["affinity_evidence"] = (person["affinity_evidence"]+[dict(delta=new_score-score, reason=reason,
+                    sources=[m["local_id"] for m in src], time=max(m["time"] for m in src))])[-30:]
+            person["daily"] = {d: n for d, n in person["daily"].items() if (datetime.fromtimestamp(now).date()-datetime.fromisoformat(d).date()).days <= 90}
+        # 元数据也只按新的真实发言更新，模型输出为空也推进处理水位。
+        for uid, member in snapshot["members"].items():
+            own = [m for m in evidence.values() if m["member"] == member["label"]]
+            if not own:
+                continue
+            p = data["members"].setdefault(uid, dict(nickname="", aliases=[], entries=[], affinity=50,
+                last_interaction=now, decay_anchor=now, daily={}, affinity_evidence=[]))
+            if p["nickname"] != member["nickname"]:
+                p["aliases"] = ([n for n in p["aliases"] if n != member["nickname"]]+([p["nickname"]] if p["nickname"] else []))[-5:]
+                p["nickname"] = member["nickname"]
+            # 先结算旧的自然回归，再重新设置互动时钟。
+            if member["label"] not in seen or not next(u for u in proposal["updates"] if u["member"] == member["label"])["affinity"]["delta"]:
+                p["affinity"] = affinity_value(p, now)
+            p["last_interaction"] = max(m["time"] for m in own)
+            p["decay_anchor"] = p["last_interaction"]
+            kept = active_entries(p, now)
+            p["entries"] = []
+            for kind, limit in LIMITS.items():
+                p["entries"] += sorted((e for e in kept if e["kind"] == kind),
+                                        key=lambda e: (e["confidence"], e["confirmed_at"]), reverse=True)[:limit]
+        for p in data["members"].values():
+            p["entries"] = active_entries(p, now)
+        data["watermark"] = max(data["watermark"], snapshot["through"])
+        # 微信可能晚同步一条发送时间较早、local_id 却比触发大的消息。
+        # 记录水位之外已处理来源，既不重复计分，也不跳过较小 ID 的后续触发。
+        data["processed_ids"] = sorted(i for i in processed | {m["local_id"] for m in evidence.values()}
+                                       if i > data["watermark"])
+        data["revision"] += 1
+        self.persist(now, data=data)
+
+    def maintain(self, action, *, member=None, entry=None, text=None, watermark=0, now):
+        if action == "clear":
+            self.data["members"] = {}
+        elif action == "forget":
+            person = self.data["members"].get(member)
+            if not person:
+                raise ValueError("memory_member_not_found")
+            if entry:
+                if not any(e["id"] == entry for e in person["entries"]):
+                    raise ValueError("memory_entry_not_found")
+                person["entries"] = [e for e in person["entries"] if e["id"] != entry]
+            else:
+                del self.data["members"][member]
+        elif action == "correct":
+            if not isinstance(text, str) or not text.strip() or len(text) > 220:
+                raise ValueError("memory_invalid_text")
+            person = self.data["members"].get(member, {})
+            record = next((e for e in person.get("entries", []) if e["id"] == entry), None)
+            if not record:
+                raise ValueError("memory_entry_not_found")
+            record.update(summary=text.strip(), corrected_at=now)
+        else:
+            raise ValueError("memory_invalid_action")
+        self.data["watermark"] = max(self.data["watermark"], watermark)
+        self.data["revision"] += 1
+        self.persist(now)
+
+    def prune(self, now):
+        changed = False
+        data = copy.deepcopy(self.data)
+        for person in data["members"].values():
+            entries = active_entries(person, now)
+            if entries != person["entries"]:
+                person["entries"] = entries
+                changed = True
+        if changed:
+            data["revision"] += 1
+            self.persist(now, data=data)
+        return changed

@@ -17,6 +17,7 @@ wxbridge/
 │   ├── client.py          DeepSeek HTTP 请求、重试、最终答案提取
 │   ├── prompts.py         人格读取与文本提示词构造
 │   ├── context.py         十分钟历史窗口与去重
+│   ├── memory.py          成员标签、带来源快照和后台结构化整理请求
 │   ├── search.py          按需搜索/抓取、工具循环与真实来源
 │   ├── output.py          简短群聊输出规则与纯文本格式兜底
 │   ├── wxgf.py            选择彩色HEVC流，受控子进程内存转PNG
@@ -30,6 +31,7 @@ wxbridge/
 │   └── ui.py              AT-SPI/X11 界面控制和发送保护
 └── storage/               运行状态存储
     ├── journal.py         SQLite 队列、游标、意图与恢复
+    ├── person_memory.py   人物记忆、来源校验、遗忘、分数和原子写入
     └── memoryfs.py        私有 tmpfs,noswap 检查
 ```
 
@@ -39,4 +41,4 @@ wxbridge/
 
 需要联网时，API 工作进程发送一个进度事件；主进程把一次性口语提示纳入同一确认流程，搜索继续运行。提示确认后保留最终回答的位置，重启不会重复提示。搜索详情见 [SEARCH.md](../docs/SEARCH.md)。
 
-全部默认值已从 `config.py` 提取到上一级 `config.defaults.json`，自定义 `config.json` 覆盖默认值。`.env`、`config.json`、`prompts/system.md` 仍在项目根目录对应位置。启动命令仍为 `python3 -m wxbridge`，服务入口仍为 `scripts/run-live.py`。本次默认值提取先在 Windows 完成，尚未更新 Linux。
+全部默认值已从 `config.py` 提取到上一级 `config.defaults.json`，自定义 `config.json` 覆盖默认值。`.env`、`config.json`、`prompts/system.md` 仍在项目根目录对应位置。启动命令仍为 `python3 -m wxbridge`，服务入口仍为 `scripts/run-live.py`。默认 JSON 随人物记忆功能一起同步 Linux；具体上线证据见部署说明。

@@ -36,6 +36,7 @@ class Journal:
         self.db.executescript("""
             CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS tasks (id INTEGER PRIMARY KEY, data TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS memory_jobs (id INTEGER PRIMARY KEY, data TEXT NOT NULL);
         """)
         saved = self.get("identity")
         if saved is not None and saved != identity:
@@ -71,6 +72,10 @@ class Journal:
 
     def recover(self, now: float):
         with self.db:
+            for job in self.memory_jobs():
+                if job["state"] == "running":
+                    job["state"] = "pending"
+                    self.put_memory(job)
             for task in self.tasks():
                 if task["generation"] == "running":
                     task["generation"] = "pending"
@@ -168,7 +173,7 @@ class Journal:
                                   deadline=None, confirm_timeout=timeout, ui=None)
             self.put(task)
 
-    def acknowledge(self, task_id: int, local_id: int, now: float):
+    def acknowledge(self, task_id: int, local_id: int, now: float, *, memory=False):
         with self.db:
             task = self.task(task_id)
             if not task["intent"]:
@@ -186,9 +191,26 @@ class Journal:
             task.update(pre_submit_attempts=0, retry_at=0)
             self.set("last_success", now)
             if task["next_chunk"] == len(task["chunks"]):
+                if memory:
+                    # 与最终分片确认同事务；只留触发指针，主进程随后重读原窗口。
+                    self.db.execute("INSERT OR IGNORE INTO memory_jobs VALUES (?,?)", (task_id,
+                        json.dumps(dict(id=task_id, state="pending", retry_at=0, attempts=0,
+                            triggers=[dict(local_id=m["local_id"], time=m["time"]) for m in task["triggers"]]))))
                 # 不长期保留已完成的群聊正文。
                 task.update(phase="done", triggers=[], chunks=[])
             self.put(task)
+
+    def memory_jobs(self):
+        return [json.loads(row[0]) for row in self.db.execute("SELECT data FROM memory_jobs ORDER BY id")]
+
+    def put_memory(self, job):
+        self.db.execute("INSERT OR REPLACE INTO memory_jobs VALUES (?,?)", (job["id"], json.dumps(job)))
+
+    def finish_memory(self, job_id, now):
+        with self.db:
+            self.db.execute("DELETE FROM memory_jobs WHERE id=?", (job_id,))
+            self.set("memory_last_update", now)
+            self.set("memory_error", "")
 
     def status(self) -> dict:
         tasks = self.tasks()
@@ -204,10 +226,12 @@ class Journal:
                     recent_intake=self.get("recent_intake", [])[-20:],
                     last_vision=self.get("last_vision"),
                     last_search=self.get("last_search"),
+                    memory_pending=len(self.memory_jobs()), memory_error=self.get("memory_error", ""),
                     tasks=[dict(id=t["id"], version=t["version"], phase=t["phase"],
                                 generation=t["generation"], questions=len(t["triggers"]),
                                 next_chunk=t["next_chunk"], chunks=len(t["chunks"]),
                                 blocked_reason=t["blocked_reason"], vision=t.get("vision"), search=t.get("search"),
+                                memory_used=t.get("memory_used"),
                                 notice_state=(t.get("notice") or {}).get("state"),
                                 intent_kind=(t.get("intent") or {}).get("kind", "reply") if t.get("intent") else None) for t in tasks])
 

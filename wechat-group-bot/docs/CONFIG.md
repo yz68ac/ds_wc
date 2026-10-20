@@ -1,6 +1,6 @@
 # 配置项说明
 
-以当前 Windows 整理版源码为准。全部默认配置保存在源码根目录 [config.defaults.json](../config.defaults.json)，与 `wxbridge` 文件夹同级。`config.example.json` 是自定义配置示例，实际运行可用 `config.json` 覆盖默认值；真实 Linux 配置在 `/opt/wxbridge/config.json`，本地修改不会自动同步。本次默认值提取仅修改 Windows 源码。
+全部默认配置保存在源码根目录 [config.defaults.json](../config.defaults.json)，与 `wxbridge` 文件夹同级。`config.example.json` 是自定义配置示例，实际运行可用 `config.json` 覆盖默认值；真实 Linux 配置在 `/opt/wxbridge/config.json`，本地修改不会自动同步。默认 JSON 提取随本次人物记忆一起同步 Linux，保留服务器实际配置覆盖项。
 
 ## 配置如何生效
 
@@ -9,6 +9,8 @@
 两份 JSON 配置均在启动时加载，修改后需要重启机器人进程；如果 `config.json` 已填写同名项，会覆盖默认 JSON 中的修改。独立提示词文件的内容每次生成回复时读取，同一路径下的内容修改在下一次生成时生效。`--config` 可指定配置文件；相对的密钥、解密、状态、日志和提示词文件路径按配置文件所在目录解析。`db_dir` 建议填写绝对路径。API Key 仍放 `.env`，不放默认 JSON。
 
 ## 群聊和回复
+
+人物记忆使用 `memory` 配置段：enabled（默认 true）、directory（源码根目录下 memory）、model（deepseek-flash）、min_interval_seconds（60）、prompt_max_chars（1200）、max_tokens（2400）、timeout_seconds（30）。后台始终关闭思考，不改变主回答 high；规则、期限和维护命令见 [MEMORY.md](MEMORY.md)。
 
 | 配置项 | 示例值 | 作用 |
 | --- | --- | --- |

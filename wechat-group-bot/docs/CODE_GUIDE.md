@@ -61,6 +61,8 @@ flowchart TD
 | `app/runtime.py` | 启动策略、单实例锁、模拟队列隔离及退出清理 |
 | `app/bot.py` | 主进程轮询、生成版本调度、封批、发送确认和实时状态 |
 | `storage/journal.py` | SQLite 事务队列、游标、恢复、只读状态和内存路径检查 |
+| `storage/person_memory.py` | 按账号、群和成员 ID 持久记忆；来源、时间、限幅、遗忘及生成投影 |
+| `ai/memory.py` | 受控成员编号、文本快照、结构化后台整理请求；不访问微信或写文件 |
 | `app/workers.py` | API/UI 子进程、取消、超时、结果通道与日志隔离 |
 | `wechat/store.py` | 数据库读取、群解析、发送者映射、真实 @ 元数据 |
 | `ai/context.py` | 发送时间与上下文边界 |
@@ -91,6 +93,8 @@ SQLCipher 密钥用于读取本机数据库，DeepSeek API Key 用于调用模�
 `app` 协调数据库、队列、模型与界面的执行顺序；`ai` 处理模型输入输出；`wechat` 封装当前 Linux 微信的具体适配；`storage` 保存事务状态并检查内存目录。包初始化文件只描述职责，不自动启动组件。
 
 所有微信数据库查询仍由主进程负责；图片生成进程只接收本地文件描述，界面工作进程也不查询数据库。原先放在 API 客户端的 `build_prompt()` 归入 `ai/prompts.py`；`ai/client.py` 专注 HTTP 请求。
+
+最终分片确认时，`journal.acknowledge(memory=True)` 在清理正文之前同事务登记 `memory_jobs`。后台启动前由主进程按触发指针重读原十分钟窗口；工作进程只返回建议，主进程复核修订号、成员与来源后原子写入 JSON。前台需要 API 位置时终止并重新排队后台，总并发最多 2；后台异常不会把前台任务标记失败。详见 [MEMORY.md](MEMORY.md)。
 
 `.env`、`config.json`、`prompts/system.md` 的位置不变。提示词模块使用 `config.PROJECT_ROOT` 定位项目根目录，避免包层级变化影响人格路径。已有运维脚本、测试导入和 mock 目标均同步到新路径，未增加旧模块包装层。
 

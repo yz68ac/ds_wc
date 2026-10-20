@@ -26,6 +26,11 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--out", default="")
     scan.add_argument("--pid", type=int, default=None)
     sub.add_parser("queue-status", help="只读队列元数据，不显示正文")
+    memory = sub.add_parser("memory", help="人物记忆维护；修改前须停止监听")
+    memory.add_argument("action", choices=["status", "show", "correct", "forget", "clear"])
+    memory.add_argument("--member", help="稳定 wxid；show 不填则显示全部")
+    memory.add_argument("--entry", help="单条记忆 id；forget 不填则遗忘该成员")
+    memory.add_argument("--text-file", help="correct 使用 UTF-8 文本文件，最多 220 字")
     run = sub.add_parser("run", help="启动监听，有内存队列则恢复，无队列时建立基线")
     sending = run.add_mutually_exclusive_group()
     sending.add_argument("--send", action="store_true", help="显式启用当前进程发送")
@@ -43,6 +48,8 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         cfg = load_config(args.config)
+        if args.command == "memory":
+            return memory_command(cfg, args)
         if args.command == "queue-status":
             print(json.dumps(read_status(cfg["queue"]["file"]), ensure_ascii=False, indent=2))
             return 0
@@ -69,4 +76,38 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         print(f"[ERROR] {exc}")
         return 1
+    return 0
+
+
+def memory_command(cfg, args):
+    from contextlib import ExitStack
+    from pathlib import Path
+    import sqlite3
+    import time
+    from wxbridge.app.runtime import instance_lock
+    from wxbridge.storage.journal import checked_path
+    from wxbridge.storage.person_memory import MemoryStore
+    mutating = args.action not in ("status", "show")
+    with ExitStack() as stack:
+        if mutating:
+            for path in sorted({cfg["queue"]["file"]+".lock", str(Path(cfg["decrypted_dir"])/".listener.lock")}):
+                stack.enter_context(instance_lock(path))
+        path = checked_path(cfg["queue"]["file"], existing=True)
+        db = sqlite3.connect(path.as_uri()+"?mode=ro", uri=True)
+        try:
+            meta = {k: json.loads(v) for k, v in db.execute("SELECT key,value FROM meta WHERE key IN ('identity','cursor')")}
+        finally:
+            db.close()
+        store = MemoryStore(cfg["memory"]["directory"], meta["identity"], create=mutating)
+        now = time.time()
+        if args.action == "status":
+            result = store.status(now)
+        elif args.action == "show":
+            result = store.data["members"].get(args.member, {}) if args.member else store.data
+        else:
+            text = Path(args.text_file).read_text(encoding="utf-8-sig") if args.text_file else None
+            store.maintain(args.action, member=args.member, entry=args.entry, text=text,
+                           watermark=meta["cursor"], now=now)
+            result = store.status(now)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0

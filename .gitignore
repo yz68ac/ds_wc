@@ -5,6 +5,7 @@ venv/
 __pycache__/
 *.py[cod]
 .test-tmp/
+memory/
 
 # 凭据和实际配置；仅提交空示例
 .env
