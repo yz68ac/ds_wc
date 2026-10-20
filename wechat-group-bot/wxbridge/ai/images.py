@@ -107,7 +107,7 @@ def validate_image(data, max_bytes):
 
 
 def decode_dat(data, key=None, xor_key=None):
-    if image_format(data):
+    if image_format(data) or data.startswith(b"wxgf"):
         return data
     if data[:6] in (V1, V2):
         if len(data) < 31 or AES is None:
@@ -140,10 +140,10 @@ def decode_dat(data, key=None, xor_key=None):
         tail = bytes(value ^ (xor_key or 0) for value in data[tail_start:])
         return prefix + data[end:tail_start] + tail
     if data:
-        for first in (0xFF, 0x89, 0x47, 0x52):
+        for first in (0xFF, 0x89, 0x47, 0x52, 0x77):
             xor = data[0] ^ first
             header = bytes(value ^ xor for value in data[:16])
-            if image_format(header):
+            if image_format(header) or header.startswith(b"wxgf"):
                 return bytes(value ^ xor for value in data)
     raise MediaError("unsupported_image_format")
 
@@ -168,6 +168,12 @@ def read_local_image(binding, cfg):
     max_bytes = int(settings.get("max_image_bytes", 8*1024*1024))
     root = Path(binding["account_root"]).resolve()
     last_error = binding.get("error") or "local_image_not_cached"
+    error_rank = 0
+    failures = []
+    def remember(error, rank):
+        nonlocal last_error, error_rank
+        if rank >= error_rank:
+            last_error, error_rank = error, rank
     candidates = binding.get("candidates") or []
     for candidate in candidates:
         path = root/candidate["relative"]
@@ -193,14 +199,34 @@ def read_local_image(binding, cfg):
             for key, xor in keys:
                 try:
                     image = decode_dat(encrypted, key, xor)
-                    mime, width, height = validate_image(image, max_bytes)
-                    return image, dict(mime=mime, width=width, height=height, bytes=len(image), quality=candidate["quality"])
                 except MediaError as exc:
-                    last_error = str(exc)
+                    remember(str(exc), 1)
+                    continue
+                source_format = "wxgf" if image.startswith(b"wxgf") else None
+                try:
+                    if source_format:
+                        from wxbridge.ai.wxgf import WxgfError, decode_wxgf
+                        try:
+                            image = decode_wxgf(image, max_bytes)
+                        except WxgfError as exc:
+                            raise MediaError(str(exc)) from None
+                    mime, width, height = validate_image(image, max_bytes)
+                    info = dict(mime=mime, width=width, height=height, bytes=len(image), quality=candidate["quality"])
+                    if source_format:
+                        info.update(source_format=source_format, converted=True)
+                    if failures:
+                        info["fallback_errors"] = failures
+                    return image, info
+                except MediaError as exc:
+                    remember(str(exc), 3 if source_format or image_format(image) else 2)
+                    if source_format:
+                        failures.append(dict(quality=candidate["quality"], error=str(exc)))
+                        # 已确认 wxgf 容器并尝试转码，不再让错误密钥覆盖实际失败原因。
+                        break
         except FileNotFoundError:
             continue
         except (OSError, MediaError) as exc:
-            last_error = str(exc) if isinstance(exc, MediaError) else "local_image_read_failed"
+            remember(str(exc) if isinstance(exc, MediaError) else "local_image_read_failed", 2)
     raise MediaError(last_error)
 
 
@@ -234,7 +260,7 @@ def prepare_multimodal(cfg, base_prompt, generation):
                     if str(exc) not in ("local_image_not_cached", "local_image_pending", "invalid_encrypted_image", "invalid_image") or time.monotonic() >= deadline:
                         raise
                     time.sleep(.2)
-            quality = {"original": "本地原图", "preview": "本地预览图", "thumbnail": "本地缩略图"}[info["quality"]]
+            quality = {"original": "本地原图", "cached": "本地微信缓存图（不保证原图）", "preview": "本地预览图", "thumbnail": "本地缩略图"}[info["quality"]]
             reference.update(available=True, text=f"{label}随本条请求附送，来源为{quality}。请直接观察；小字不可辨时请说明，不要补造。", image_label=label,
                              image_quality=info["quality"], image_width=info["width"], image_height=info["height"])
             blocks.append({"type": "text", "text": f"{label}（对应上面本次提问中的引用；{quality}，{info['width']}×{info['height']}）："})

@@ -31,11 +31,23 @@
     "api_key_env": "DEEPSEEK_API_KEY",
     "base_url": "https://api.deepseek.com",
     "model": "deepseek-flash",
-    "thinking": "disabled",
+    "thinking": "enabled",
+    "reasoning_effort": "high",
     "temperature": 1.0,
     "timeout_seconds": 60,
     "max_tokens": 1200,
     "system_prompt_file": "prompts/system.md"
+  },
+  "search": {
+    "enabled": true,
+    "base_url": "https://api.deepseek.com",
+    "timeout_seconds": 15,
+    "total_timeout_seconds": 120,
+    "max_tool_rounds": 2,
+    "max_requests": 3,
+    "max_results": 5,
+    "feedback_enabled": true,
+    "feedback_phrases": ["我去查查，等我一下。", "我上网搜搜，核实一下。", "这事我去看看。"]
   },
   "vision": {
     "enabled": true,

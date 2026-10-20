@@ -24,7 +24,7 @@ Git 跟踪当前源码、说明和配置空示例；`archives/`、虚拟环境�
 .\Test-Offline.ps1
 ```
 
-默认模型 `deepseek-flash`、关闭思考；真实 @ 触发，按消息发送时间取十分钟上下文。**本次目录重组只在 Windows 本地完成；Linux 保持此前已运行的图片理解与人格版本，后续由用户明确要求更新。**
+默认模型 `deepseek-flash`，当前按用户要求开启思考、深度 `high`；真实 @ 触发，按消息发送时间取十分钟上下文。支持引用图片和按需联网搜索，搜索时发送一次口语提示，最终回答附一条来源网址。回复默认简短、保持人格，使用纯文本并清理意外 Markdown。Windows 修改不会自动同步，Linux 仅在用户明确授权部署时更新；搜索和输出偏好已上线，记录见 [部署记录](archives/deployments/20261020-websearch/README.md)，high 思考试用见 [切换记录](archives/deployments/20261020-thinking-high/README.md)。
 
 新的目录地图见 [wxbridge/README.md](wechat-group-bot/wxbridge/README.md)，本次备份、路径对照与验证见 [目录重组记录](archives/refactors/20261020-package-layout/README.md)。
 

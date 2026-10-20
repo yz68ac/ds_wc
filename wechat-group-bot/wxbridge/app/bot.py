@@ -131,12 +131,19 @@ class WeChatDeepSeekBot:
             result = job.poll()
             if result is None:
                 continue
+            if result.get("event") == "search_started":
+                settings = self.cfg.get("search", {})
+                if settings.get("feedback_enabled", True):
+                    phrases = settings.get("feedback_phrases") or ["我上网搜搜，核实一下。"]
+                    if self.journal.request_notice(task_id, version, phrases[(task_id-1) % len(phrases)]):
+                        log.info("搜索提示待发送 task=%s version=%s", task_id, version)
+                continue
             job.close()
             del self.generators[task_id]
             reply = result.get("reply") or ""
             error = "generation:" + result.get("error", "EmptyReply") if not result["ok"] or not reply else ""
             chunks = chunk_text(reply, int(self.cfg["target"].get("max_reply_chars", 1800))) if not error else []
-            if self.journal.generated(task_id, version, chunks, error, vision=result.get("vision")):
+            if self.journal.generated(task_id, version, chunks, error, vision=result.get("vision"), search=result.get("search")):
                 log.info("生成结束 task=%s version=%s chunks=%s images=%s error=%s", task_id, version,
                          len(chunks), (result.get("vision") or {}).get("images", 0), error or "none")
         for task in sorted(self.journal.tasks(), key=lambda t: (t["deadline"], t["id"])):
@@ -152,6 +159,8 @@ class WeChatDeepSeekBot:
                 prompt = build_prompt(self.cfg, context, trigger, self.chat_title, task["triggers"])
                 echo = "[echo] " + "\n".join(m["text"] for m in task["triggers"]) if self.echo else None
                 timeout = 3 * float(self.cfg["deepseek"].get("timeout_seconds", 60)) + 15
+                if self.cfg.get("search", {}).get("enabled", True) and not self.echo:
+                    timeout = float(self.cfg.get("search", {}).get("total_timeout_seconds", 120)) + 15
                 images = []
                 if self.cfg.get("vision", {}).get("enabled", True) and not self.echo:
                     for index, question in enumerate(task["triggers"]):
@@ -214,7 +223,7 @@ class WeChatDeepSeekBot:
         if not task or not task["intent"]:
             return
         intent, cursor = task["intent"], task["intent"]["baseline"]
-        text = task["chunks"][intent["part"]]
+        text = self.journal.outgoing_text(task)
         while True:
             rows = self.store.messages_after(self.chat_id, cursor, limit=100)
             for msg in rows:
@@ -239,7 +248,10 @@ class WeChatDeepSeekBot:
         if self.ui_job is not None:
             return
         task = self.journal.head()
-        if not task or task["phase"] != "queued" or task["generation"] != "ready" or task["intent"] or task["blocked_reason"]:
+        if not task or task["phase"] != "queued" or task["intent"] or task["blocked_reason"]:
+            return
+        notice = (task.get("notice") or {}).get("state") == "pending"
+        if not notice and task["generation"] != "ready":
             return
         now = time.time()
         if now < task.get("retry_at", 0):
@@ -248,17 +260,22 @@ class WeChatDeepSeekBot:
             return
         if self.cfg["ui"].get("dry_run"):
             with self.journal.db:
-                task.update(phase="done", triggers=[], chunks=[])
+                if notice:
+                    task["notice"].update(state="confirmed", text="")
+                else:
+                    task.update(phase="done", triggers=[], chunks=[])
                 self.journal.put(task)
             log.info("模拟完成 task=%s version=%s", task["id"], task["version"])
             return
         baseline = self.store.last_local_id(self.chat_id)
         timeout = float(self.cfg["ui"]["send_confirm_timeout_seconds"])
-        self.journal.intend(task["id"], baseline, now, timeout)
+        self.journal.intend(task["id"], baseline, now, timeout, kind="notice" if notice else "reply")
         try:
-            job = self.job_factory("send", (self.cfg, self.chat_title, task["chunks"][task["next_chunk"]]), timeout=30)
-            self.ui_job = (task["id"], task["next_chunk"], job)
-            log.info("发送意图 task=%s version=%s part=%s baseline=%s", task["id"], task["version"], task["next_chunk"], baseline)
+            current = self.journal.task(task["id"])
+            job = self.job_factory("send", (self.cfg, self.chat_title, self.journal.outgoing_text(current)), timeout=30)
+            self.ui_job = (task["id"], current["intent"]["part"], job)
+            log.info("发送意图 task=%s version=%s kind=%s part=%s baseline=%s", task["id"], task["version"],
+                     current["intent"]["kind"], current["intent"]["part"], baseline)
         except Exception as exc:
             with self.journal.db:
                 current = self.journal.task(task["id"])
@@ -282,7 +299,9 @@ class WeChatDeepSeekBot:
     def save_status(self, *, stopped=False):
         status, head = self.journal.status(), self.journal.head()
         if head and not head["intent"] and not head["blocked_reason"]:
-            if head["phase"] == "open":
+            if head["phase"] == "queued" and (head.get("notice") or {}).get("state") == "pending":
+                status["phase"] = "search_notice_pending"
+            elif head["phase"] == "open":
                 status["phase"] = "debouncing"
             elif head["generation"] != "ready":
                 status["phase"] = "generating"

@@ -102,6 +102,8 @@ class Journal:
                                     intent=None, blocked_reason="", closed_at=None)
                         tasks.append(task)
                     task["triggers"].append(msg)
+                    if (task.get("notice") or {}).get("state") == "pending" and not task["intent"]:
+                        task.pop("notice", None)  # 仍在合并窗口的旧版本尚未发出的提示作废。
                     task.setdefault("trigger_ids", []).append(msg["local_id"])
                     task.update(version=task["version"] + 1, deadline=now + debounce,
                                 generation="pending", chunks=[], blocked_reason="")
@@ -124,7 +126,22 @@ class Journal:
         tasks = sorted(self.tasks(), key=lambda t: (t["deadline"], t["id"]))
         return tasks[0] if tasks else None
 
-    def generated(self, task_id: int, version: int, chunks: list[str], error: str = "", *, vision=None) -> bool:
+    def request_notice(self, task_id: int, version: int, text: str) -> bool:
+        with self.db:
+            task = self.task(task_id)
+            if not task or task["version"] != version or task["phase"] == "done" or task.get("notice"):
+                return False
+            task["notice"] = dict(text=text, state="pending")
+            self.put(task)
+        return True
+
+    @staticmethod
+    def outgoing_text(task):
+        if task["intent"].get("kind") == "notice":
+            return task["notice"]["text"]
+        return task["chunks"][task["intent"]["part"]]
+
+    def generated(self, task_id: int, version: int, chunks: list[str], error: str = "", *, vision=None, search=None) -> bool:
         with self.db:
             task = self.task(task_id)
             if not task or task["version"] != version or task["phase"] == "done":
@@ -134,15 +151,20 @@ class Journal:
             if vision is not None:
                 task["vision"] = vision  # 仅格式、分辨率、质量、数量和错误码；无路径、图片数据或密钥。
                 self.set("last_vision", dict(task_id=task_id, **vision))
+            if search is not None:
+                task["search"] = search  # 仅数量、阶段和错误码，不含查询词、网页、URL 或正文。
+                self.set("last_search", dict(task_id=task_id, **search))
             self.put(task)
         return True
 
-    def intend(self, task_id: int, baseline: int, now: float, timeout: float):
+    def intend(self, task_id: int, baseline: int, now: float, timeout: float, *, kind="reply"):
         with self.db:
             task = self.task(task_id)
             if task["intent"] is not None:
                 raise ValueError("已有待确认发送，禁止重复提交")
-            task["intent"] = dict(part=task["next_chunk"], baseline=baseline, created_at=now,
+            if kind not in ("reply", "notice") or kind == "notice" and (task.get("notice") or {}).get("state") != "pending":
+                raise ValueError("发送意图类型或通知状态无效")
+            task["intent"] = dict(kind=kind, part=-1 if kind == "notice" else task["next_chunk"], baseline=baseline, created_at=now,
                                   deadline=None, confirm_timeout=timeout, ui=None)
             self.put(task)
 
@@ -150,6 +172,14 @@ class Journal:
         with self.db:
             task = self.task(task_id)
             if not task["intent"]:
+                return
+            if task["intent"].get("kind") == "notice":
+                task["notice"].update(state="confirmed", text="", ack_id=local_id)
+                reason = task["blocked_reason"] if task["generation"] == "failed" else ""
+                task.update(intent=None, blocked_reason=reason, last_notice_ack_id=local_id,
+                            pre_submit_attempts=0, retry_at=0)
+                self.set("last_success", now)
+                self.put(task)
                 return
             task["next_chunk"] += 1
             task.update(intent=None, blocked_reason="", last_ack_id=local_id)
@@ -173,10 +203,13 @@ class Journal:
                     blocked_reason=head["blocked_reason"] if head else "",
                     recent_intake=self.get("recent_intake", [])[-20:],
                     last_vision=self.get("last_vision"),
+                    last_search=self.get("last_search"),
                     tasks=[dict(id=t["id"], version=t["version"], phase=t["phase"],
                                 generation=t["generation"], questions=len(t["triggers"]),
                                 next_chunk=t["next_chunk"], chunks=len(t["chunks"]),
-                                blocked_reason=t["blocked_reason"], vision=t.get("vision")) for t in tasks])
+                                blocked_reason=t["blocked_reason"], vision=t.get("vision"), search=t.get("search"),
+                                notice_state=(t.get("notice") or {}).get("state"),
+                                intent_kind=(t.get("intent") or {}).get("kind", "reply") if t.get("intent") else None) for t in tasks])
 
 
 def read_status(path: str) -> dict:

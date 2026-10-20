@@ -18,7 +18,7 @@ from wxbridge.wechat.crypto import AES
 from wxbridge.ai.client import DeepSeekClient, DeepSeekError
 from wxbridge.ai.prompts import build_prompt
 from wxbridge.ai.images import MediaError, V1, V2, decode_dat, key_candidates, prepare_multimodal, read_local_image, validate_image
-from wxbridge.wechat.references import image_md5, prompt_reference
+from wxbridge.wechat.references import image_md5, local_image_cache_key, prompt_reference
 from wxbridge.wechat.store import WeChatStore
 from synthetic import NOW, msg
 from test_references import parse_message, quoted_xml
@@ -104,6 +104,30 @@ class LocalImageTests(unittest.TestCase):
         thumbnail.write_bytes(png())
         self.binding["candidates"].append(dict(relative=str(thumbnail.relative_to(self.root)), quality="thumbnail"))
         self.assertEqual(read_local_image(self.binding, self.cfg)[1]["quality"], "thumbnail")
+
+    def test_wxgf_conversion_keeps_pixels_in_memory_and_reports_format(self):
+        source = b"wxgf"+bytes(80)
+        self.path.write_bytes(encrypted(source))
+        with patch('wxbridge.ai.images.key_candidates',return_value=[(b'wrong-key-123456',77),(b'synthetic-key-16',77)]), patch('wxbridge.ai.wxgf.decode_wxgf',return_value=png()) as convert:
+            data,info = read_local_image(self.binding,self.cfg)
+        self.assertEqual(data,png())
+        convert.assert_called_once_with(source,self.cfg['vision']['max_image_bytes'])
+        self.assertTrue(info['converted'])
+        self.assertEqual(info['source_format'],'wxgf')
+        self.assertEqual(len(list(self.path.parent.iterdir())),1)
+
+    def test_wxgf_failure_survives_later_wrong_keys_and_can_fall_back(self):
+        from wxbridge.ai.wxgf import WxgfError
+        self.path.write_bytes(encrypted(b'wxgf'+bytes(80)))
+        with patch('wxbridge.ai.images.key_candidates',return_value=[(b'synthetic-key-16',77),(b'wrong-key-123456',77)]), patch('wxbridge.ai.wxgf.decode_wxgf',side_effect=WxgfError('wxgf_decoder_unavailable')):
+            with self.assertRaisesRegex(MediaError,'^wxgf_decoder_unavailable$'):
+                read_local_image(self.binding,self.cfg)
+            thumbnail = self.path.with_name('image_t.dat')
+            thumbnail.write_bytes(png())
+            self.binding['candidates'].append(dict(relative=str(thumbnail.relative_to(self.root)),quality='thumbnail'))
+            _,info=read_local_image(self.binding,self.cfg)
+        self.assertEqual(info['quality'],'thumbnail')
+        self.assertEqual(info['fallback_errors'],[dict(quality='original',error='wxgf_decoder_unavailable')])
 
     def test_missing_oversized_and_escape_paths_fail_closed(self):
         with self.assertRaisesRegex(MediaError, "local_image_not_cached"):
@@ -198,7 +222,29 @@ class ImageBindingTests(unittest.TestCase):
         result = self.store.image_binding(self.chat, dict(image_md5=self.digest))
         self.assertNotIn("error", result)
         self.assertIn("b"*32+".dat", result["candidates"][1]["relative"])
-        self.assertEqual([c["quality"] for c in result["candidates"]], ["original", "original", "preview", "thumbnail"])
+        self.assertEqual([c["quality"] for c in result["candidates"]], ["original", "cached", "preview", "thumbnail"])
+
+    def test_original_packed_cache_key_resolves_when_xml_md5_is_not_indexed(self):
+        self.store._query_messages.return_value = [dict(type=3, image_md5="c"*32, sender="friend", image_cache_key="b"*32)]
+        binding = self.store.image_binding(self.chat, dict(server_id="123", sender="friend"))
+        self.assertNotIn("error", binding)
+        self.assertIn(self.filename, binding["candidates"][1]["relative"])
+
+    def test_unproven_or_forged_cache_key_cannot_select_attachment(self):
+        ref = dict(image_md5="c"*32, image_cache_key="b"*32)
+        self.assertEqual(self.store.image_binding(self.chat, ref)["error"], "local_image_index_missing")
+        self.store._query_messages.return_value = [dict(type=3, image_md5="c"*32, sender="friend", image_cache_key="../unsafe")]
+        self.assertEqual(self.store.image_binding(self.chat, dict(server_id="123"))["error"], "local_image_index_missing")
+
+    def test_local_cache_key_requires_exact_complete_protobuf_path(self):
+        token = b"b"*32
+        nested = b"\x22\x20"+token
+        packed = b"\x08\x01\x10\x02\x1a\x22"+nested+b"\x58\x01"
+        self.assertEqual(local_image_cache_key(packed), token.decode())
+        for invalid in (None, token, b"\x1a\x23"+nested, b"\x1a\x22"+nested+b"\x80", packed+packed,
+                        b"\x1a\x44"+nested+nested, b"\x12\x22"+nested, b"\x1a\x22\x2a\x20"+token):
+            with self.subTest(invalid_type=type(invalid).__name__):
+                self.assertEqual(local_image_cache_key(invalid), "")
 
     def test_server_id_recovers_missing_snapshot_md5_only_in_current_chat(self):
         self.store._query_messages.return_value = [dict(type=3, image_md5=self.digest, sender="friend")]

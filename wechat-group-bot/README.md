@@ -6,11 +6,11 @@
 
 ## 按完整流程读代码
 
-`wxbridge` 按 `app`（应用调度）、`ai`（模型生成）、`wechat`（微信适配）、`storage`（状态存储）划分目录。详细文件地图见 [wxbridge/README.md](wxbridge/README.md)。**本次目录重组只在 Windows 本地完成，Linux 仍运行此前版本，待用户明确要求后再更新。**
+`wxbridge` 按 `app`（应用调度）、`ai`（模型生成）、`wechat`（微信适配）、`storage`（状态存储）划分目录。详细文件地图见 [wxbridge/README.md](wxbridge/README.md)。Linux 上线状态与验证记录见 [运行说明](docs/DEPLOYMENT.md)。
 
 | 阶段 | 入口与模块 |
 | --- | --- |
-| 配置 | `config.example.json`、`wxbridge/config.py` |
+| 配置 | `config.defaults.json` 默认值、`config.example.json` 自定义示例、`wxbridge/config.py` 加载与校验 |
 | 人格设定 | `prompts/system.md`，由 `wxbridge/ai/prompts.py` 读取 |
 | 启动微信、手机登录 | `scripts/start-headless.sh`、`scripts/login-vnc.sh` |
 | 检查环境、准备数据库密钥 | `python -m wxbridge env`、`scan-keys`、`wxbridge/wechat/keyscan.py` |
@@ -24,7 +24,8 @@
 
 ## 当前规则
 
-- 模型 `deepseek-flash`，关闭思考，只发送最终 `content`。
+- 模型 `deepseek-flash`，当前开启思考、深度 `high`，只发送最终 `content`，不发送内部推理。
+- 需要新信息时按需调用 DeepSeek Search/Fetch，先发一次口语提示再给答案及真实来源；普通闲聊不搜索，详见 [搜索说明](docs/SEARCH.md)。
 - 只回应真实 @ 自己的群聊文本；首次接收过滤过旧、未来或无效记录。已有队列在重启后恢复；新部署才建立基线。
 - 私有内存 SQLite 同事务保存接收游标与任务，冷却只等待不丢弃；每个回复分片以新增本人发出记录确认，超时暂停发送并继续接收。
 - 按触发消息数据库发送时间 `t` 查询 `[t-600, t]`，再次排除同秒较晚记录；超出字符预算取消回复。

@@ -2,12 +2,12 @@
 
 阅读时先沿一次启动走到退出，再沿一条群消息走到回复。正常监听只有一条数据库消息链路；环境检查和界面排障由独立模块提供。
 
-**2026-10-20 本次目录重组仅在 Windows 本地完成，未连接或更新 Linux。** Windows 用于编辑与离线测试，正式运行仍依赖 Linux。配置、人格正文、队列格式和启动命令保持原样。
+Windows 用于编辑与离线测试，正式运行仍依赖 Linux。当前源码采用四组目录，并加入按需联网搜索；配置与人格路径、现有任务格式和启动命令保持兼容。实际上线记录见 [部署说明](DEPLOYMENT.md)。
 
 ```text
 wxbridge/
   cli.py、__main__.py    命令入口
-  config.py             配置与项目根目录定位
+  config.py             加载上一级 config.defaults.json、合并配置与校验
   app/                  启动、调度、工作进程、诊断
   ai/                   API、人格/提示词、上下文、图片输入
   wechat/               数据库、解密、消息解析、界面发送
@@ -20,7 +20,7 @@ wxbridge/
 
 | 顺序 | 做什么 | 对应代码与结果 |
 | --- | --- | --- |
-| 1 | 加载配置和 API 凭据 | `config.py` 固定读取源码根目录 `.env`，合并默认值、JSON、环境变量；提示词等相对路径按配置文件解析 |
+| 1 | 加载配置和 API 凭据 | `config.py` 固定读取源码根目录 `config.defaults.json` 与 `.env`，合并自定义 JSON、环境变量；提示词等相对路径按配置文件解析 |
 | 2 | 准备 Linux 会话 | `start-headless.sh` 启动 Xvfb、D-Bus、AT-SPI、fluxbox 和原生微信，写会话环境文件 |
 | 3 | 手机确认登录 | 首次用 `--vnc` 或 `login-vnc.sh` 临时查看界面；登录由用户在手机确认，随后关闭 VNC |
 | 4 | 确认数据库可读 | `scan-keys` 调用 `wechat/keyscan.py` 提取并验证当前账号数据库密钥；`check` 确认群、最新消息 ID 和发送组件 |
@@ -49,7 +49,7 @@ flowchart TD
 1. `WeChatDeepSeekBot._poll_once()` 按 `local_id` 取新记录，会话时间戳没有跨秒也检查。发送者通过 `real_sender_id → Name2Id` 映射；用联系人确认自己的账号，不能直接取带后缀的目录名。
 2. 首次接收时跳过自己、未知发送者、非文本、时间无效、超过 90 秒的触发；XML `atuserlist` 必须精确包含自己的账号 ID。冷却只让已接纳任务等待；排队后不再按 90 秒过期。
 3. 每个有效生成版本按触发实际发送时间 `t` 查询 `[t-600, t]`。`build_prompt()` 排除未来、同秒中更大 local_id 及触发 ID；问题另列一次。预算超出时保留失败状态，不悄悄截取历史。合并能力保留但 `queue.debounce_seconds=0` 默认关闭；将来启用时以最后一条触发取窗口并对全部问题去重。
-4. `DeepSeekClient.chat()` 默认使用 `deepseek-flash` 和 `thinking: disabled`。API 请求最多尝试三次，只取最终 `content`；模型请求重试与微信发送重试分开。
+4. `DeepSeekClient.chat()` 当前使用 `deepseek-flash`，按用户要求开启思考并设置 `reasoning_effort: high`。API 请求最多尝试三次，只取最终 `content`；工具循环保留内部推理字段但不发到群里，模型请求重试与微信发送重试分开。
 5. UI 工作进程确认唯一且已选中的群、原生微信窗口、草稿完整读回；优先执行发送按钮 AT-SPI 动作。返回按钮/焦点/草稿长度元数据；主进程单独核对数据库，不能把操作完成当作发出成功。
 6. SQLite 在私有 `tmpfs,noswap` 中保存游标、触发、版本、分片与意图，0600；进程重启先确认未决意图，避免重复发送。完成任务清除正文。日志和只读状态只输出元数据。主机重启丢失内存任务。
 
@@ -66,7 +66,10 @@ flowchart TD
 | `ai/context.py` | 发送时间与上下文边界 |
 | `wechat/references.py` | 49/57 引用回复、被引用快照及发给模型的显示字段；不获取远程页面或媒体 |
 | `ai/images.py` | API 工作进程内只读缓存、图片解密与校验、组装内联图像；不访问数据库或保存明文 |
+| `ai/wxgf.py` | wxgf 彩色流选择，复用 Linux 系统解码库，在限时限内存子进程中转 PNG |
 | `ai/client.py` | HTTP API、请求重试、最终答案提取 |
+| `ai/search.py` | 按需搜索/抓取工具循环、进度事件、来源及失败说明 |
+| `ai/output.py` | 保留人格并约束简短口语、纯文本；清理意外 Markdown，不截断正文 |
 | `ai/prompts.py`、`prompts/system.md` | 完整读取人格、构造 `build_prompt()`、替换 `{bot_name}`，每次生成读取文件最新内容 |
 | `wechat/ui.py` | 发送和界面操作；保留输入测试与无障碍树排障能力 |
 | `app/diagnostics.py` | 环境、数据库、UI 检查；正常监听不会调用排障命令 |
@@ -91,4 +94,4 @@ SQLCipher 密钥用于读取本机数据库，DeepSeek API Key 用于调用模�
 
 `.env`、`config.json`、`prompts/system.md` 的位置不变。提示词模块使用 `config.PROJECT_ROOT` 定位项目根目录，避免包层级变化影响人格路径。已有运维脚本、测试导入和 mock 目标均同步到新路径，未增加旧模块包装层。
 
-源码备份、旧新路径对照与离线验证见 [本次整理记录](../../archives/refactors/20261020-package-layout/README.md)。历史归档保留原版本；后续部署需成套更新新包、脚本及测试，再清理备份过的旧平铺模块。本次没有执行部署。
+最初目录重组的源码备份、旧新路径对照与离线验证见 [整理记录](../../archives/refactors/20261020-package-layout/README.md)。历史归档保留原版本；部署需成套更新新包、脚本及测试，再清理备份过的旧平铺模块。后续联网搜索通过 `ai/search.py` 在 API 工作进程内执行，提示和最终回答共用数据库确认，见 [搜索说明](SEARCH.md)。

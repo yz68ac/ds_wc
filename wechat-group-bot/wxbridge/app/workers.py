@@ -21,10 +21,22 @@ def _work(connection, kind, payload):
                     if echo_text is None and len(payload) > 3:
                         from wxbridge.ai.images import prepare_multimodal
                         prompt, vision = prepare_multimodal(cfg, prompt, payload[3])
-                    answer = echo_text if echo_text is not None else DeepSeekClient(cfg).chat(prompt)
+                    search = None
+                    if echo_text is not None:
+                        answer = echo_text
+                    elif cfg.get("search", {}).get("enabled", True):
+                        from wxbridge.ai.search import answer_with_search
+                        answer, search = answer_with_search(cfg, DeepSeekClient(cfg), prompt,
+                            on_search=lambda: connection.send({"event": "search_started"}))
+                    else:
+                        from wxbridge.ai.output import plain_text, response_prompt
+                        answer = DeepSeekClient(cfg).chat(response_prompt(prompt))
+                        answer = plain_text(answer)
                     result = {"reply": answer}
                     if vision is not None:
                         result["vision"] = vision
+                    if search is not None:
+                        result["search"] = search
                 else:
                     from wxbridge.wechat.ui import Sender
                     cfg, chat, text = payload

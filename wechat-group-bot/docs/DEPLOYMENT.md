@@ -2,7 +2,9 @@
 
 此文说明现有部署及完整使用流程。2026-10-20 14:11（UTC+08）已更新 Linux 队列版本。Windows 后续编辑仍需另行部署才生效。
 
-**本次 `wxbridge/app`、`ai`、`wechat`、`storage` 目录重组只在 Windows 本地完成，未连接或修改 Linux。** 本文后面按时间记录的平铺模块名属于当时部署。当前本地结构见 [代码导读](CODE_GUIDE.md)，后续部署注意事项见 [整理记录](../../archives/refactors/20261020-package-layout/README.md)。启动命令与配置位置保持不变。
+本文后面按时间记录的平铺模块名属于当时部署。当前分层结构见 [代码导读](CODE_GUIDE.md)，目录重组的最初本地备份见 [整理记录](../../archives/refactors/20261020-package-layout/README.md)。启动命令与配置位置保持不变。用户本轮已授权将分层代码、最新人格和联网搜索一起同步，验证结果、实际备份路径与游标见 [搜索部署记录](../../archives/deployments/20261020-websearch/README.md)。
+
+Windows 后续已将默认值提取到 `config.defaults.json`，此项尚未部署。下一次部署新版 `wxbridge/config.py` 时，必须同时携带源码根目录的 `config.defaults.json`；实际服务器 `config.json`、`.env` 继续保留，不用默认配置覆盖它们。
 
 ## 现有部署
 
@@ -93,3 +95,9 @@ ssh hotman "systemctl stop wxbridge-headless-trial"
 用户真实引用测试：消息 295 识别为 `quoted_text`，带 8 字引用正文生成；16:14:34 确认发出记录 296，草稿清空、队列归零。用户确认实际回复正确理解了引用。当前入口、收发链路和模型均保留，增加 `recent_intake` 过滤原因与引用元数据，不保存正文。
 
 使用示例和边界见 [引用消息说明](REFERENCES.md)，完整脱敏证据见 Windows `archives/deployments/20261020-queue/REFERENCE-RESULTS.md`。
+
+## 联网搜索、分层目录与新人格同步
+
+新增 `ai/search.py`，保持 `deepseek-flash` 和现有图片能力，使用同一 Key 调用 Search/Fetch。每个问题按需搜索，最多一次口语提示；提示和最终回复分别以数据库发出记录确认并遵守冷却，支持进程重启恢复。Search/Fetch 失败会说明无法核实，日志只存数量和错误码。
+
+本轮同步包含之前仅在本地修改的分层目录和更有主见的人格。部署脚本先执行 Linux 离线测试，再用合成问题验证实际搜索工具链；完成备份后才停止监听、切换代码及人格，移除已备份的旧平铺模块。服务器 `config.json`、`.env`、微信会话、接收游标和队列保留。具体结果以本轮部署记录为准；历史固定哈希/一次性恢复脚本不直接重跑。

@@ -9,6 +9,20 @@ from synthetic import NOW
 
 
 class QueryTests(unittest.TestCase):
+    def test_image_query_preserves_validated_local_cache_key(self):
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.execute('CREATE TABLE Msg_test (local_id INTEGER,local_type INTEGER,create_time INTEGER,message_content TEXT,packed_info_data BLOB)')
+        conn.execute('INSERT INTO Msg_test VALUES (1,3,?,?,?)', (NOW, '<msg><img md5="'+"a"*32+'"/></msg>', b'\x1a\x22\x22\x20'+b'b'*32))
+        store = WeChatStore.__new__(WeChatStore)
+        store.message_table = Mock(return_value=('test.db', 'Msg_test'))
+        store.contacts = Mock(return_value={})
+        store._connect = Mock(return_value=conn)
+        record = store.messages_in_window('synthetic@chatroom', NOW-600, NOW)[0]
+        self.assertEqual(record['image_md5'], 'a'*32)
+        self.assertEqual(record['image_cache_key'], 'b'*32)
+        self.assertNotIn('packed_info_data', record)
+
     def test_real_sender_mapping_without_sender_prefix(self):
         conn = sqlite3.connect(":memory:")
         conn.row_factory = sqlite3.Row

@@ -1,4 +1,4 @@
-"""配置加载：config.json + .env + 环境变量。"""
+"""配置加载与校验：config.defaults.json + config.json + .env + 环境变量。"""
 from __future__ import annotations
 
 import copy
@@ -9,80 +9,21 @@ from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
-DEFAULTS: dict[str, Any] = {
-    # 微信数据目录；留空则自动探测
-    "db_dir": "",
-    "keys_file": "/run/wxbridge-trial/keys.json",
-    "decrypted_dir": "/run/wxbridge-trial/decrypted",
-    "state_file": "/run/wxbridge-trial/state.json",
-    "log_file": "/run/wxbridge-trial/bot.log",
-    "wechat_process": "wechat",
-    # db = 本次实际运行的消息源；需已验证的密钥和 tmpfs,noswap 解密目录。
-    # UI 仅负责发送和排障；不再维护无可靠时间的备用接收循环。
-    "source": "db",
-    "poll_interval_seconds": 2.0,
-    "reply_to_backlog": False,
-    "queue": {
-        "debounce_seconds": 0,
-        "generation_concurrency": 2,
-        "file": "/run/wxbridge-trial/queue.sqlite3",
-    },
-    "target": {
-        "chat": "",
-        "bot_name": "DeepSeek",
-        "trigger": {
-            "mentions": ["@DeepSeek", "@deepseek"],
-            "prefixes": [],
-            "reply_all": False,
-            "require_mention_metadata": True,
-        },
-        "cooldown_seconds": 8,
-        "max_message_age_seconds": 90,
-        "context_window_seconds": 600,
-        # 超过预算时取消回复，不悄悄丢掉窗口内的消息。
-        "context_max_chars": 24000,
-        "max_reply_chars": 1800,
-    },
-    "deepseek": {
-        "api_key_env": "DEEPSEEK_API_KEY",
-        "base_url": "https://api.deepseek.com",
-        "model": "deepseek-flash",
-        "thinking": "disabled",
-        "temperature": 1.0,
-        "timeout_seconds": 60,
-        "max_tokens": 1200,
-        "system_prompt_file": "prompts/system.md",
-    },
-    "vision": {
-        "enabled": True,
-        "detail": "original",
-        "max_images": 4,
-        "max_image_bytes": 8 * 1024 * 1024,
-        "cache_wait_seconds": 3,
-    },
-    "ui": {
-        "backend": "auto",  # auto | atspi | xdotool
-        "app_names": ["wechat", "WeChat", "微信"],
-        "chat_list_names": ["Chats", "聊天", "会话"],
-        "messages_list_names": ["Messages", "消息"],
-        "window_class": "wechat",
-        "native_executable": "/opt/wechat/wechat",
-        "window_names": ["微信", "WeChat"],
-        "search_shortcut": "ctrl+f",
-        "paste_shortcut": "ctrl+v",
-        "select_all_shortcut": "ctrl+a",
-        "send_key": "Return",
-        # auto = AT-SPI EditableText → xdotool type → 剪贴板
-        # atspi / xtype / clipboard 可强制指定（无桌面时推荐 atspi 或 xtype）
-        "input_method": "auto",
-        # 必须确认目标群选中；状态未知时停止，不以关闭检查来绕过问题。
-        "verify_chat_selected": True,
-        "post_send_wait": 0.8,
-        "send_confirm_timeout_seconds": 10,
-        "chat_open_wait": 1.0,
-        "dry_run": True,
-    },
-}
+DEFAULTS_FILE = PROJECT_ROOT / "config.defaults.json"
+
+
+def _load_defaults(path: Path) -> dict[str, Any]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"无法读取默认配置：{path}（{type(exc).__name__}）") from exc
+    if not isinstance(data, dict):
+        raise ValueError(f"默认配置必须是 JSON 对象：{path}")
+    return data
+
+
+# 保留 DEFAULTS 导入接口，默认值仅在项目根目录 JSON 中维护；重启后重新读取。
+DEFAULTS: dict[str, Any] = _load_defaults(DEFAULTS_FILE)
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -122,6 +63,8 @@ def load_config(path: str | Path = "config.json") -> dict[str, Any]:
     deepseek_data = data.get("deepseek") or {}
     if "system_prompt" in deepseek_data and "system_prompt_file" not in deepseek_data:
         cfg["deepseek"]["system_prompt_file"] = ""
+    if cfg["deepseek"].get("reasoning_effort") not in (None, "low", "high", "max"):
+        raise ValueError("deepseek.reasoning_effort 必须为 low/high/max")
 
     # 环境变量覆盖常用项
     if os.environ.get("WX_DB_DIR"):
@@ -165,6 +108,18 @@ def load_config(path: str | Path = "config.json") -> dict[str, Any]:
             raise ValueError(f"vision.{key} 必须为 1 到 {maximum} 的整数")
     if not 0 <= float(vision["cache_wait_seconds"]) <= 10:
         raise ValueError("vision.cache_wait_seconds 必须为 0 到 10 秒")
+    search = cfg["search"]
+    if not isinstance(search["enabled"], bool) or not isinstance(search["feedback_enabled"], bool):
+        raise ValueError("search 开关必须为布尔值")
+    for key, maximum in (("max_tool_rounds", 3), ("max_requests", 5), ("max_results", 10)):
+        value = search[key]
+        if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= maximum:
+            raise ValueError(f"search.{key} 必须为 1 到 {maximum} 的整数")
+    if not 1 <= float(search["timeout_seconds"]) <= 60 or not 15 <= float(search["total_timeout_seconds"]) <= 300:
+        raise ValueError("search 单请求超时须为 1–60 秒，总时限须为 15–300 秒")
+    phrases = search["feedback_phrases"]
+    if not isinstance(phrases, list) or not phrases or any(not isinstance(p, str) or not 1 <= len(p.strip()) <= 80 for p in phrases):
+        raise ValueError("search.feedback_phrases 须为非空短句列表，每句 1–80 字")
     return cfg
 
 

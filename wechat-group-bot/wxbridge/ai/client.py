@@ -53,7 +53,7 @@ class DeepSeekClient:
         except TimeoutError as exc:
             raise DeepSeekError("DeepSeek 请求超时") from exc
 
-    def chat(self, messages: list[dict[str, Any]]) -> str:
+    def complete(self, messages: list[dict[str, Any]], *, tools=None, tool_choice=None, deadline=None) -> dict:
         payload = {
             "model": self.cfg["model"],
             "messages": messages,
@@ -63,19 +63,32 @@ class DeepSeekClient:
         }
         if self.cfg.get("thinking") in ("enabled", "disabled"):
             payload["thinking"] = {"type": self.cfg["thinking"]}
-        timeout = int(self.cfg.get("timeout_seconds", 60))
+        if self.cfg.get("thinking") != "disabled" and self.cfg.get("reasoning_effort") in ("low", "high", "max"):
+            payload["reasoning_effort"] = self.cfg["reasoning_effort"]
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = tool_choice or "auto"
+        timeout = float(self.cfg.get("timeout_seconds", 60))
         last_exc: Exception | None = None
         for attempt in range(3):
             try:
-                data = self._post(payload, timeout)
+                remaining = deadline-time.monotonic() if deadline is not None else timeout
+                if remaining <= 0:
+                    raise DeepSeekError("生成超时")
+                data = self._post(payload, min(timeout, remaining))
                 choices = data.get("choices") or []
                 if not choices:
                     raise DeepSeekError("DeepSeek 返回异常：没有 choices")
                 message = choices[0].get("message") or {}
-                content = message.get("content") or ""
-                return content.strip()
+                return message
             except DeepSeekError as exc:
                 last_exc = exc
                 if attempt < 2:
-                    time.sleep(1.5 * (attempt + 1))
+                    pause = 1.5 * (attempt + 1)
+                    if deadline is not None:
+                        pause = min(pause, max(0, deadline-time.monotonic()))
+                    time.sleep(pause)
         raise last_exc or DeepSeekError("DeepSeek 调用失败")
+
+    def chat(self, messages: list[dict[str, Any]]) -> str:
+        return (self.complete(messages).get("content") or "").strip()

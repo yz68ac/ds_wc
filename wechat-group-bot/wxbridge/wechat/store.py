@@ -23,7 +23,7 @@ from typing import Any
 from wxbridge.wechat import crypto
 from wxbridge.wechat.keyscan import find_wechat_pids
 from wxbridge.storage.memoryfs import require_memory_directory
-from wxbridge.wechat.references import image_md5, parse_quoted_reply
+from wxbridge.wechat.references import image_md5, local_image_cache_key, parse_quoted_reply
 
 MSG_TYPE_LABEL = {
     1: "",
@@ -445,6 +445,7 @@ class WeChatStore:
             "message_kind": message_kind,
             "reference": reference,
             "image_md5": picture_md5,
+            **({"image_cache_key": local_image_cache_key(d.get("packed_info_data"))} if local_type == 3 else {}),
             "server_id": str(d.get("server_id") or ""),
             "time": int(create_time),
             "time_source": "database",
@@ -466,7 +467,7 @@ class WeChatStore:
         try:
             available = {r['name'] for r in conn.execute(f"PRAGMA table_info([{table}])")}
             cols = "rowid, local_id, local_type, create_time, message_content"
-            for optional in ("WCDB_CT_message_content", "real_sender_id", "source", "WCDB_CT_source", "server_id"):
+            for optional in ("WCDB_CT_message_content", "real_sender_id", "source", "WCDB_CT_source", "server_id", "packed_info_data"):
                 if optional in available:
                     cols += ", " + optional
             senders = {}
@@ -507,6 +508,7 @@ class WeChatStore:
         digest = reference.get("image_md5") or ""
         server_id = str(reference.get("server_id") or "")
         proven = False
+        cache_key = ""
         try:
             if reference.get("chat_id") and reference["chat_id"] != chat_id:
                 return {**binding, "error": "image_reference_wrong_chat"}
@@ -519,6 +521,7 @@ class WeChatStore:
                             or (reference.get("sender") and original.get("sender") != reference["sender"])):
                         return {**binding, "error": "image_reference_mismatch"}
                     digest, proven = original["image_md5"], True
+                    cache_key = original.get("image_cache_key") or ""
             if not re.fullmatch(r"[0-9a-f]{32}", digest):
                 return {**binding, "error": "image_identifier_missing"}
             conn = self._connect("hardlink/hardlink.db")
@@ -528,6 +531,14 @@ class WeChatStore:
                     "FROM image_hardlink_info_v4 i LEFT JOIN dir2id d1 ON i.dir1=d1.rowid "
                     "LEFT JOIN dir2id d2 ON i.dir2=d2.rowid WHERE i.md5 IN (?,?,?) LIMIT 20",
                     (digest, digest.encode("ascii"), bytes.fromhex(digest))).fetchall()
+                # 有些图片 XML MD5 未入索引，但原消息另存了确定的本地缓存名。
+                # 只从当前群已核验的原图片消息取这个字段，不信任引用快照自带的文件名。
+                if not rows and proven and re.fullmatch(r"[0-9a-f]{32}", cache_key):
+                    rows = conn.execute(
+                        "SELECT i.file_name,d1.username AS bucket,d2.username AS month "
+                        "FROM image_hardlink_info_v4 i LEFT JOIN dir2id d1 ON i.dir1=d1.rowid "
+                        "LEFT JOIN dir2id d2 ON i.dir2=d2.rowid WHERE i.file_name IN (?,?,?) LIMIT 20",
+                        (cache_key+".dat", cache_key+"_h.dat", cache_key+"_t.dat")).fetchall()
             finally:
                 conn.close()
             chat_hash = hashlib.md5(chat_id.encode()).hexdigest()
@@ -540,7 +551,7 @@ class WeChatStore:
                     continue
                 stem = re.sub(r"_[ht]$", "", filename[:-4])
                 base = f"msg/attach/{bucket}/{month}/Img/"
-                candidates = [(base+stem+"_h.dat", "original"), (base+stem+".dat", "original"),
+                candidates = [(base+stem+"_h.dat", "original"), (base+stem+".dat", "cached"),
                               (f"cache/{month}/Message/{chat_hash}/Bubble/{stem}_b.dat", "preview"),
                               (base+stem+"_t.dat", "thumbnail")]
                 for relative, quality in candidates:

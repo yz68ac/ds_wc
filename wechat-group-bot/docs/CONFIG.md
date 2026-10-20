@@ -1,12 +1,12 @@
 # 配置项说明
 
-以当前 Windows 整理版源码为准。`config.example.json` 是示例，实际运行读 `config.json`；真实 Linux 配置在 `/opt/wxbridge/config.json`，本地修改不会自动同步。
+以当前 Windows 整理版源码为准。全部默认配置保存在源码根目录 [config.defaults.json](../config.defaults.json)，与 `wxbridge` 文件夹同级。`config.example.json` 是自定义配置示例，实际运行可用 `config.json` 覆盖默认值；真实 Linux 配置在 `/opt/wxbridge/config.json`，本地修改不会自动同步。本次默认值提取仅修改 Windows 源码。
 
 ## 配置如何生效
 
-`config.py` 默认值 → JSON 配置 → 环境变量覆盖 → CLI 参数及 `app/runtime.py` 强制规则。源码根目录的 `.env` 会补充尚未存在的环境变量，已有进程环境优先。`.env` 固定与 `README.md`、`config.example.json` 同级，不受当前工作目录或 `--config` 路径影响。
+`config.defaults.json` → `config.json`（或 `--config` 指定的文件）→ 环境变量覆盖 → CLI 参数及 `app/runtime.py` 强制规则。默认 JSON 按源码位置读取，与启动目录及自定义配置位置无关；`config.py` 只负责读取、合并、路径解析与校验，不再内嵌配置字典。默认文件缺失或损坏时明确报错，不静默换回隐藏的默认值。源码根目录的 `.env` 会补充尚未存在的环境变量，已有进程环境优先。`.env` 固定与 `README.md`、`config.example.json` 同级，不受当前工作目录或 `--config` 路径影响。
 
-JSON 配置在启动时加载，修改后需要重启机器人进程；独立提示词文件的内容每次生成回复时读取，同一路径下的内容修改在下一次生成时生效。`--config` 可指定配置文件；相对的密钥、解密、状态、日志和提示词文件路径按配置文件所在目录解析。`db_dir` 建议填写绝对路径。
+两份 JSON 配置均在启动时加载，修改后需要重启机器人进程；如果 `config.json` 已填写同名项，会覆盖默认 JSON 中的修改。独立提示词文件的内容每次生成回复时读取，同一路径下的内容修改在下一次生成时生效。`--config` 可指定配置文件；相对的密钥、解密、状态、日志和提示词文件路径按配置文件所在目录解析。`db_dir` 建议填写绝对路径。API Key 仍放 `.env`，不放默认 JSON。
 
 ## 群聊和回复
 
@@ -27,7 +27,8 @@ JSON 配置在启动时加载，修改后需要重启机器人进程；独立提
 | 配置项（均在 `deepseek` 下） | 示例值 | 作用 |
 | --- | --- | --- |
 | `model` | `deepseek-flash` | 请求的模型名称，须为所用服务实际支持的模型 |
-| `thinking` | `disabled` | `enabled` / `disabled` 时发送相应参数，模型及接口需支持 |
+| `thinking` | `enabled` | `enabled` / `disabled` 时发送相应参数；当前按用户要求开启试用 |
+| `reasoning_effort` | `high` | 思考深度，可用 low/high/max；开启思考时传给模型，关闭时不发送 |
 | `system_prompt_file` | `prompts/system.md` | 独立 UTF-8 人格提示词文件，支持 Markdown、多行和长文本；仅替换 `{bot_name}`，其余花括号原样保留 |
 | `system_prompt` | 旧版兼容项 | 旧配置只有内联提示词时仍可使用；显式配置文件后以文件为准 |
 | `temperature` | `1.0` | 传给模型的采样参数，支持范围由接口决定 |
@@ -36,7 +37,7 @@ JSON 配置在启动时加载，修改后需要重启机器人进程；独立提
 | `base_url` | `https://api.deepseek.com` | API 基础地址，程序会附加 `/chat/completions` |
 | `api_key_env` | `DEEPSEEK_API_KEY` | 保存 API Key 的环境变量名；密钥放源码根目录的 `.env` 或进程环境，不在 JSON 中直接填写 |
 
-API 最多尝试三次、重试间隔 1.5/3 秒目前写在 `ai/client.py`，没有配置项。日志级别、日志 2 MiB 轮换及备份数量同样不是 JSON 配置项。
+每次模型请求最多尝试三次、重试间隔 1.5/3 秒目前写在 `ai/client.py`，没有配置项；开启搜索后还受整体时限约束。日志级别、日志 2 MiB 轮换及备份数量同样不是 JSON 配置项。
 
 根目录 `.env` 的格式如下，等号后填实际密钥：
 
@@ -134,6 +135,10 @@ dry-run 使用独立的 `.dry-run` 队列及 `dry-run/live-status.json`，不消
 ## 图片理解
 
 `vision.enabled=true` 默认启用引用图片；`detail=original`，`max_images=4`，`max_image_bytes=8388608`，`cache_wait_seconds=3`。图片只在工作进程内解密，作为内联数据发送给当前模型；日志、队列和磁盘不保存图片明文。`last_vision.images` 可区分是否实际附送了图片。完整配置范围和缓存限制见 [图片说明](VISION.md)。
+
+## 按需联网搜索
+
+`search.enabled=true` 默认开启，继续使用当前模型和同一 DeepSeek Key。默认 `max_tool_rounds=2`、`max_requests=3`、`max_results=5`、单工具请求超时 15 秒、整体生成预算 120 秒。普通聊天不搜索；搜索时单独发送一次 `feedback_phrases` 中的短句，可用 `feedback_enabled=false` 关闭提示。提示仍遵守当前冷却、队列及发送确认，不会消耗最终回答分片。完整范围、错误行为和费用说明见 [搜索说明](SEARCH.md)。
 
 ## 环境变量覆盖
 

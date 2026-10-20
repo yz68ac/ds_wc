@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import os
+import copy
+import json
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
 
-from wxbridge.config import deepseek_api_key, load_config
+from wxbridge.config import DEFAULTS, _load_defaults, deepseek_api_key, load_config
 
 
 class ProjectEnvTests(unittest.TestCase):
@@ -34,6 +36,34 @@ class ProjectEnvTests(unittest.TestCase):
         with patch("wxbridge.config.PROJECT_ROOT", self.root), patch.dict(os.environ, {"DEEPSEEK_API_KEY": "synthetic-process-key"}, clear=True):
             cfg = load_config(self.config_file)
             self.assertEqual(deepseek_api_key(cfg), "synthetic-process-key")
+
+    def test_json_override_and_environment_keep_precedence_without_mutating_defaults(self):
+        before = copy.deepcopy(DEFAULTS)
+        self.config_file.write_text(json.dumps({"deepseek": {"temperature": 0.7}, "target": {"chat": "配置中的群", "cooldown_seconds": 3}}), encoding="utf-8")
+        with patch("wxbridge.config.PROJECT_ROOT", self.root), patch.dict(os.environ, {"WX_GROUP": "环境中的群", "DEEPSEEK_MODEL": "synthetic-model"}, clear=True):
+            cfg = load_config(self.config_file)
+        self.assertEqual(cfg["target"]["chat"], "环境中的群")
+        self.assertEqual(cfg["target"]["cooldown_seconds"], 3)
+        self.assertEqual(cfg["deepseek"]["model"], "synthetic-model")
+        self.assertEqual(cfg["deepseek"]["temperature"], 0.7)
+        self.assertEqual(cfg["queue"]["debounce_seconds"], before["queue"]["debounce_seconds"])
+        self.assertEqual(cfg["queue"]["generation_concurrency"], before["queue"]["generation_concurrency"])
+        self.assertTrue(Path(cfg["queue"]["file"]).is_absolute())
+        cfg["search"]["feedback_phrases"].append("实例改动")
+        self.assertEqual(DEFAULTS, before)
+
+    def test_defaults_file_accepts_bom_and_rejects_missing_or_invalid_document(self):
+        path = self.root / "config.defaults.json"
+        path.write_text('{"target":{"bot_name":"合成名字"}}', encoding="utf-8-sig")
+        self.assertEqual(_load_defaults(path)["target"]["bot_name"], "合成名字")
+        for body in (None, b'[]', b'{bad-json}', b'\xff\xfe'):
+            with self.subTest(body=body):
+                if body is None:
+                    path.unlink()
+                else:
+                    path.write_bytes(body)
+                with self.assertRaises(ValueError):
+                    _load_defaults(path)
 
 
 if __name__ == "__main__":

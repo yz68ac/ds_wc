@@ -51,6 +51,65 @@ def image_md5(content):
     return ""
 
 
+def local_image_cache_key(packed):
+    """Linux 原图片消息 packed_info_data 的 protobuf 3→4 本地缓存名。
+
+    只接受这个已核验字段中的 32 位十六进制标识；不扫描任意字节猜文件名。
+    非完整、歧义或未知结构返回空值，不能替代原群/作者/server_id 校验。
+    """
+    if not isinstance(packed, (bytes, memoryview)) or len(packed) > 65536:
+        return ""
+
+    def fields(data):
+        pos = 0
+        def varint():
+            nonlocal pos
+            value = 0
+            for shift in range(0, 70, 7):
+                if pos >= len(data):
+                    raise ValueError
+                byte = data[pos]
+                pos += 1
+                value |= (byte & 127) << shift
+                if not byte & 128:
+                    return value
+            raise ValueError
+        result = []
+        while pos < len(data):
+            if len(result) >= 128:
+                raise ValueError
+            tag = varint()
+            number, wire = tag >> 3, tag & 7
+            if not 1 <= number < 2**29:
+                raise ValueError
+            value = None
+            if wire == 0:
+                varint()
+            elif wire in (1, 5):
+                pos += 8 if wire == 1 else 4
+            elif wire == 2:
+                size = varint()
+                value = bytes(data[pos:pos+size])
+                pos += size
+            else:
+                raise ValueError
+            if pos > len(data):
+                raise ValueError
+            result.append((number, wire, value))
+        return result
+
+    try:
+        outer = [value for number, wire, value in fields(packed) if number == 3 and wire == 2]
+        if len(outer) != 1:
+            return ""
+        inner = [value for number, wire, value in fields(outer[0]) if number == 4 and wire == 2]
+        if len(inner) == 1 and re.fullmatch(b"[0-9a-fA-F]{32}", inner[0]):
+            return inner[0].decode("ascii").lower()
+    except ValueError:
+        pass
+    return ""
+
+
 def _reference(node, depth):
     if node is None:
         return dict(kind="missing", available=False, text="", reason="引用记录缺失")

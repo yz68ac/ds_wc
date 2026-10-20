@@ -438,13 +438,139 @@ class PipelineTests(unittest.TestCase):
 
     def test_reasoning_is_not_sent_as_answer(self):
         client = DeepSeekClient.__new__(DeepSeekClient)
-        client.cfg = self.cfg["deepseek"]
+        client.cfg = {**self.cfg["deepseek"], "thinking": "disabled"}
         client._post = Mock(return_value={"choices": [{"message": {"content": "", "reasoning_content": "PRIVATE"}}]})
         self.assertEqual(client.chat([]), "")
         self.assertEqual(client._post.call_args.args[0]["thinking"], {"type": "disabled"})
 
 
+    def search_started(self):
+        generator = next(job for job in self.jobs if job.kind == "generate" and not job.closed)
+        generator.result = {"event": "search_started"}
+        self.bot.tick()
+        generator.result = None
+        return generator
+
+    def test_search_notice_then_final_reply_both_confirmed_and_cooldown(self):
+        self.cfg["queue"]["debounce_seconds"] = 0
+        self.cfg["target"]["cooldown_seconds"] = 8
+        self.add(1)
+        self.bot.tick()
+        generator = self.search_started()
+        notice = self.sends()[0].payload[2]
+        self.assertIn(notice, self.cfg["search"]["feedback_phrases"])
+        self.assertEqual(self.bot.journal.head()["intent"]["kind"], "notice")
+        self.sends()[0].result = dict(ok=True, ui=dict(submitted=True))
+        self.add(2, sender="wxid_self", text=notice, mention=False)
+        self.bot.tick()
+        self.assertEqual(self.bot.journal.head()["notice"]["state"], "confirmed")
+        self.assertEqual(self.bot.journal.head()["next_chunk"], 0)
+        generator.result = dict(ok=True, reply="联网最终回答", search=dict(attempted=True, calls=1, results=2, errors=[]))
+        self.bot.tick()
+        self.assertEqual(len(self.sends()), 1)
+        self.now += 8
+        self.bot.tick()
+        self.assertEqual(self.sends()[1].payload[2], "联网最终回答")
+        self.sends()[1].result = dict(ok=True, ui=dict(submitted=True))
+        self.add(3, sender="wxid_self", text="联网最终回答", mention=False)
+        self.bot.tick()
+        self.assertEqual(self.bot.journal.status()["queue_length"], 0)
+        task = self.bot.journal.task(1)
+        self.assertEqual(task["last_notice_ack_id"], 2)
+        self.assertEqual(task["last_ack_id"], 3)
+        self.assertEqual(task["notice"]["text"], "")
+
+    def test_search_notice_is_not_repeated_for_repeated_events_or_after_restart(self):
+        self.cfg["queue"]["debounce_seconds"] = 0
+        self.add(1)
+        self.bot.tick()
+        generator = self.search_started()
+        notice = self.sends()[0].payload[2]
+        generator.result = dict(event="search_started")
+        self.bot.tick()
+        self.assertEqual(len(self.sends()), 1)
+        self.restart()  # 提交后、数据库确认前重启，先查发出记录。
+        self.add(2, sender="wxid_self", text=notice, mention=False)
+        self.bot.tick()
+        self.assertEqual(self.bot.journal.head()["notice"]["state"], "confirmed")
+        self.search_started()
+        self.assertEqual(len(self.sends()), 1)  # 只保留首次旧发送对象，没有新增提示发送。
+
+    def test_search_notice_confirmation_timeout_blocks_sends_but_keeps_receiving(self):
+        self.cfg["queue"]["debounce_seconds"] = 0
+        self.add(1)
+        self.bot.tick()
+        self.search_started()
+        self.sends()[0].result = dict(ok=True, ui=dict(submitted=True))
+        self.bot.tick()
+        self.now += 11
+        self.add(2)
+        self.bot.tick()
+        self.assertEqual(self.bot.last_local_id, 2)
+        self.assertIn("send_confirmation_timeout", self.bot.journal.head()["blocked_reason"])
+        self.assertEqual(len(self.sends()), 1)
+        self.assertEqual(len(self.bot.journal.tasks()), 2)
+
+    def test_old_merged_version_unsent_notice_is_discarded(self):
+        self.add(1)
+        self.bot.tick()
+        old = self.search_started()
+        self.assertFalse(self.sends())
+        self.now += 1
+        self.add(2)
+        self.bot.tick()
+        self.assertTrue(old.closed)
+        self.assertIsNone(self.bot.journal.head().get("notice"))
+        self.generated("新版本直接回答")
+        self.now += 3
+        self.bot.tick()
+        self.assertEqual([job.payload[2] for job in self.sends()], ["新版本直接回答"])
+
+    def test_search_feedback_can_be_disabled(self):
+        self.cfg["search"]["feedback_enabled"] = False
+        self.cfg["queue"]["debounce_seconds"] = 0
+        self.add(1)
+        self.bot.tick()
+        self.search_started()
+        self.assertFalse(self.sends())
+        self.generated("直接最终回复")
+        self.assertEqual(len(self.sends()), 1)
+
+
 class WorkerTests(unittest.TestCase):
+    def test_search_disabled_still_uses_plain_text_and_output_preferences(self):
+        from wxbridge.app.workers import _work
+        import logging
+        prior = logging.root.manager.disable
+        connection = Mock()
+        try:
+            with patch("wxbridge.ai.client.DeepSeekClient") as client:
+                client.return_value.chat.return_value = "**简单说**，先这样。"
+                _work(connection, "generate", ({"search": {"enabled": False}}, [dict(role="system", content="合成人格")], None))
+                prompt = client.return_value.chat.call_args.args[0]
+                self.assertTrue(prompt[0]["content"].startswith("合成人格"))
+                self.assertIn("只输出纯文本", prompt[0]["content"])
+        finally:
+            logging.disable(prior)
+        self.assertEqual(connection.send.call_args.args[0], dict(ok=True, reply="简单说，先这样。"))
+
+    def test_progress_event_does_not_replace_final_result(self):
+        from wxbridge.app.workers import _work
+        import logging
+        prior = logging.root.manager.disable
+        connection = Mock()
+        def answer(cfg, client, prompt, on_search):
+            on_search()
+            return "联网回答", dict(attempted=True, calls=1, results=1, errors=[])
+        try:
+            with patch("wxbridge.ai.client.DeepSeekClient"), patch("wxbridge.ai.search.answer_with_search", side_effect=answer):
+                _work(connection, "generate", ({}, [], None))
+        finally:
+            logging.disable(prior)
+        self.assertEqual(connection.send.call_args_list[0].args[0], dict(event="search_started"))
+        self.assertEqual(connection.send.call_args_list[1].args[0]["reply"], "联网回答")
+        self.assertTrue(connection.send.call_args_list[1].args[0]["ok"])
+
     def test_real_spawn_echo_process_no_network(self):
         job = ProcessJob("generate", ({}, [], "本地进程测试"), timeout=10)
         try:
