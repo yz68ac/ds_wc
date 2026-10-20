@@ -1,0 +1,33 @@
+{
+  "folders": [
+    {
+      "name": "微信 DeepSeek 项目",
+      "path": "."
+    }
+  ],
+  "settings": {
+    "python.defaultInterpreterPath": "${workspaceFolder}/../.venv/Scripts/python.exe",
+    "python.analysis.extraPaths": ["."],
+    "files.exclude": {
+      "**/__pycache__": true,
+      "**/*.pyc": true,
+      ".venv": true,
+      "**/.test-tmp": true
+    },
+    "search.exclude": {".venv": true, "memory": true}
+  },
+  "tasks": {
+    "version": "2.0.0",
+    "tasks": [
+      {
+        "label": "离线测试（不联网）",
+        "type": "process",
+        "command": "${command:python.interpreterPath}",
+        "args": ["-X", "utf8", "${workspaceFolder}/scripts/test-offline.py"],
+        "options": {"cwd": "${workspaceFolder}"},
+        "group": {"kind": "test", "isDefault": true},
+        "problemMatcher": []
+      }
+    ]
+  }
+}

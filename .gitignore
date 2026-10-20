@@ -1,19 +1,13 @@
-# 本地环境与历史材料
-/archives/
-.venv/
-venv/
 __pycache__/
 *.py[cod]
-.test-tmp/
-memory/
-
-# 凭据和实际配置；仅提交空示例
 .env
 .env.*
 !.env.example
 config.json
 keys.json
 all_keys.json
+/.git-migration/
+/archives/
 .ssh/
 id_rsa
 id_ed25519
@@ -22,8 +16,6 @@ id_ed25519
 *.key
 *.p12
 *.pfx
-
-# 微信数据、解密副本和运行状态
 decrypted/
 xwechat_files/
 *.dat
@@ -37,10 +29,14 @@ xwechat_files/
 *.sqlite3-shm
 state.json
 live-status.json
+bot.log
+bot.log.*
 *.log
 *.log.*
 *.tmp
-
-# 系统杂项
+venv/
+.venv/
+.test-tmp/
+memory/
 Thumbs.db
 .DS_Store
