@@ -1,0 +1,66 @@
+{
+  "db_dir": "",
+  "keys_file": "/run/wxbridge-trial/keys.json",
+  "decrypted_dir": "/run/wxbridge-trial/decrypted",
+  "state_file": "/run/wxbridge-trial/state.json",
+  "log_file": "/run/wxbridge-trial/bot.log",
+  "source": "db",
+  "poll_interval_seconds": 2.0,
+  "reply_to_backlog": false,
+  "queue": {
+    "debounce_seconds": 0,
+    "generation_concurrency": 2,
+    "file": "/run/wxbridge-trial/queue.sqlite3"
+  },
+  "target": {
+    "chat": "把这里改成你们的群名",
+    "bot_name": "DeepSeek",
+    "trigger": {
+      "mentions": ["@DeepSeek", "@deepseek", "@小D"],
+      "prefixes": [],
+      "reply_all": false,
+      "require_mention_metadata": true
+    },
+    "cooldown_seconds": 8,
+    "max_message_age_seconds": 90,
+    "context_window_seconds": 600,
+    "context_max_chars": 24000,
+    "max_reply_chars": 1800
+  },
+  "deepseek": {
+    "api_key_env": "DEEPSEEK_API_KEY",
+    "base_url": "https://api.deepseek.com",
+    "model": "deepseek-flash",
+    "thinking": "disabled",
+    "temperature": 1.0,
+    "timeout_seconds": 60,
+    "max_tokens": 1200,
+    "system_prompt_file": "prompts/system.md"
+  },
+  "vision": {
+    "enabled": true,
+    "detail": "original",
+    "max_images": 4,
+    "max_image_bytes": 8388608,
+    "cache_wait_seconds": 3
+  },
+  "ui": {
+    "backend": "auto",
+    "input_method": "auto",
+    "verify_chat_selected": true,
+    "app_names": ["wechat", "WeChat", "微信"],
+    "chat_list_names": ["Chats", "聊天", "会话"],
+    "messages_list_names": ["Messages", "消息"],
+    "window_class": "wechat",
+    "native_executable": "/opt/wechat/wechat",
+    "window_names": ["微信", "WeChat"],
+    "search_shortcut": "ctrl+f",
+    "paste_shortcut": "ctrl+v",
+    "select_all_shortcut": "ctrl+a",
+    "send_key": "Return",
+    "post_send_wait": 0.8,
+    "send_confirm_timeout_seconds": 10,
+    "chat_open_wait": 1.0,
+    "dry_run": true
+  }
+}

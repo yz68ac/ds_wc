@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.env
+config.json
+keys.json
+all_keys.json
+decrypted/
+state.json
+bot.log
+bot.log.*
+*.tmp
+venv/
+.venv/
+.test-tmp/

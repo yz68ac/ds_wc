@@ -1,0 +1,50 @@
+{
+  "folders": [
+    {
+      "name": "微信 DeepSeek 项目",
+      "path": "."
+    }
+  ],
+  "settings": {
+    "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe",
+    "python.analysis.extraPaths": [
+      "./wechat-group-bot"
+    ],
+    "files.exclude": {
+      "**/__pycache__": true,
+      "**/*.pyc": true,
+      ".venv": true,
+      "**/.test-tmp": true
+    },
+    "search.exclude": {
+      "archives": true,
+      ".venv": true
+    },
+    "files.watcherExclude": {
+      "**/archives/**": true
+    }
+  },
+  "tasks": {
+    "version": "2.0.0",
+    "tasks": [
+      {
+        "label": "离线测试（不联网）",
+        "type": "process",
+        "command": "${workspaceFolder}/.venv/Scripts/python.exe",
+        "args": [
+          "-X",
+          "utf8",
+          "${workspaceFolder}/wechat-group-bot/scripts/test-offline.py"
+        ],
+        "options": {
+          "cwd": "${workspaceFolder}/wechat-group-bot"
+        },
+        "group": {
+          "kind": "test",
+          "isDefault": true
+        },
+        "problemMatcher": []
+      }
+    ]
+  }
+}
