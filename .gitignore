@@ -40,3 +40,7 @@ venv/
 memory/
 Thumbs.db
 .DS_Store
+*.deb
+*.AppImage
+*.gpr
+*.rep/

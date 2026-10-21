@@ -1,6 +1,6 @@
 # wxbridge 代码地图
 
-当前目录按四个职责组织，根目录只保留命令入口、版本和配置。Linux 版本与上线验证以 [部署说明](../docs/DEPLOYMENT.md) 为准。
+当前目录按四个职责组织，根目录只保留命令入口、版本和配置。Linux 环境准备见 [部署说明](../docs/DEPLOYMENT.md) 为准。
 
 ```text
 wxbridge/
@@ -11,6 +11,8 @@ wxbridge/
 ├── app/                   应用调度
 │   ├── runtime.py         启动规则、单实例锁、退出清理
 │   ├── bot.py             接收、生成调度、冷却、发送确认、状态
+│   ├── proactive.py       主动接话判断、前台优先和发送前复核
+│   ├── learning.py        活跃闲聊学习、任务登记和去重
 │   ├── workers.py         可终止的 API/UI 工作进程
 │   └── diagnostics.py     环境、数据库和界面诊断
 ├── ai/                    生成回答
@@ -20,6 +22,8 @@ wxbridge/
 │   ├── memory.py          成员标签、带来源快照和后台结构化整理请求
 │   ├── avatars.py         独立头像视觉分类、有限枚举校验；不推测人格
 │   ├── search.py          按需搜索/抓取、工具循环与真实来源
+│   ├── proactive.py       主动发言/沉默的结构化模型决策
+│   ├── emoticons.py       微信表情名称和人工维护的语义参考
 │   ├── output.py          简短群聊输出规则与纯文本格式兜底
 │   ├── wxgf.py            选择彩色HEVC流，受控子进程内存转PNG
 │   └── images.py          本地图片内存解密、校验、组装多模态请求
@@ -28,11 +32,13 @@ wxbridge/
 │   ├── crypto.py          SQLCipher 页与 WAL 解密
 │   ├── keyscan.py         从本机微信进程提取并验证数据库密钥
 │   ├── references.py      引用关系、图片标识与模型可见字段
+│   ├── pats.py            拍一拍解析；实时同步尚未稳定验收
 │   ├── messages.py        文本触发兼容与回复分片
 │   └── ui.py              AT-SPI/X11 界面控制和发送保护
 └── storage/               运行状态存储
     ├── journal.py         SQLite 队列、游标、意图与恢复
     ├── person_memory.py   人物记忆、来源校验、遗忘、分数和原子写入
+    ├── expression_memory.py 语境表达证据、成熟、反例、遗忘和提示词注入
     └── memoryfs.py        私有 tmpfs,noswap 检查
 ```
 
@@ -42,4 +48,4 @@ wxbridge/
 
 需要联网时，API 工作进程发送一个进度事件；主进程把一次性口语提示纳入同一确认流程，搜索继续运行。提示确认后保留最终回答的位置，重启不会重复提示。搜索详情见 [SEARCH.md](../docs/SEARCH.md)。
 
-全部默认值已从 `config.py` 提取到上一级 `config.defaults.json`，自定义 `config.json` 覆盖默认值。`.env`、`config.json`、`prompts/system.md` 仍在项目根目录对应位置。启动命令仍为 `python3 -m wxbridge`，服务入口仍为 `scripts/run-live.py`。默认 JSON 随人物记忆功能一起同步 Linux；具体上线证据见部署说明。
+全部默认值已从 `config.py` 提取到上一级 `config.defaults.json`，自定义 `config.json` 覆盖默认值。`.env`、`config.json`、`prompts/system.md` 仍在项目根目录对应位置。启动命令仍为 `python3 -m wxbridge`，服务入口仍为 `scripts/run-live.py`。后台整理提示词为 `prompts/memory.md`；更新时成套携带默认 JSON 和提示词，不覆盖服务器实际配置与私密数据。

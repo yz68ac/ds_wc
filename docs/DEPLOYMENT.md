@@ -1,72 +1,51 @@
-# 运行说明
+# Linux 部署
 
-2026-10-21 新增可配置微信表情与日常尾句号处理：默认和JSONC示例关闭表情，本次Linux实际配置开启；普通回复、搜索回答、主动接话统一使用20项语义参考。微笑按本项目要求仅采用冷淡、无语、反讽等用法。详见 [微信表情与标点](EMOTICONS.md)。
+源码运行依赖原生 Linux 微信。现有验证环境为 Debian 13 amd64、Python 3.13、微信 4.1.13.26；Windows 用于编辑与离线测试。微信客户端不随仓库分发，安装和升级后需要确认数据库与无障碍界面适配。
 
-2026-10-21 新增主动接话：近5分钟至少10条群成员文字、机器人无发言时，由低优先级模型判断是否自然接话；可沉默，@优先，发送前复核，沿用原发送确认。默认JSON关闭，按用户本轮授权在Linux实际配置开启。详见 [主动接话](PROACTIVE.md)。
+## 约定与依赖
 
-2026-10-21 已准备持久开机会话、私有内存盘、登录后重新提取密钥和监听恢复；早晨实际开机完成手机认证后，修复深层群控件识别，真实@收发已由用户确认。随后加固群聊选择等待及重选，引用图片问题的积压回答两片均有发出记录，队列清空；本地/Linux212项检查通过。新服务名为 `wxbridge-session`、`wxbridge-bot`，详情及手机登录边界见 [重启恢复说明](BOOT_RECOVERY.md)。后文临时服务及“没有开机恢复”的描述属于当时的历史部署。
+现有服务模板使用以下约定，修改路径时需一起检查脚本、服务和实际配置：
 
-此文说明现有部署及完整使用流程。2026-10-20 23:06（UTC+08）已同步拍一拍回复、五分钟上下文及头像初见弱参考，保留傲娇人格、短答偏好、人物记忆及默认配置 JSON；Windows 后续编辑仍需另行部署才生效。
-
-本文后面按时间记录的平铺模块名属于当时部署。当前分层结构见 [代码导读](CODE_GUIDE.md)，目录重组的最初本地备份见 [整理记录](../../archives/refactors/20261020-package-layout/README.md)。启动命令与配置位置保持不变。用户本轮已授权将分层代码、最新人格和联网搜索一起同步，验证结果、实际备份路径与游标见 [搜索部署记录](../../archives/deployments/20261020-websearch/README.md)。
-
-默认值已提取到 `config.defaults.json` 并随本轮记忆功能部署。以后部署 `wxbridge/config.py` 时必须同时携带源码根目录的默认 JSON；实际服务器 `config.json`、`.env` 和人格继续保留，不用默认配置覆盖它们。
-
-## 23:06 拍一拍回复与五分钟上下文
-
-已上线：其他成员拍机器人即独立入队，读取最近五分钟上下文和已有记忆后自然回应。拍他人、自身发起或身份不明的事件不触发；文字 @ 的原有收发链路保留。上下文窗口 `target.context_window_seconds=300` 可调整；`target.trigger.pat_enabled=false` 可关闭拍一拍回复。
-
-Windows 201 项离线测试通过（3 项 Linux 专用跳过），Linux 隔离和安装组合全部 201 项通过，另有解析/加密/WAL 脚本。原生样本624由产品解析器成功识别；旧事件不补发。备份 `/var/backups/wxbridge/pat-reply-20261020-230637`，游标624→624，队列为空，监听正常；密钥、人格与记忆校验不变。真实新拍一拍待验收。详见 [本轮记录](../../archives/deployments/20261020-pat-reply/README.md)。
-
-
-## 22:37 头像初见线索
-
-已核对本机微信头像源为 `head_image/head_image.db`，表 head_image 通过精确 username 关联 image_buffer。主进程按账号和 wxid 读取，后台独立会话只分类有限视觉枚举；文字记忆、性格印象及好感度请求看不到头像。视觉档案权重低，有直接对话印象就优先采用；不主动评价头像或公开内部判断。首次学习仍在真实 @ 最终回复确认之后，不预扫描所有联系人。
-
-Windows 190 项回归通过（3 项 Linux 专用跳过），Linux 隔离源码与实际安装组合均为190项全部通过。合成色块图通过实际 API、来源校验、私有写入及提示词注入，验证视觉不会改变同一文字建议的好感分；未发送测试群消息。持锁本地校验两位已有成员缓存均可读，都是132×132 JPEG，未导出真实头像或发送给预检API。
-
-备份 `/var/backups/wxbridge/avatar-20261020-223757`；切换游标623→623，已有记忆修订3保留，队列0，监听正常。实际 config.json、.env、人格及已有记忆哈希未变。代码与默认 JSON 同步，原头像不另存；后续 @ 后按需补全。配置和遗忘命令见 [MEMORY.md](MEMORY.md)，脱敏证据见 [本轮记录](../../archives/deployments/20261020-avatar/README.md)。
-
-## 22:18 人格与短答调整
-
-经用户明确授权同步 Linux：人格改为在意但爱逞强，避免公开考察、打分、心理旁白和无关照料话题。日常约 10 字、尽量不超过 30 字；专业问答按需要展开。移除输出层旧的 80–160 字规则；恰好两段的完整普通文本可分两条发送，沿用原冷却和逐条确认，代码中的空行保留。
-
-Windows 179 项回归通过（3 项 Linux 专用跳过），Linux 隔离源码与服务账号安装组合均为 179 项全部通过。实际 API 合成风格检查中，两条普通回复分别 13、10 字，专业问题可正常展开；不读取真实聊天或发送测试消息。
-
-备份 `/var/backups/wxbridge/persona-20261020-221802`，接收游标615→615，回复队列和记忆待处理队列均为空、监听正常。配置、密钥和已有记忆校验未变，人格文件0600。只重启监听，未重启微信会话。脱敏证据见 [本轮记录](../../archives/deployments/20261020-persona/README.md)。
-
-## 22:02 人物记忆上线
-
-实现前 153 项既有离线测试通过，基线提交 `eb5ac6a`。本轮 Windows 176 项通过（3 项 Linux 专用测试跳过），Linux 176 项全部通过，另有解析、加密与 WAL 脚本；以服务账号回归实际安装组合也通过。
-
-后台采用 deepseek-flash、关闭思考，前台仍为 high。合成实际 API 验证完成两位成员的偏好提取、来源校验、私有写入和下一轮提示词注入，不读取真实聊天或发送群消息。真实「来打灰」两轮 @ 后，用户确认第二轮记住了偏好；后台修订 2、水位 614、涉及 2 位成员、3 条摘要，回复队列和后台队列均为空、无错误。未预导入全部群历史。
-
-首次备份 `/var/backups/wxbridge/memory-20261020-215144`，最终恢复保护补丁备份 `/var/backups/wxbridge/memory-20261020-220207`。最终切换前后游标均为 615，保留已有记忆；config.json、.env、prompts/system.md 的哈希未变。监听 active/running，记忆目录 `/opt/wxbridge/memory` 为 0700，memory.json 与 additional_prompt.md 为 0600，属主 wxbridge。微信会话未重启。
-
-恢复保护覆盖 JSON 写入失败不提前推进内存水位、投影失败不重复计分、旧任务先按遗忘水位跳过；额外验证晚同步的较早消息拥有更大 local_id 时也不重复计分。记忆命令及边界见 [MEMORY.md](MEMORY.md)；代码和脱敏部署证据在 [本轮记录](../../archives/deployments/20261020-memory/README.md)。
-
-## 现有部署
-
-| 项目 | 位置 |
+| 用途 | 默认约定 |
 | --- | --- |
-| Linux | `192.168.1.212`，SSH 别名 `hotman`；Debian 13.7 amd64 |
-| 微信 | `/opt/wechat/wechat`，4.1.13.26 |
-| 普通运行用户 | `wxbridge`，主目录 `/var/lib/wxbridge` |
-| 代码与配置 | `/opt/wxbridge`、`config.json`、`.env`；凭据文件 0600 |
-| 内存运行数据 | `/run/wxbridge-trial`，独立 1 GiB `tmpfs,noswap`，0700 |
-| 微信会话服务 | `wxbridge-headless-trial.service` |
-| 监听服务 | `wxbridge-bot-live.service`，入口 `scripts/run-live.py` |
+| 专用普通用户与 HOME | `wxbridge`、`/var/lib/wxbridge` |
+| 代码与私密配置 | `/opt/wxbridge`、`config.json`、`.env` |
+| 微信程序 | `/opt/wechat/wechat` |
+| 内存运行目录 | `/run/wxbridge-trial`，私有 `tmpfs,noswap`，目录 0700 |
+| 内存数据 | 密钥、解密副本、SQLite 队列、锁和状态；私密文件 0600 |
+| 持久记忆 | `/opt/wxbridge/memory`，目录 0700、文件 0600 |
 
-## 完整操作顺序
+系统依赖包括 Python、PyCryptodome、zstandard、PyGObject/AT-SPI、Xvfb、Xauthority、D-Bus、fluxbox、xdotool、xclip，以及 `libde265`、FFmpeg 运行库。临时远程查看登录界面还需 x11vnc 和已有 VNC 客户端。Debian 可从系统包准备 `python3-pycryptodome`、`python3-zstandard`、`python3-gi`、`gir1.2-atspi-2.0`、`at-spi2-core`、`xvfb`、`xauth`、`dbus-x11`、`fluxbox`、`xdotool`、`xclip`、`libde265-0`、`ffmpeg`，再用 `python3 -m wxbridge env` 核对。
 
-1. **环境与配置**：准备原生微信、Xvfb、D-Bus、AT-SPI/PyGObject 和 Python 依赖。由管理员建立专用用户及私有内存挂载。复制示例配置，填目标群和实际数据库目录；API Key 通过 `configure-deepseek.sh` 在 SSH 终端隐藏输入，已有文件不会被覆盖。
-2. **启动微信会话**：使用 `start-headless.sh`；现有部署由上述微信会话服务托管。脚本创建 Xauthority，写 `env`，再启动图形会话和微信。单纯启动这个脚本不会创建内存挂载或数据库密钥。
-3. **登录**：需要时临时开启 VNC，SSH 转发本机端口后查看界面，手机扫码确认。`login-vnc.sh` 会加载当前会话的环境与 Xauthority。登录后关闭 VNC，保留微信会话。
-4. **准备消息读取**：在相应权限下调用 `scan-keys`，确认密钥文件归运行用户所有且为 0600；运行目录必须是该用户所有的私有 `tmpfs,noswap`。`check` 确认目标群和最新 local_id，不打印正文。
-5. **验证并监听**：新版本用 `run --dry-run` 禁止发送，用 `--echo` 可跳过模型；正式 `run --send` 显式启用发送。dry-run 仍可能调用模型，纯离线验证应使用测试脚本。既有服务入口 `run-live.py` 转入相同流程并传 `--send`。
-6. **检查与停止**：查看 systemd 状态和内存中的 `live-status.json`；以实际进程/服务状态为准。停止监听可保留微信登录，停止微信会话会同时结束依赖它的监听。
+服务模板使用 `/usr/bin/python3`，依赖应能由该解释器导入。离线开发用的隔离 `.venv` 不会自动成为 systemd 运行环境；若改用虚拟环境，需同时解决 PyGObject 系统绑定并修改相关入口。不要向系统 Python 强行使用 `--break-system-packages`。
 
-CLI 必须和微信使用同一普通账号及 D-Bus/X11 会话。进入该账号后先加载运行目录中的环境文件：
+## 初次准备
+
+1. 管理员建立专用普通用户和私有内存挂载。参考 [runtime.mount.in](../scripts/systemd/runtime.mount.in)，将 UID/GID 替换为实际值。内核和挂载必须支持 `noswap`；不满足时修复环境，不能删掉校验继续运行。
+2. 将源码放到 `/opt/wxbridge`，运行用户应能读取源码并写入私有记忆目录。部署包要包含 `config.defaults.json`、`prompts/` 和脚本，不能只复制 Python 包。
+3. 按 `config.example.jsonc` 的注释创建标准 JSON 的 `config.json`，至少指定目标群与实际账号数据库目录。不要直接复制带注释文件作为 JSON，也不要把示例群名当作自己的群。
+4. 从 `.env.example` 创建根目录 `.env`，在服务器本地填写 Key，权限 0600；不要粘贴到聊天、命令行参数或 Git。已有 `scripts/configure-deepseek.sh` 可隐藏输入，且拒绝覆盖已有凭据文件。
+5. 以该普通用户启动微信会话，手机完成登录，再由管理员执行受控密钥扫描和账号/群检查。全新队列建立基线，不自动补答历史消息。
+
+数据库密钥与 DeepSeek API Key 用途不同。数据库扫描需要相应本机进程读取权限，只对自己管理的已登录客户端操作；提取后验证密钥，存放在私有内存目录，由运行用户持有。持久服务的提权、密钥恢复和账号绑定见 [开机恢复](BOOT_RECOVERY.md)。
+
+## 无物理桌面的会话
+
+管理员先准备内存挂载。以下会话命令在运行用户下执行：
+
+```bash
+cd /opt/wxbridge
+export WX_RUNTIME_DIR=/run/wxbridge-trial
+bash scripts/start-headless.sh
+```
+
+脚本启动 Xvfb、D-Bus、AT-SPI、fluxbox 和微信，写入会话环境文件。它本身不创建 `tmpfs,noswap`，也不生成数据库密钥。未设置 `WX_RUNTIME_DIR` 时的临时会话路径不适用于这里的生产队列约定。
+
+需要登录界面时，使用 `login-vnc.sh` 并通过 SSH 转发到 `127.0.0.1:5900`；完整命令见 [开机恢复](BOOT_RECOVERY.md)。VNC 只监听本机，完成手机认证后关闭。
+
+## 检查与监听
+
+进入同一普通账号、同一源码目录，加载微信会话环境：
 
 ```bash
 cd /opt/wxbridge
@@ -77,66 +56,28 @@ python3 -m wxbridge env
 python3 -m wxbridge check
 ```
 
-只读查看队列（不需启动第二个监听实例，不刷新微信解密数据库）：
+`check` 读取数据库并核对目标群，不显示聊天正文。数据库查询只能由一个所有者执行，监听运行时优先查看只读状态；需要刷新数据库的诊断先停止监听。
+
+正式发送：
+
+```bash
+python3 -m wxbridge run --send
+```
+
+`run --dry-run` 不发送但仍可能调用模型；`--echo` 以固定回复替代模型，用于受控链路验证。已有 `scripts/run-live.py` 转入相同 CLI/runtime，并显式启用发送。纯离线回归用 `python3 scripts/test-offline.py`。
+
+查看队列不启动第二个监听，也不刷新解密数据库：
 
 ```bash
 python3 -m wxbridge queue-status
 ```
 
-生产与 dry-run 均有单实例锁；同一解密目录不能同时运行第二个监听。`check` 会读数据库，运行中排障优先查看 `queue-status` 与状态文件。
+记忆维护命令见 [人物记忆](MEMORY.md) 和 [语境学习](LEARNING.md)。修改类维护先停止监听并取得同一锁。
 
-## 从 Windows 管理现有服务
+## 更新与恢复
 
-查看服务状态，不显示聊天正文：
+先跑离线检查、备份旧代码，再停止 `wxbridge-bot.service` 并记录接收游标、账号、群及未决发送状态。成套更新源码、默认 JSON、脚本和测试；保留服务器实际 `config.json`、`.env`、人格、记忆、运行队列及接收游标。不要用全目录清空或覆盖部署破坏这些数据。
 
-```powershell
-ssh hotman "systemctl show wxbridge-headless-trial wxbridge-bot-live -p Id -p ActiveState -p SubState -p MainPID"
-```
+只重启监听可以保留微信登录和内存队列；整机重启会丢失内存中的未完成问题/回复，持久检查点只保留身份和游标，不存正文。账号或群不匹配时停止排查，不能直接删除检查点绕过。详细服务状态与恢复步骤见 [开机恢复](BOOT_RECOVERY.md)。
 
-只停止监听：
-
-```powershell
-ssh hotman "systemctl stop wxbridge-bot-live"
-```
-
-停止微信和它所依赖的监听：
-
-```powershell
-ssh hotman "systemctl stop wxbridge-headless-trial"
-```
-
-## 已验证范围与尚未自动化的部分
-
-此前已验证数据库密钥 19/19、真实新消息读取、固定消息发出、DeepSeek API 和一次真实 @ 回复。此次 Windows 离线测试 59 项（Linux 锁测试在 Windows 跳过），Linux 59 项全部通过，另含分片/提示词与加密/WAL 脚本。
-
-此次部署先测试再备份，旧代码位于 `/var/backups/wxbridge/queue-20261020-141145/source-before.tar.gz`。服务新 PID 为 22830（首次上线时），`KillMode=control-group`；队列与锁均为 wxbridge 所有的 0600，位于已验证的 `tmpfs,noswap`。
-
-记录并从旧游标 203 迁移；41 字草稿已按授权清空至 0 字，未补发。原 `config.json`、`.env` 和已有人格文件校验不变。已有内联人格继续按原配置生效；部署不会强制改成人格文件。
-
-真实测试曾复现按钮动作返回成功但 33 字草稿未清空，队列按设计暂停。继续定位确认按钮只提供 `SetFocus`，修复动作名称识别及原生窗口命中核验后，14:27:27、14:27:41 分别确认两条原定回复的发出记录 226、227。队列已清空、草稿 0 字，恢复正常监听。用户决定关闭连续 @ 合并，服务器保持 `queue.debounce_seconds=0`，每次 @ 独立排队。
-
-14:36 继续修复鼠标已位于目标坐标时 `mousemove --sync` 等待直至超时的问题；改为显式核验坐标和活动窗口。异常现在记录命令阶段和是否尚未提交；只有明确未提交的临时错误才有界重试，未知点击仍暂停确认。
-
-最终 Windows 75 项回归通过（Linux 专用锁测试跳过），Linux 75 项全部通过，另有分片/提示词及加密/WAL 脚本。14:36:20、14:36:34 两条最新测试回复确认记录 246、247，用户手机确认收到；14:37 新发的一次独立 @ 也完整通过，确认记录 249。实际按钮命中原生主窗口、每次草稿均清空至 0。
-
-最终监听 PID 26437，队列 0，无阻塞，合并 0、生成并发 2。最后代码备份 `/var/backups/wxbridge/queue-20261020-143613/`；配置、密钥及人格设置校验不变。服务保持运行，最后的说明文档更新不重启服务。部署证据与脱敏脚本在 Windows 外层 `archives/deployments/20261020-queue/`。
-
-现有服务和挂载为临时部署，没有开机恢复；重启后需重新准备挂载、会话和密钥。长期重连、客户端升级兼容尚未验证。归档中的固定哈希部署脚本只记录当时过程，不能当作当前自动安装器重跑。
-
-应用日志默认不保存正文。`a11y` 等显式排障可能显示私密内容；源码与归档材料应按用途分别查看。
-
-## 16:14 引用回复支持
-
-已上线 `references.py`：支持引用消息后真实 @ 提问，将当前问题与引用正文、作者和原时间分别提供给模型。明确引用可早于十分钟窗口；仍按当前提问时间取普通上下文。只展开当前提问明确引用的快照，不访问其他群、网页或媒体。图片/语音等暂无识别，明确标记不可读。
-
-该版本 Windows 90 项回归通过（Linux 专用锁测试跳过），Linux 90 项全部通过，另含算法脚本。备份 `/var/backups/wxbridge/queue-20261020-161334/`；配置、密钥和人格设置校验不变，合并保持 0。
-
-用户真实引用测试：消息 295 识别为 `quoted_text`，带 8 字引用正文生成；16:14:34 确认发出记录 296，草稿清空、队列归零。用户确认实际回复正确理解了引用。当前入口、收发链路和模型均保留，增加 `recent_intake` 过滤原因与引用元数据，不保存正文。
-
-使用示例和边界见 [引用消息说明](REFERENCES.md)，完整脱敏证据见 Windows `archives/deployments/20261020-queue/REFERENCE-RESULTS.md`。
-
-## 联网搜索、分层目录与新人格同步
-
-新增 `ai/search.py`，保持 `deepseek-flash` 和现有图片能力，使用同一 Key 调用 Search/Fetch。每个问题按需搜索，最多一次口语提示；提示和最终回复分别以数据库发出记录确认并遵守冷却，支持进程重启恢复。Search/Fetch 失败会说明无法核实，日志只存数量和错误码。
-
-本轮同步包含之前仅在本地修改的分层目录和更有主见的人格。部署脚本先执行 Linux 离线测试，再用合成问题验证实际搜索工具链；完成备份后才停止监听、切换代码及人格，移除已备份的旧平铺模块。服务器 `config.json`、`.env`、微信会话、接收游标和队列保留。具体结果以本轮部署记录为准；历史固定哈希/一次性恢复脚本不直接重跑。
+上线后先核对监听、队列和安全错误码，再由群成员发一个新真实 @ 验证手机显示与数据库确认。遇到结果不明不要盲目补发。已知限制与排障见 [常见问题](TROUBLESHOOTING.md)。

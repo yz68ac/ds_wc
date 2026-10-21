@@ -1,60 +1,89 @@
-# Linux 微信 + DeepSeek 群聊桥接
+# 微信群聊 × DeepSeek
 
-原生微信负责登录、同步和实际发消息。本程序读取本机数据库，每次真实 @ 或拍机器人独立排队并立即调度生成，默认关闭连续 @ 合并。API 与 UI 使用工作进程，主进程继续接收并核对发出记录。
+在 Linux 上用原生微信接收和发送群消息，用 DeepSeek 生成回答。主进程轮询本机数据库，真实 @ 独立排队；模型与界面操作使用工作进程，发送结果以新增本人发出记录确认。
 
-支持引用消息后真实 @ 提问，例如“@ds 这怎么看”：文字和链接快照单独提供；引用图片会读取本地缓存、内存解密，再随问题发送给模型理解。语音和视频暂不识别。见 [引用说明](docs/REFERENCES.md)和 [图片说明](docs/VISION.md)。
+项目目前用于受邀协作，许可证暂未选定。Windows 支持编辑和离线测试，完整运行依赖 Linux 微信、X11 与 AT-SPI。已有实机验证针对 Debian 13 amd64、微信 4.1.13.26；客户端升级需要重新核对适配。拍一拍解析仍属实验功能，实时同步尚未稳定验收。
 
-## 按完整流程读代码
+## 功能
 
-`wxbridge` 按 `app`（应用调度）、`ai`（模型生成）、`wechat`（微信适配）、`storage`（状态存储）划分目录。详细文件地图见 [wxbridge/README.md](wxbridge/README.md)。Linux 上线状态与验证记录见 [运行说明](docs/DEPLOYMENT.md)。
+- 真实 @ 触发、默认五分钟上下文、队列恢复、冷却等待与逐片发送确认
+- 引用文字和本地图片理解，按需联网搜索及一次口语等待提示
+- 独立人格提示词、短答与纯文本偏好、可选微信内置表情
+- 按稳定成员 ID 隔离的记忆、关系与语境表达学习
+- 可选主动接话，以及无桌面 Linux 的会话和开机恢复脚本
 
-| 阶段 | 入口与模块 |
-| --- | --- |
-| 配置 | `config.defaults.json` 默认值、`config.example.jsonc` 带注释示例、`config.json` 实际覆盖配置、`wxbridge/config.py` 加载与校验 |
-| 人格设定 | `prompts/system.md`，由 `wxbridge/ai/prompts.py` 读取 |
-| 启动微信、手机登录 | `scripts/start-headless.sh`、`scripts/login-vnc.sh` |
-| 检查环境、准备数据库密钥 | `python -m wxbridge env`、`scan-keys`、`wxbridge/wechat/keyscan.py` |
-| 确认目标群和收发组件 | `python -m wxbridge check` |
-| 统一启动监听 | `wxbridge/cli.py → app/runtime.py → app/bot.py` |
-| 读取与判断消息 | `wechat/store.py`、`wechat/crypto.py`、`storage/memoryfs.py`、`ai/context.py` |
-| 调用模型、发送回复 | `ai/client.py`、`ai/prompts.py`、`ai/images.py`、`wechat/ui.py` |
-| 检查、排障、停止 | `app/diagnostics.py`、运行状态文件、`scripts/stop-headless.sh` |
+## 先跑离线测试
 
-详细说明见 [完整流程与代码导读](docs/CODE_GUIDE.md)、[配置项说明](docs/CONFIG.md)和 [运行说明](docs/DEPLOYMENT.md)。
-
-## 当前规则
-
-- 模型 `deepseek-flash`，当前开启思考、深度 `high`，只发送最终 `content`，不发送内部推理。
-- 微信表情由 `reply_style.wechat_emoticons_enabled` 控制，普通短句默认去掉尾部中文句号；内置20项梗义和使用分寸，见 [微信表情与标点](docs/EMOTICONS.md)。
-- 最终回复确认后后台整理本次五分钟窗口的人物记忆，按账号、群和 wxid 隔离；下次提问使用，详见 [记忆说明](docs/MEMORY.md)。
-- 需要新信息时按需调用 DeepSeek Search/Fetch，先发一次口语提示再给答案及真实来源；普通闲聊不搜索，详见 [搜索说明](docs/SEARCH.md)。
-- 回应真实 @ 自己的群聊文本和其他成员拍机器人的事件；首次接收过滤过旧、未来或无效记录。已有队列在重启后恢复；新部署才建立基线。
-- 私有内存 SQLite 同事务保存接收游标与任务，冷却只等待不丢弃；每个回复分片以新增本人发出记录确认，超时暂停发送并继续接收。
-- 按触发消息数据库发送时间 `t` 查询 `[t-300, t]`，再次排除同秒较晚记录；超出字符预算取消回复。
-- 发送前检查原生窗口、唯一群名、选中状态和输入框全文；结果不明不自动重发。
-- 解密副本和密钥放私有 `tmpfs,noswap`，日志默认不保存聊天正文。
-
-## 查看和测试
-
-本目录就是 Git 仓库根目录，源码、配置示例和文档均从这里开始。Windows 双击 `Open-Project.cmd` 打开本目录工作区，或在这里运行 `Test-Offline.ps1`。脚本优先使用本目录 `.venv`，缺少时沿用上一层现有测试环境。其他已准备好 Python 依赖的环境在本目录运行：
+需要 Git、Python 3.13 或 3.14。测试使用合成数据，不需要微信账号、API Key、SSH 或服务器。
 
 ```bash
-python3 scripts/test-offline.py
-python3 -m wxbridge --help
+git clone https://github.com/yz68ac/ds_wc.git
+cd ds_wc
+python -m venv .venv
 ```
 
-离线测试不访问微信、SSH 或 DeepSeek。`requirements.txt` 是 Python 库依赖，Linux 的 Xvfb、AT-SPI/PyGObject 等系统依赖需要另行准备。
+Windows PowerShell：
 
-## 运行入口
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-test.txt
+.\.venv\Scripts\python.exe -X utf8 scripts/test-offline.py
+.\.venv\Scripts\python.exe scripts/check-repository.py --history
+```
 
-当前主机已准备持久 systemd 开机恢复，重启后的检查、手机登录边界及本轮自动关机开关见 [重启恢复说明](docs/BOOT_RECOVERY.md)。
+Linux：
 
-API Key 保存在本源码根目录的 `.env`，与本 README 同级，格式为 `DEEPSEEK_API_KEY=你的密钥`。真实文件已被 Git 忽略；`.env.example` 是可提交的空示例。程序始终从这个根目录读取 `.env`，不随运行目录或 `--config` 位置变化。Linux 对应 `/opt/wxbridge/.env`。
+```bash
+.venv/bin/python -m pip install -r requirements-test.txt
+.venv/bin/python -X utf8 scripts/test-offline.py
+.venv/bin/python scripts/check-repository.py --history
+```
 
-人格提示词独立存放在 [prompts/system.md](prompts/system.md)，由 `wxbridge/ai/prompts.py` 读取，配置使用 `deepseek.system_prompt_file` 指向它。可直接写较长的 Markdown、多段描述和对话示例；仅替换 `{bot_name}`，其他花括号无需转义。编辑同一文件后，下一次生成回复时读取新内容；旧版内联 `system_prompt` 配置仍兼容。
+Linux 的原生图片解码回归还需要 `libde265` 和 FFmpeg 运行库；Debian/Ubuntu 可用 `sudo apt install libde265-0 ffmpeg`。Windows 按平台跳过 Linux 专用检查。Python 运行依赖范围见 `requirements.txt`，离线验证使用 `requirements-test.txt` 中的固定版本。
 
-[config.example.jsonc](config.example.jsonc) 是带注释的配置参考：`source: db`，运行数据默认指向 `/run/wxbridge-trial`，`dry_run: true`。实际运行使用标准 JSON 格式的 `config.json`，只填写要覆盖的字段即可；参考示例填写时去掉注释，未填写项继承 `config.defaults.json`。本地没有从 Linux 复制真实配置或 API Key。
+VS Code 打开仓库目录或 `wechat-group-bot.code-workspace`，选择仓库内 `.venv` 解释器即可。Windows 也可用 `Open-Project.cmd` 和 `Test-Offline.ps1`。
 
-`python -m wxbridge run` 尊重配置中的 dry-run；`run --send` 显式启用当前进程发送，`run --dry-run` 关闭发送但仍可能调用模型，`--echo` 用固定回复代替模型。`scripts/run-live.py` 保留既有服务入口，转到同一个 CLI/runtime 流程并显式传入 `--send`。
+## 目录与代码入口
 
-已有实机验证针对 Debian 13.7 amd64、微信 4.1.13.26。当前已准备持久开机恢复，真实冷启动验证了手机登录后的密钥重建与监听恢复；登录/手机认证仍需人工参与。系统依赖自动安装、长期重连和客户端升级兼容仍需另行验证。
+```text
+wxbridge/
+  cli.py、config.py       命令入口与配置加载
+  app/                    轮询、调度、工作进程与诊断
+  ai/                     模型、提示词、搜索、图片和输出
+  wechat/                 数据库、消息解析、解密与界面
+  storage/                事务队列、人物记忆和语境学习
+prompts/                  人格、后台整理提示词与表情资料
+scripts/                  离线检查、Linux 会话与运维脚本
+tests/                    合成数据回归
+docs/                     配置、架构和部署说明
+.github/                  自动检查与协作模板
+```
+
+建议从 `wxbridge/cli.py → app/runtime.py → app/bot.py` 沿一次收发阅读，再进入具体模块。详细职责见 [代码导读](docs/CODE_GUIDE.md) 和 [包内地图](wxbridge/README.md)。
+
+## 配置与实际运行
+
+| 文件 | 用途 |
+| --- | --- |
+| `config.defaults.json` | 程序默认值，必须随代码分发 |
+| `config.example.jsonc` | 带注释参考，不能直接作为标准 JSON 配置加载 |
+| `config.json` | 本机实际覆盖配置，未填写字段继承默认值，Git 忽略 |
+| `.env` | 仓库根目录的 API Key，Git 忽略；空模板为 `.env.example` |
+| `prompts/system.md` | 群聊人格，每次生成重新读取 |
+| `prompts/memory.md` | 后台整理提示词 |
+| `memory/` | 本机私有记忆，Git 忽略 |
+
+初次配置按 [部署说明](docs/DEPLOYMENT.md) 准备专用用户、原生微信、私有 `tmpfs,noswap`、会话与账号绑定。完整运行不能仅靠 `pip install`。配置项变更通常需重启监听；同一路径的人格文件修改从下一次生成生效。
+
+`python -m wxbridge run --dry-run` 关闭发送，仍可能调用 API；纯离线检查使用上面的测试脚本。`run --send` 显式启用发送。不要同时启动两个监听器或绕过草稿、目标群和发送确认校验。常规状态检查使用 `queue-status`，不输出正文。
+
+## 文档
+
+| 内容 | 入口 |
+| --- | --- |
+| 配置与启动 | [配置项](docs/CONFIG.md)、[Linux 部署](docs/DEPLOYMENT.md)、[开机恢复](docs/BOOT_RECOVERY.md) |
+| 代码与排障 | [完整流程](docs/CODE_GUIDE.md)、[常见问题](docs/TROUBLESHOOTING.md) |
+| 模型功能 | [引用](docs/REFERENCES.md)、[图片](docs/VISION.md)、[搜索](docs/SEARCH.md)、[表情](docs/EMOTICONS.md) |
+| 记忆与主动接话 | [人物记忆](docs/MEMORY.md)、[语境学习](docs/LEARNING.md)、[主动接话](docs/PROACTIVE.md) |
+| 参与开发 | [贡献流程](CONTRIBUTING.md)、[安全与隐私](SECURITY.md) |
+
+提交前检查暂存内容及 Git 历史，不上传真实配置、聊天、账号 ID、数据库、登录状态或记忆。GitHub Actions 仅运行离线回归，不连接生产服务器、不自动部署。
