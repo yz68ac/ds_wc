@@ -33,7 +33,20 @@
     "min_new_messages": 3, // 再次判断需 3 条新文字，也用于作废过时短句。
     "reply_ttl_seconds": 60, // 主动结果有效期；不得小于下面的请求时限。
     "timeout_seconds": 20, // 判断关闭思考，不影响普通 @ 回复的 high。
-    "max_reply_chars": 30 // 主动短句硬上限，过长则放弃。
+    "max_reply_chars": 30, // 主动短句硬上限，过长则放弃。
+    "entry_cooldown_seconds": 300, // 两次主动入场至少间隔5分钟；普通发送冷却仍生效。
+    "max_entries_per_hour": 3, // 滚动一小时最多3次主动入场，真实@不计入。
+    "opportunities": {
+      "enabled": true, // 提到助手/引用她，或低频多人聊天时也可请求判断；不保证会发言。
+      "min_messages": 3, // 低频聊天候选门槛，原十条活跃门槛仍保留。
+      "min_senders": 2,
+      "address_names": ["ds"] // 附加自然称呼，同时读取bot_name及mentions中的别名。
+    },
+    "conversation": {
+      "enabled": true, // 总开关proactive.enabled也必须开启。
+      "window_seconds": 120, // 确认发出后等待回应的窗口；没有新消息不调用模型。
+      "max_followups": 2 // 每次入场/真实@回复后最多额外两轮；每轮仍由模型判断。
+    }
   },
   "target": {
     "chat": "把这里改成你们的群名", // 推荐完整群名，也可填写稳定的群 ID。

@@ -283,7 +283,8 @@ class WeChatDeepSeekBot:
             for msg in rows:
                 if (msg["local_id"] > intent["baseline"] and msg.get("sender") == self.store.self_wxid
                         and msg.get("type") == 1 and msg.get("text") == text):
-                    self.journal.acknowledge(task["id"], msg["local_id"], time.time(), memory=self.memory is not None)
+                    self.journal.acknowledge(task["id"], msg["local_id"], time.time(), memory=self.memory is not None,
+                                             proactive_config=self.cfg.get('proactive'))
                     log.info("发送确认 task=%s part=%s local_id=%s", task["id"], intent["part"], msg["local_id"])
                     return
             if len(rows) < 100:

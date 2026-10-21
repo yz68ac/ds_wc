@@ -12,7 +12,7 @@
 
 `reply_style.wechat_emoticons_enabled` 默认false，可在实际配置中按需开启；允许少量微信内置文本表情和适当的单发表情。`reply_style.omit_trailing_period` 默认true，普通短句省略尾部中文句号，保留技术内容与其他标点。两项均须布尔值，改后重启监听；20项梗义、来源及处理范围见 [微信表情与标点](EMOTICONS.md)。
 
-主动接话使用 `proactive` 配置段，默认关闭，可在实际配置中按需开启。默认近300秒至少10条群成员文字、机器人无发言；最多每10秒检查，有新文字且满足资格才请求模型。两次判断至少60秒和3条新文字，模型可沉默；@优先，主动句子最多30字。全部参数、重启与失效规则见 [主动接话说明](PROACTIVE.md)。
+主动接话使用 `proactive` 配置段，默认关闭，可在实际配置中按需开启。保留近300秒十条文字的门槛，增加自然称呼/引用与低频多人聊天候选；每小时默认最多三次主动入场。确认发出后可在120秒内判断是否继续，最多额外两轮；没有新消息不请求模型，真实@优先，短句最多30字。全部参数、重启与失效规则见 [主动接话说明](PROACTIVE.md)。
 
 人物记忆使用 `memory` 配置段：enabled（默认 true）、directory（源码根目录下 memory）、model（deepseek-flash）、thinking（enabled）、reasoning_effort（max）、min_interval_seconds（60）、prompt_max_chars（1200）、max_tokens（2400）、timeout_seconds（30）。thinking 可选 enabled/disabled，reasoning_effort 可选 low/high/max，关闭思考时不发送深度参数；记忆整理独立于主回答的 high。规则、期限和维护命令见 [MEMORY.md](MEMORY.md)。
 

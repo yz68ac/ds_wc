@@ -157,7 +157,7 @@ class Journal:
             return task["notice"]["text"]
         return task["chunks"][task["intent"]["part"]]
 
-    def enqueue_proactive(self, text, through, now, expires):
+    def enqueue_proactive(self, text, through, now, expires, *, metadata=None):
         with self.db:
             if self.tasks():
                 return None
@@ -167,6 +167,9 @@ class Journal:
                 intent=None, blocked_reason='', closed_at=now, deadline=now,
                 proactive=dict(snapshot_id=through, expires_at=expires))
             self.put(task)
+            if metadata:
+                task['proactive'].update(metadata)
+                self.put(task)
             return task
 
     def discard_proactive(self, identifier, reason):
@@ -203,7 +206,7 @@ class Journal:
                                   deadline=None, confirm_timeout=timeout, ui=None)
             self.put(task)
 
-    def acknowledge(self, task_id: int, local_id: int, now: float, *, memory=False):
+    def acknowledge(self, task_id: int, local_id: int, now: float, *, memory=False, proactive_config=None):
         with self.db:
             task = self.task(task_id)
             if not task["intent"]:
@@ -224,6 +227,8 @@ class Journal:
                 self.set('proactive', {**self.get('proactive', {}), 'outcome': 'sent',
                     'last_sent_at': now, 'last_ack_id': local_id, 'error': ''})
             if task["next_chunk"] == len(task["chunks"]):
+                if proactive_config and proactive_config['enabled']:
+                    self._conversation_confirmed(task, local_id, now, proactive_config)
                 if memory and task.get('trigger_kind') != 'proactive':
                     # 与最终分片确认同事务；只留触发指针，主进程随后重读原窗口。
                     self.enqueue_memory('reply', 'reply:'+str(task_id),
@@ -231,6 +236,33 @@ class Journal:
                 # 不长期保留已完成的群聊正文。
                 task.update(phase="done", triggers=[], chunks=[])
             self.put(task)
+
+    def _conversation_confirmed(self, task, local_id, now, settings):
+        """与发出确认同事务；只存消息指针、成员ID和预算，不复制聊天正文。"""
+        data = task.get('proactive', {})
+        optional = task.get('trigger_kind') == 'proactive'
+        mode = data.get('mode', 'entry')
+        if optional and mode == 'entry':
+            entries = [t for t in self.get('proactive_entries', []) if 0 <= now-t < 3600]
+            self.set('proactive_entries', entries+[now])
+        if not settings['conversation']['enabled']:
+            self.set('proactive_session', None)
+            return
+        participant = data.get('recipient') if optional else task['sender']
+        if not participant:
+            return  # 旧版短句缺少接话来源，不猜测成员。
+        followups = 0
+        if optional and mode == 'followup':
+            previous = self.get('proactive_session')
+            if not previous or previous['anchor_id'] != data['anchor_id']:
+                return
+            followups = previous['followups']+1
+        if followups >= settings['conversation']['max_followups']:
+            self.set('proactive_session', None)
+            return
+        self.set('proactive_session', dict(anchor_id=local_id, participant=participant,
+            expires_at=now+settings['conversation']['window_seconds'], followups=followups,
+            origin='entry' if optional and mode == 'entry' else 'reply' if not optional else previous['origin']))
 
     def memory_jobs(self):
         jobs = [json.loads(row[0]) for row in self.db.execute("SELECT data FROM memory_jobs ORDER BY id")]
@@ -256,6 +288,7 @@ class Journal:
     def status(self) -> dict:
         tasks = self.tasks()
         head = self.head()
+        session = self.get('proactive_session') or {}
         return dict(queue_length=len(tasks), cursor=self.get("cursor", 0),
                     last_success=self.get("last_success", 0),
                     phase=("blocked" if head and head["blocked_reason"] else
@@ -268,6 +301,8 @@ class Journal:
                     last_vision=self.get("last_vision"),
                     last_search=self.get("last_search"),
                     proactive=self.get('proactive'),
+                    conversation=dict(active=bool(session), expires_at=session.get('expires_at'),
+                                      followups_sent=session.get('followups', 0)),
                     memory_pending=len(self.memory_jobs()), memory_error=self.get("memory_error", ""),
                     passive_learning=self.get('passive_learning'),
                     tasks=[dict(id=t["id"], version=t["version"], phase=t["phase"], trigger_kind=t.get('trigger_kind', 'mention'),

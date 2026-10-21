@@ -26,7 +26,20 @@
     "min_new_messages": 3,
     "reply_ttl_seconds": 60,
     "timeout_seconds": 20,
-    "max_reply_chars": 30
+    "max_reply_chars": 30,
+    "entry_cooldown_seconds": 300,
+    "max_entries_per_hour": 3,
+    "opportunities": {
+      "enabled": true,
+      "min_messages": 3,
+      "min_senders": 2,
+      "address_names": ["ds"]
+    },
+    "conversation": {
+      "enabled": true,
+      "window_seconds": 120,
+      "max_followups": 2
+    }
   },
   "target": {
     "chat": "",

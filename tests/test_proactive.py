@@ -88,6 +88,9 @@ class ProactivePipelineTests(unittest.TestCase):
 
     def make_bot(self):
         self.cfg['proactive']['enabled']=True
+        # 原十条门槛的兼容回归；新策略在独立夹具中启用。
+        self.cfg['proactive']['opportunities']['enabled']=False
+        self.cfg['proactive']['conversation']['enabled']=False
         pipeline.PipelineTests.make_bot(self)
 
     def chat(self,count=10,start=1):
