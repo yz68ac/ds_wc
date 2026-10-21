@@ -48,6 +48,13 @@ class Journal:
                 self.set("identity", identity)
                 self.set("cursor", baseline)
                 self.set("last_success", 0)
+            for row in self.db.execute('SELECT id,data FROM memory_jobs').fetchall():
+                job = json.loads(row[1])
+                if 'origin' not in job:
+                    job.update(origin='reply', key='reply:'+str(row[0]))
+                    self.put_memory(job)
+            maximum = self.db.execute('SELECT COALESCE(MAX(id),0) FROM memory_jobs').fetchone()[0]
+            self.set('memory_sequence', max(maximum, self.get('memory_sequence', 0)))
 
     def close(self):
         self.db.close()
@@ -219,15 +226,23 @@ class Journal:
             if task["next_chunk"] == len(task["chunks"]):
                 if memory and task.get('trigger_kind') != 'proactive':
                     # 与最终分片确认同事务；只留触发指针，主进程随后重读原窗口。
-                    self.db.execute("INSERT OR IGNORE INTO memory_jobs VALUES (?,?)", (task_id,
-                        json.dumps(dict(id=task_id, state="pending", retry_at=0, attempts=0,
-                            triggers=[dict(local_id=m["local_id"], time=m["time"]) for m in task["triggers"]]))))
+                    self.enqueue_memory('reply', 'reply:'+str(task_id),
+                        [dict(local_id=m['local_id'], time=m['time']) for m in task['triggers']])
                 # 不长期保留已完成的群聊正文。
                 task.update(phase="done", triggers=[], chunks=[])
             self.put(task)
 
     def memory_jobs(self):
-        return [json.loads(row[0]) for row in self.db.execute("SELECT data FROM memory_jobs ORDER BY id")]
+        jobs = [json.loads(row[0]) for row in self.db.execute("SELECT data FROM memory_jobs ORDER BY id")]
+        return sorted(jobs, key=lambda j: ((j.get('window') or [0, j['triggers'][-1]['time']])[-1], j['id']))
+
+    def enqueue_memory(self, origin, key, triggers, window=None):
+        if any(j.get('key') == key for j in self.memory_jobs()):
+            return
+        identifier = self.get('memory_sequence', 0)+1
+        self.set('memory_sequence', identifier)
+        self.put_memory(dict(id=identifier, origin=origin, key=key, state='pending', retry_at=0,
+                             attempts=0, triggers=triggers, **({'window':window} if window else {})))
 
     def put_memory(self, job):
         self.db.execute("INSERT OR REPLACE INTO memory_jobs VALUES (?,?)", (job["id"], json.dumps(job)))
@@ -254,6 +269,7 @@ class Journal:
                     last_search=self.get("last_search"),
                     proactive=self.get('proactive'),
                     memory_pending=len(self.memory_jobs()), memory_error=self.get("memory_error", ""),
+                    passive_learning=self.get('passive_learning'),
                     tasks=[dict(id=t["id"], version=t["version"], phase=t["phase"], trigger_kind=t.get('trigger_kind', 'mention'),
                                 generation=t["generation"], questions=len(t["triggers"]),
                                 next_chunk=t["next_chunk"], chunks=len(t["chunks"]),

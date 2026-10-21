@@ -10,6 +10,8 @@ from pathlib import Path
 import re
 import tempfile
 from wxbridge.ai.avatars import validate_visual, visual_description
+from wxbridge.storage import expression_memory
+from wxbridge.ai.emoticons import token_pattern
 
 DAY = 86400
 LIMITS = {"scene": 10, "event": 10, "preference": 5, "impression": 3}
@@ -116,6 +118,7 @@ class MemoryStore:
                             require(type(entry[key]) in (int, float) and __import__("math").isfinite(entry[key]))
             except (KeyError, TypeError) as exc:
                 raise ValueError("memory_invalid_file") from exc
+            expression_memory.validate(self.data)
 
     def persist(self, now, *, data=None):
         data = self.data if data is None else data
@@ -132,6 +135,9 @@ class MemoryStore:
             initial = person.get("initial_impression", {})
             if initial.get("state") == "ready":
                 lines.append("- 初始头像视觉（非性格判断，低权重）："+visual_description(initial["visual"]))
+        lines += ['', '## 语境表达学习（候选不用于生成）']
+        for r in self.data.get('learning', {}).get('records', []):
+            lines.append(f"- {r['id']} {r['scope']}/{r['state']} {r['expression']}；语境：{r['context']}；{r['meaning']}")
         try:
             atomic_write(self.projection, "\n".join(lines)+"\n")
         except OSError as exc:
@@ -143,7 +149,23 @@ class MemoryStore:
         return dict(revision=self.data["revision"], watermark=self.data["watermark"],
                     members=len(self.data["members"]),
                     entries=sum(len(active_entries(p, now)) for p in self.data["members"].values()),
-                    initial_impressions=sum(p.get("initial_impression", {}).get("state") == "ready" for p in self.data["members"].values()))
+                    initial_impressions=sum(p.get("initial_impression", {}).get("state") == "ready" for p in self.data["members"].values()),
+                    learning_candidates=sum(r['state'] == 'candidate' for r in self.data.get('learning', {}).get('records', [])),
+                    learning_stable=sum(r['state'] == 'stable' for r in self.data.get('learning', {}).get('records', [])))
+
+    def enable_learning(self, cursor, now, enabled=True):
+        current = self.data.get('learning')
+        if enabled and (current is None or not current.get('enabled', True)):
+            data = copy.deepcopy(self.data)
+            data.setdefault('learning', dict(started_after_id=cursor, records=[]))
+            data['learning'].update(started_after_id=cursor, enabled=True)
+            data['revision'] += 1
+            self.persist(now, data=data)
+        elif not enabled and current and current.get('enabled', True):
+            data = copy.deepcopy(self.data)
+            data['learning']['enabled'] = False
+            data['revision'] += 1
+            self.persist(now, data=data)
 
     def background(self, labels, now):
         result = {}
@@ -154,7 +176,7 @@ class MemoryStore:
                                      entries=active_entries(p, now))
         return result
 
-    def prompt(self, labels, asker, now, budget=1200, *, use_avatar=True):
+    def prompt(self, labels, asker, now, budget=1200, *, use_avatar=True, dialogue='', use_learning=True):
         result, used, visual_hints = [], 0, []
         order = [asker, *[u for u in labels if u != asker and u in self.data["members"]]]
         for uid in order[:5]:
@@ -186,6 +208,10 @@ class MemoryStore:
                 if used+len(line)+1 <= budget:
                     result.append(line)
                     used += len(line)+1
+        if use_learning:
+            for line in expression_memory.prompt(self.data, labels, asker, dialogue, budget-used, now):
+                result.append(line)
+                used += len(line)+1
         # 实际对话记忆和互动偏好先占预算，头像线索只用剩余空间。
         for line in visual_hints:
             if used+len(line)+1 <= budget:
@@ -199,7 +225,8 @@ class MemoryStore:
             raise ValueError("memory_stale_revision")
         if snapshot["watermark"] != self.data["watermark"]:
             raise ValueError("memory_stale_watermark")
-        if not isinstance(proposal, dict) or set(proposal) not in ({"updates"}, {"updates", "avatar_updates"}) or not isinstance(proposal["updates"], list):
+        if (not isinstance(proposal, dict) or 'updates' not in proposal or
+                set(proposal)-{'updates', 'avatar_updates', 'learning'} or not isinstance(proposal['updates'], list)):
             raise ValueError("memory_invalid_schema")
         if len(proposal["updates"]) > len(snapshot["members"]):
             raise ValueError("memory_invalid_members")
@@ -209,7 +236,7 @@ class MemoryStore:
                     and m["local_id"] not in processed}
         interactions = [m for m in snapshot.get("interactions", []) if m.get("kind") == "pat"
                         and m["local_id"] > self.data["watermark"] and m["local_id"] not in processed]
-        data, seen = copy.deepcopy(self.data), set()
+        data, seen, scored = copy.deepcopy(self.data), set(), set()
         def sources(value, label):
             if not isinstance(value, list) or not value or len(value) > 30 or len(set(value)) != len(value):
                 raise ValueError("memory_invalid_sources")
@@ -247,6 +274,8 @@ class MemoryStore:
                 if isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or not 0 <= confidence <= 1:
                     raise ValueError("memory_invalid_confidence")
                 src = sources(item["sources"], label)
+                if kind == 'impression' and all(not re.sub(token_pattern(), '', m['text']).strip() for m in src):
+                    continue
                 previous = next((e for e in person["entries"] if e["id"] == item["replaces"]), None)
                 if item["replaces"] is not None and (not previous or previous["kind"] != kind or previous["mode"] != mode):
                     raise ValueError("memory_invalid_replacement")
@@ -266,6 +295,9 @@ class MemoryStore:
             # 即使模型建议零变化也不能用旧来源续期。
             if delta:
                 src = sources(relation["sources"], label)
+                if all(not re.sub(token_pattern(), '', m['text']).strip() for m in src):
+                    delta = 0
+            if delta:
                 reason = text(relation["reason"], 160)
                 score = affinity_value(person, now)
                 day = datetime.fromtimestamp(max(m["time"] for m in src)).date().isoformat()
@@ -274,6 +306,7 @@ class MemoryStore:
                 new_score = max(0, min(100, score+change))
                 daily[day] = daily.get(day, 0)+abs(new_score-score)
                 person["affinity"] = new_score
+                scored.add(uid)
                 person["affinity_evidence"] = (person["affinity_evidence"]+[dict(delta=new_score-score, reason=reason,
                     sources=[m["local_id"] for m in src], time=max(m["time"] for m in src))])[-30:]
             person["daily"] = {d: n for d, n in person["daily"].items() if (datetime.fromtimestamp(now).date()-datetime.fromisoformat(d).date()).days <= 90}
@@ -288,7 +321,7 @@ class MemoryStore:
                 p["aliases"] = ([n for n in p["aliases"] if n != member["nickname"]]+([p["nickname"]] if p["nickname"] else []))[-5:]
                 p["nickname"] = member["nickname"]
             # 先结算旧的自然回归，再重新设置互动时钟。
-            if member["label"] not in seen or not next(u for u in proposal["updates"] if u["member"] == member["label"])["affinity"]["delta"]:
+            if uid not in scored:
                 p["affinity"] = affinity_value(p, now)
             p["last_interaction"] = max(m["time"] for m in own)
             p["decay_anchor"] = p["last_interaction"]
@@ -301,6 +334,7 @@ class MemoryStore:
                                         key=lambda e: (e["confidence"], e["confirmed_at"]), reverse=True)[:limit]
         for p in data["members"].values():
             p["entries"] = active_entries(p, now)
+        expression_memory.apply(data, proposal.get('learning', []), snapshot, now)
         self._apply_avatars(data, proposal.get("avatar_updates", []), snapshot, now)
         data["watermark"] = max(data["watermark"], snapshot["through"])
         # 微信可能晚同步一条发送时间较早、local_id 却比触发大的消息。
@@ -346,9 +380,32 @@ class MemoryStore:
                     code = "avatar_analysis_unavailable"
                 p["initial_impression"] = dict(state="unavailable", checked_at=now, attempts=attempts, error=code)
 
-    def maintain(self, action, *, member=None, entry=None, text=None, watermark=0, now):
+    def maintain(self, action, *, member=None, entry=None, text=None, watermark=0, now, scope=None):
+        matches = [r for r in self.data.get('learning', {}).get('records', [])
+                   if (scope is None or r['scope'] == scope) and (member is None or r['owner'] == member)
+                   and (entry is None or r['id'] == entry)]
+        if scope in ('group', 'bot') or (entry is not None and matches):
+            data = copy.deepcopy(self.data)
+            if action in ('clear', 'forget'):
+                if action == 'forget' and entry and not matches:
+                    raise ValueError('memory_entry_not_found')
+                expression_memory.forget(data, scope=scope, member=member, entry=entry, now=now)
+            elif action == 'correct' and entry and len(matches) == 1:
+                replacement = expression_memory.clean_text(text, 120)
+                record = next(r for r in data['learning']['records'] if r['id'] == entry)
+                record.update(meaning=replacement, corrected_at=now, confirmed_at=now)
+                if record['scope'] == 'group':
+                    data['learning']['records'] = [r for r in data['learning']['records'] if r.get('basis') != entry]
+            else:
+                raise ValueError('memory_invalid_action')
+            data['watermark'] = max(data['watermark'], watermark)
+            data['revision'] += 1
+            self.persist(now, data=data)
+            return
         if action == "clear":
             self.data["members"] = {}
+            if 'learning' in self.data:
+                self.data['learning']['records'] = []
         elif action == "forget":
             person = self.data["members"].get(member)
             if not person:
@@ -365,6 +422,7 @@ class MemoryStore:
                 person["entries"] = [e for e in person["entries"] if e["id"] != entry]
             else:
                 del self.data["members"][member]
+                expression_memory.forget(self.data, member=member, now=now)
         elif action == "correct":
             if not isinstance(text, str) or not text.strip() or len(text) > 220:
                 raise ValueError("memory_invalid_text")
@@ -391,6 +449,7 @@ class MemoryStore:
             if initial.get("state") == "ready" and now-initial["learned_at"] >= 90*DAY:
                 person["initial_impression"] = dict(state="expired", checked_at=initial["checked_at"])
                 changed = True
+        changed = expression_memory.prune(data, now) or changed
         if changed:
             data["revision"] += 1
             self.persist(now, data=data)

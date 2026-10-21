@@ -21,6 +21,7 @@ from wxbridge.wechat.store import StoreError, WeChatStore
 from wxbridge.wechat.pats import is_pat
 from wxbridge.app.workers import ProcessJob
 from wxbridge.app.proactive import ProactiveController
+from wxbridge.app.learning import enqueue_if_active, eligible_messages
 
 log = logging.getLogger("wxbridge")
 
@@ -73,6 +74,16 @@ class WeChatDeepSeekBot:
                 if not directory.is_absolute():
                     directory = PROJECT_ROOT/directory
                 self.memory = MemoryStore(directory, self.journal.get("identity"))
+                self.memory.enable_learning(self.last_local_id, time.time(), cfg['memory']['learning']['enabled'])
+                settings = cfg['memory']['learning']
+                enabled = settings['enabled'] and settings['passive_enabled']
+                state = self.journal.get('passive_learning')
+                with self.journal.db:
+                    if state is None or (enabled and not state.get('enabled', False)):
+                        state = dict(started_after_id=self.last_local_id, checked_id=self.last_local_id,
+                                     checked_at=0, enqueued_at=0)
+                    state['enabled'] = enabled
+                    self.journal.set('passive_learning', state)
             except Exception as exc:
                 self.memory_error = type(exc).__name__
                 log.error("记忆初始化失败 category=%s", self.memory_error)
@@ -190,7 +201,9 @@ class WeChatDeepSeekBot:
                         labels = member_labels(select_context(self.cfg, context, trigger), task["triggers"], self.store.self_wxid)
                         memory = dict(labels=labels, text=self.memory.prompt(labels, trigger["sender"], time.time(),
                                       int(self.cfg["memory"]["prompt_max_chars"]),
-                                      use_avatar=self.cfg["memory"].get("avatar", {}).get("enabled", False)))
+                                      use_avatar=self.cfg["memory"].get("avatar", {}).get("enabled", False),
+                                      dialogue='\n'.join(m.get('text', '') for m in [*context, trigger]),
+                                      use_learning=self.cfg['memory']['learning']['enabled']))
                     except Exception as exc:
                         self.memory_error = type(exc).__name__
                         log.warning("跳过记忆背景 category=%s", self.memory_error)
@@ -353,6 +366,7 @@ class WeChatDeepSeekBot:
                 self.memory.apply(result["proposal"], value, now)
                 self.journal.finish_memory(record["id"], now)
                 log.info("记忆更新 task=%s revision=%s", record["id"], self.memory.data["revision"])
+            enqueue_if_active(self, now)
             jobs = self.journal.memory_jobs()
             if now-self.memory_pruned_at >= 60:
                 self.memory.prune(now)
@@ -369,13 +383,23 @@ class WeChatDeepSeekBot:
             if any(t["generation"] == "pending" for t in self.journal.tasks()):
                 return
             pointers = record["triggers"]
-            start, end = context_bounds(self.cfg, pointers[-1])
+            start, end = record.get('window') or context_bounds(self.cfg, pointers[-1])
             context = self.store.messages_in_window(self.chat_id, start, end)
             ids = {m["local_id"] for m in pointers}
             triggers = [m for m in context if m["local_id"] in ids]
             if len(triggers) != len(ids):
                 raise ValueError("memory_source_unavailable")
-            value = snapshot(self.cfg, context, triggers, self.journal.get("identity"), self.memory, now)
+            value = snapshot(self.cfg, context, triggers, self.journal.get("identity"), self.memory, now, window=record.get('window'))
+            if record.get('origin') == 'activity':
+                settings = self.cfg['memory']['learning']
+                fresh = eligible_messages([m for m in context if m['local_id'] <= max(ids)], self.store.self_wxid, end, settings,
+                    max(self.memory.data['watermark'], self.memory.data['learning']['started_after_id'],
+                        self.journal.get('passive_learning', {}).get('started_after_id', 0)),
+                    self.memory.data.get('processed_ids', []))
+                if (not settings['enabled'] or not settings['passive_enabled'] or len(fresh) < settings['min_new_messages']
+                        or len({m['sender'] for m in fresh}) < settings['min_senders']):
+                    self.journal.finish_memory(record['id'], self.journal.get('memory_last_update', 0))
+                    return
             if not value["messages"] and not value.get("interactions"):
                 # 遗忘水位或已处理的重叠窗口，不额外调用模型。
                 self.journal.finish_memory(record["id"], self.journal.get("memory_last_update", 0))
@@ -415,7 +439,8 @@ class WeChatDeepSeekBot:
             with self.journal.db:
                 if record:
                     record.update(state="pending", attempts=record["attempts"]+1,
-                                  retry_at=now+min(300, 60*(record["attempts"]+1)))
+                                  retry_at=now+max(self.cfg['memory']['learning']['min_interval_seconds'] if record.get('origin') == 'activity' else 0,
+                                                   min(300, 60*(record["attempts"]+1))))
                     self.journal.put_memory(record)
                 import re
                 code = str(exc) if re.fullmatch(r"memory_[a-z_]+", str(exc)) else type(exc).__name__

@@ -14,7 +14,7 @@
   "reply_to_backlog": false, // 生产入口强制关闭，避免新部署补答旧消息。
   // 输出语气：只控制机器人表达，不修改群友原文；改配置后重启监听。
   "reply_style": {
-    "wechat_emoticons_enabled": false, // 开启后偶尔用一个微信表情，也可单发表情；Linux本轮开启。
+    "wechat_emoticons_enabled": false, // 开启后偶尔用一个微信表情，也可单发表情；按需在实际配置开启。
     "omit_trailing_period": true // 普通短句去掉末尾“。”及表情前的句号；保留其他标点和技术内容。
   },
   // @ 回复队列：合并默认关闭，每次真实 @ 独立排队。
@@ -25,7 +25,7 @@
   },
   // 主动接话：达到门槛后仍可选择沉默；真实 @ 优先。
   "proactive": {
-    "enabled": false, // 示例默认关闭；当前 Linux 实际配置已开启。
+    "enabled": false, // 默认关闭；确认群内使用方式后按需开启。
     "window_seconds": 300, // 检查最近 5 分钟，期间机器人有发言就不插话。
     "min_messages": 10, // 至少 10 条群成员文字，图片/表情/系统消息不计数。
     "check_interval_seconds": 10, // 有新消息时，资格检查的最短间隔。
@@ -90,6 +90,15 @@
     "model": "deepseek-flash",
     "thinking": "enabled", // 记忆文字整理独立开关：enabled / disabled。
     "reasoning_effort": "max", // low / high / max；只在开启思考时发送。
+    "system_prompt_file": "prompts/memory.md", // 可编辑的记忆整理与语境学习提示词。
+    "learning": {
+      "enabled": true, // 记录语境表达，跨至少两天的证据后形成稳定习惯。
+      "passive_enabled": true, // 活跃闲聊也整理全部记忆，不主动发送消息。
+      "window_seconds": 300,
+      "min_new_messages": 10, // 相同成员相同内容刷屏不累计。
+      "min_senders": 2,
+      "min_interval_seconds": 300 // 被动批次最短间隔，@ 后整理仍最短60秒。
+    },
     "min_interval_seconds": 60, // 后台整理最短间隔，前台回复优先。
     "prompt_max_chars": 1200, // 每轮注入的记忆字符预算。
     "max_tokens": 2400,

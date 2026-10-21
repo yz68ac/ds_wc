@@ -79,6 +79,15 @@ class ProjectEnvTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "memory."+key):
                         load_config(self.config_file)
 
+    def test_learning_configuration_rejects_invalid_switches_and_thresholds(self):
+        with patch('wxbridge.config.PROJECT_ROOT',self.root),patch.dict(os.environ,{},clear=True):
+            for key,value in (('enabled',1),('passive_enabled','true'),('window_seconds',0),
+                              ('min_new_messages',1),('min_senders',1),('min_interval_seconds',60)):
+                with self.subTest(key=key):
+                    self.config_file.write_text(json.dumps(dict(memory=dict(learning={key:value}))),encoding='utf-8')
+                    with self.assertRaisesRegex(ValueError,'memory.learning'):
+                        load_config(self.config_file)
+
 
 if __name__ == "__main__":
     unittest.main()

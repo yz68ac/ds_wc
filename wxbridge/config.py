@@ -130,6 +130,17 @@ def load_config(path: str | Path = "config.json") -> dict[str, Any]:
         raise ValueError("memory.thinking 必须为 enabled 或 disabled")
     if memory["reasoning_effort"] not in ("low", "high", "max"):
         raise ValueError("memory.reasoning_effort 必须为 low、high 或 max")
+    if not isinstance(memory['system_prompt_file'], str) or not memory['system_prompt_file'].strip():
+        raise ValueError('memory.system_prompt_file 必须为提示词文件路径')
+    memory_prompt = Path(memory['system_prompt_file']).expanduser()
+    memory['system_prompt_file'] = str(memory_prompt if memory_prompt.is_absolute() else PROJECT_ROOT/memory_prompt)
+    learning = memory['learning']
+    if not isinstance(learning, dict) or any(type(learning.get(key)) is not bool for key in ('enabled', 'passive_enabled')):
+        raise ValueError('memory.learning 开关必须为布尔值')
+    for key, minimum, maximum in (('window_seconds', 60, 3600), ('min_new_messages', 2, 100),
+                                  ('min_senders', 2, 20), ('min_interval_seconds', 300, 86400)):
+        if type(learning.get(key)) is not int or not minimum <= learning[key] <= maximum:
+            raise ValueError('memory.learning.'+key+' 超出范围')
     for key, minimum, maximum in (("min_interval_seconds", 60, 86400), ("prompt_max_chars", 100, 1200),
                                   ("max_tokens", 256, 2400), ("timeout_seconds", 1, 30)):
         if type(memory[key]) is not int or not minimum <= memory[key] <= maximum:

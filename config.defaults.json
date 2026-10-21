@@ -86,6 +86,15 @@
     "model": "deepseek-flash",
     "thinking": "enabled",
     "reasoning_effort": "max",
+    "system_prompt_file": "prompts/memory.md",
+    "learning": {
+      "enabled": true,
+      "passive_enabled": true,
+      "window_seconds": 300,
+      "min_new_messages": 10,
+      "min_senders": 2,
+      "min_interval_seconds": 300
+    },
     "min_interval_seconds": 60,
     "prompt_max_chars": 1200,
     "max_tokens": 2400,

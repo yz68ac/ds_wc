@@ -297,7 +297,7 @@ class MemoryPipelineTests(PipelineTests):
         job = next(j for j in reversed(self.jobs) if j.kind == "memory")
         job.result = dict(ok=True, proposal=suggestion())
         self.bot.tick()
-        self.assertEqual(self.bot.memory.status(self.now)["revision"], 1)
+        self.assertEqual(self.bot.memory.status(self.now)["revision"], 2)  # 启用学习基线与首次整理各一次修订。
         self.restart()
         self.add(5)
         self.bot.tick()

@@ -128,7 +128,9 @@ class ProactiveController:
             if self.bot.memory:
                 labels = member_labels(rows, [rows[-1]], self.bot.store.self_wxid)
                 memory = dict(labels=labels, text=self.bot.memory.prompt(labels, rows[-1]['sender'], now,
-                    self.bot.cfg['memory']['prompt_max_chars'], use_avatar=self.bot.cfg['memory']['avatar']['enabled']))
+                    self.bot.cfg['memory']['prompt_max_chars'], use_avatar=self.bot.cfg['memory']['avatar']['enabled'],
+                    dialogue='\n'.join(m.get('text', '') for m in rows),
+                    use_learning=self.bot.cfg['memory']['learning']['enabled']))
             prompt = build_prompt(self.bot.cfg, rows, self.bot.chat_title, memory)
             through = max(m['local_id'] for m in rows)
             self.update(last_evaluated_id=through, last_evaluated_at=now,
