@@ -46,6 +46,91 @@ class SendGuardTests(unittest.TestCase):
 
 
 class ChatSelectionTests(unittest.TestCase):
+    def test_list_lookup_skips_hidden_old_list_and_searches_deeper_tree(self):
+        a=A11y.__new__(A11y)
+        hidden,visible=Mock(),Mock()
+        a.walk=Mock(return_value=[(hidden,'list','Chats',None),
+            (visible,'list','Chats',dict(x=260,y=160,width=240,height=500))])
+        self.assertIs(a.find_list(Mock(),['Chats']),visible)
+        self.assertEqual(a.walk.call_args.kwargs['max_depth'],35)
+
+    def test_selection_waits_for_delayed_state_and_reselects_only_chat(self):
+        a=A11y.__new__(A11y)
+        a.cfg={}
+        a._bounds=Mock(return_value=dict(x=260,y=160,width=240,height=65))
+        first,second=Mock(),Mock()
+        a.find_chat_item=Mock(return_value=second)
+        a.chat_is_selected=Mock(side_effect=[False,False,True])
+        with patch('wxbridge.wechat.ui.X11') as x, patch('wxbridge.wechat.ui.time.sleep'), \
+                patch('wxbridge.wechat.ui.time.monotonic',side_effect=[0,3,4,5]):
+            self.assertTrue(a._select_visible_chat('测试群',first))
+        self.assertEqual(x.return_value.checked_click.call_count,2)
+        x.return_value.key.assert_not_called()
+
+    def test_already_selected_chat_is_not_clicked_again(self):
+        a=A11y.__new__(A11y)
+        a.cfg={}
+        a.require_app=Mock()
+        a.chat_is_selected=Mock(return_value=True)
+        a.find_chat_item=Mock()
+        with patch('wxbridge.wechat.ui.X11') as x:
+            a.select_chat('测试群')
+        a.find_chat_item.assert_not_called()
+        x.return_value.checked_click.assert_not_called()
+
+    def test_missing_search_result_never_presses_return(self):
+        a=A11y.__new__(A11y)
+        a.cfg={}
+        a.require_app=Mock()
+        a.chat_is_selected=Mock(return_value=None)
+        a.find_chat_item=Mock(return_value=None)
+        a.type_focused=Mock()
+        with patch('wxbridge.wechat.ui.X11') as x, patch('wxbridge.wechat.ui.time.sleep'):
+            with self.assertRaises(UIError):
+                a.select_chat('测试群')
+        self.assertNotIn(('Return',),[call.args for call in x.return_value.key.call_args_list])
+
+    def test_selection_stays_unconfirmed_without_sending_or_keyboard_fallback(self):
+        a=A11y.__new__(A11y)
+        a.cfg={}
+        a.require_app=Mock()
+        a._bounds=Mock(return_value=dict(x=260,y=160,width=240,height=65))
+        a.find_chat_item=Mock(return_value=Mock())
+        a.chat_is_selected=Mock(return_value=False)
+        with patch('wxbridge.wechat.ui.X11') as x, patch('wxbridge.wechat.ui.time.sleep'), \
+                patch('wxbridge.wechat.ui.time.monotonic',side_effect=[0,3,4,7]):
+            with self.assertRaises(UIError):
+                a.select_chat('测试群')
+        self.assertEqual(x.return_value.checked_click.call_count,2)
+        x.return_value.key.assert_not_called()
+
+    def test_deep_cold_start_chat_item_wins_over_hidden_login_tree(self):
+        a=A11y.__new__(A11y)
+        a.cfg={}
+        def node(role='filler',name='',children=()):
+            value=Mock()
+            value.get_role_name.return_value=role
+            value.get_name.return_value=name
+            value.get_child_count.return_value=len(children)
+            value.get_child_at_index.side_effect=lambda i: children[i]
+            return value
+        hidden=node('list item','测试群\n旧窗口')
+        visible=node('list item','测试群\n新消息')
+        branch=visible
+        for _ in range(20):
+            branch=node(children=[branch])
+        root=node('application',children=[hidden,branch])
+        a.require_app=Mock(return_value=root)
+        a._bounds=Mock(side_effect=lambda n:dict(x=260,y=220,width=240,height=65) if n is visible else None)
+        self.assertIs(a.find_chat_item('测试群'),visible)
+        self.assertIsNone(a.find_chat_item('测试群副本'))
+
+    def test_hidden_matching_chat_does_not_make_readiness_pass(self):
+        a=A11y.__new__(A11y)
+        a.require_app=Mock()
+        a.walk=Mock(return_value=[(Mock(),'list item','测试群\n预览',None)])
+        self.assertIsNone(a.find_chat_item('测试群'))
+
     def test_label_must_match_first_line_exactly(self):
         self.assertTrue(chat_label_matches('测试群\n[2] 新消息', '测试群'))
         for label in ('测试群2\n消息', '别的群\n测试群', '测试群副本'):

@@ -244,14 +244,14 @@ class PipelineTests(unittest.TestCase):
         self.assertFalse(self.bot.journal.tasks())
 
     def test_merged_context_uses_latest_trigger_time_and_excludes_all_questions(self):
-        self.add(1, text="OLD_SECRET", sent=NOW-601, mention=False)
-        self.add(2, text="BOUNDARY", sent=NOW-598, mention=False)
+        self.add(1, text="OLD_SECRET", sent=NOW-301, mention=False)
+        self.add(2, text="BOUNDARY", sent=NOW-298, mention=False)
         first = self.add(3)
         self.bot.tick()
         self.now += 2
         second = self.add(4)
         self.bot.tick()
-        self.store.messages_in_window.assert_called_with("synthetic@chatroom", NOW-598, NOW+2)
+        self.store.messages_in_window.assert_called_with("synthetic@chatroom", NOW-298, NOW+2)
         prompt = self.jobs[-1].payload[1][1]["content"]
         self.assertIn("BOUNDARY", prompt)
         self.assertNotIn("OLD_SECRET", prompt)
@@ -459,7 +459,7 @@ class PipelineTests(unittest.TestCase):
         self.bot.tick()
         generator = self.search_started()
         notice = self.sends()[0].payload[2]
-        self.assertIn(notice, self.cfg["search"]["feedback_phrases"])
+        self.assertEqual(notice, self.cfg["search"]["feedback_phrases"][0].removesuffix("。"))
         self.assertEqual(self.bot.journal.head()["intent"]["kind"], "notice")
         self.sends()[0].result = dict(ok=True, ui=dict(submitted=True))
         self.add(2, sender="wxid_self", text=notice, mention=False)
@@ -553,7 +553,7 @@ class WorkerTests(unittest.TestCase):
                 self.assertIn("只输出纯文本", prompt[0]["content"])
         finally:
             logging.disable(prior)
-        self.assertEqual(connection.send.call_args.args[0], dict(ok=True, reply="简单说，先这样。"))
+        self.assertEqual(connection.send.call_args.args[0], dict(ok=True, reply="简单说，先这样"))
 
     def test_progress_event_does_not_replace_final_result(self):
         from wxbridge.app.workers import _work

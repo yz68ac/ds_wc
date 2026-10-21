@@ -16,8 +16,9 @@ wxbridge/
 ├── ai/                    生成回答
 │   ├── client.py          DeepSeek HTTP 请求、重试、最终答案提取
 │   ├── prompts.py         人格读取与文本提示词构造
-│   ├── context.py         十分钟历史窗口与去重
+│   ├── context.py         可配置历史窗口与去重，默认五分钟
 │   ├── memory.py          成员标签、带来源快照和后台结构化整理请求
+│   ├── avatars.py         独立头像视觉分类、有限枚举校验；不推测人格
 │   ├── search.py          按需搜索/抓取、工具循环与真实来源
 │   ├── output.py          简短群聊输出规则与纯文本格式兜底
 │   ├── wxgf.py            选择彩色HEVC流，受控子进程内存转PNG

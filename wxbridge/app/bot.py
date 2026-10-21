@@ -10,14 +10,17 @@ import time
 
 from wxbridge.ai.context import context_bounds, message_time
 from wxbridge.ai.prompts import build_prompt
+from wxbridge.ai.output import format_reply
 from wxbridge.ai.memory import member_labels, snapshot
 from wxbridge.ai.context import select_context
 from wxbridge.config import PROJECT_ROOT
 from wxbridge.storage.person_memory import MemoryStore
 from wxbridge.storage.journal import Journal
-from wxbridge.wechat.messages import chunk_text, is_triggered
+from wxbridge.wechat.messages import chunk_text, is_triggered, reply_chunks
 from wxbridge.wechat.store import StoreError, WeChatStore
+from wxbridge.wechat.pats import is_pat
 from wxbridge.app.workers import ProcessJob
+from wxbridge.app.proactive import ProactiveController
 
 log = logging.getLogger("wxbridge")
 
@@ -76,6 +79,7 @@ class WeChatDeepSeekBot:
         self.started_at = time.time()
         self.job_factory = ProcessJob
         self.status_path = Path(cfg["state_file"]).parent / "live-status.json"
+        self.proactive = ProactiveController(self) if 'proactive' in cfg else None
 
     _chunk = staticmethod(chunk_text)
 
@@ -84,6 +88,9 @@ class WeChatDeepSeekBot:
         return self.journal.get("cursor", 0)
 
     def _triggered(self, msg):
+        if is_pat(msg):
+            return (self.cfg["target"]["trigger"].get("pat_enabled", True)
+                    and msg["pat"]["target"] == self.store.self_wxid and msg["pat"]["chat"] == self.chat_id)
         if self.cfg["target"]["trigger"].get("require_mention_metadata", True):
             return self.store.self_wxid in (msg.get("mentioned_users") or [])
         return is_triggered(self.cfg, msg.get("text") or "")
@@ -98,7 +105,7 @@ class WeChatDeepSeekBot:
             return "unknown_sender"
         if msg["sender"] == self.store.self_wxid:
             return "own_message"
-        if msg.get("type") != 1:
+        if msg.get("type") != 1 and not is_pat(msg):
             return "unsupported_type"
         if not (msg.get("text") or "").strip():
             return "empty_text"
@@ -109,6 +116,8 @@ class WeChatDeepSeekBot:
         if max_age > 0 and now - sent > max_age:
             return "stale_at_intake"
         if not self._triggered(msg):
+            if is_pat(msg):
+                return "pat_not_for_bot" if msg["pat"]["target"] != self.store.self_wxid else "pat_disabled_or_wrong_chat"
             return "missing_mention_metadata" if msg.get("mentioned_users") is None else "not_mentioned"
         return "accepted"
 
@@ -116,7 +125,8 @@ class WeChatDeepSeekBot:
         reference = msg.get("reference") or {}
         return dict(local_id=msg["local_id"], type=msg.get("type"), raw_type=msg.get("raw_type", msg.get("type")),
                     kind=msg.get("message_kind", "text"), received_at=now, sent_at=message_time(msg),
-                    reason=self._admission_reason(msg, now), real_mention=self._triggered(msg),
+                    reason=self._admission_reason(msg, now), real_mention=self.store.self_wxid in (msg.get("mentioned_users") or []),
+                    pat_for_bot=is_pat(msg) and msg["pat"]["target"] == self.store.self_wxid,
                     text_has_at="@" in (msg.get("text") or ""), chars=len(msg.get("text") or ""),
                     reference_kind=reference.get("kind"), reference_available=reference.get("available"),
                     reference_chars=len(reference.get("text") or ""))
@@ -129,7 +139,7 @@ class WeChatDeepSeekBot:
                                          float(self.cfg["queue"]["debounce_seconds"]),
                                          describe=lambda m: self._intake_metadata(m, now))
             for event in events:
-                if event["real_mention"] or event["text_has_at"]:
+                if event["real_mention"] or event["text_has_at"] or event["kind"] == "pat":
                     log.info("接收判定 metadata=%s", json.dumps(event, ensure_ascii=False))
             if len(rows) < 100:
                 return
@@ -150,14 +160,15 @@ class WeChatDeepSeekBot:
                 settings = self.cfg.get("search", {})
                 if settings.get("feedback_enabled", True):
                     phrases = settings.get("feedback_phrases") or ["我上网搜搜，核实一下。"]
-                    if self.journal.request_notice(task_id, version, phrases[(task_id-1) % len(phrases)]):
+                    notice = format_reply(phrases[(task_id-1) % len(phrases)], self.cfg)
+                    if self.journal.request_notice(task_id, version, notice):
                         log.info("搜索提示待发送 task=%s version=%s", task_id, version)
                 continue
             job.close()
             del self.generators[task_id]
             reply = result.get("reply") or ""
             error = "generation:" + result.get("error", "EmptyReply") if not result["ok"] or not reply else ""
-            chunks = chunk_text(reply, int(self.cfg["target"].get("max_reply_chars", 1800))) if not error else []
+            chunks = reply_chunks(reply, int(self.cfg["target"].get("max_reply_chars", 1800))) if not error else []
             if self.journal.generated(task_id, version, chunks, error, vision=result.get("vision"), search=result.get("search")):
                 log.info("生成结束 task=%s version=%s chunks=%s images=%s error=%s", task_id, version,
                          len(chunks), (result.get("vision") or {}).get("images", 0), error or "none")
@@ -178,7 +189,8 @@ class WeChatDeepSeekBot:
                     try:
                         labels = member_labels(select_context(self.cfg, context, trigger), task["triggers"], self.store.self_wxid)
                         memory = dict(labels=labels, text=self.memory.prompt(labels, trigger["sender"], time.time(),
-                                      int(self.cfg["memory"]["prompt_max_chars"])))
+                                      int(self.cfg["memory"]["prompt_max_chars"]),
+                                      use_avatar=self.cfg["memory"].get("avatar", {}).get("enabled", False)))
                     except Exception as exc:
                         self.memory_error = type(exc).__name__
                         log.warning("跳过记忆背景 category=%s", self.memory_error)
@@ -287,6 +299,8 @@ class WeChatDeepSeekBot:
             return
         if now - self.journal.get("last_success", 0) < float(self.cfg["target"].get("cooldown_seconds", 8)):
             return
+        if self.proactive and not self.proactive.validate(task, now):
+            return
         if self.cfg["ui"].get("dry_run"):
             with self.journal.db:
                 if notice:
@@ -343,7 +357,8 @@ class WeChatDeepSeekBot:
             if now-self.memory_pruned_at >= 60:
                 self.memory.prune(now)
                 self.memory_pruned_at = now
-            if not jobs or len(self.generators) >= min(2, int(self.cfg["queue"]["generation_concurrency"])):
+            occupied = len(self.generators)+int(bool(self.proactive and self.proactive.job))
+            if not jobs or occupied >= min(2, int(self.cfg["queue"]["generation_concurrency"])):
                 return
             record = jobs[0]
             if max(m["local_id"] for m in record["triggers"]) <= self.memory.data["watermark"]:
@@ -361,10 +376,31 @@ class WeChatDeepSeekBot:
             if len(triggers) != len(ids):
                 raise ValueError("memory_source_unavailable")
             value = snapshot(self.cfg, context, triggers, self.journal.get("identity"), self.memory, now)
-            if not value["messages"]:
+            if not value["messages"] and not value.get("interactions"):
                 # 遗忘水位或已处理的重叠窗口，不额外调用模型。
                 self.journal.finish_memory(record["id"], self.journal.get("memory_last_update", 0))
                 return
+            avatars = self.cfg["memory"].get("avatar", {})
+            if avatars.get("enabled"):
+                value["avatars"] = {}
+                new_labels = {m["member"] for m in [*value["messages"], *value.get("interactions", [])]}
+                for uid in sorted(value["members"], key=lambda uid: int(value["members"][uid]["label"][1:])):
+                    if uid not in self.memory.data["members"] and value["members"][uid]["label"] not in new_labels:
+                        continue  # 已遗忘且只有旧发言的成员，不从旧窗口再导入头像。
+                    initial = self.memory.data["members"].get(uid, {}).get("initial_impression", {})
+                    if initial.get("state") in ("ready", "forgotten", "expired"):
+                        continue
+                    if now-initial.get("checked_at", 0) < avatars["retry_interval_seconds"]:
+                        continue
+                    try:
+                        item = self.store.avatar(uid, max_bytes=avatars["max_bytes"])
+                        if not isinstance(item, dict):
+                            raise ValueError("avatar_invalid_binding")
+                    except Exception:
+                        item = dict(available=False, error="avatar_unavailable")
+                    value["avatars"][uid] = item
+                    if len(value["avatars"]) >= avatars["max_per_batch"]:
+                        break
             worker = self.job_factory("memory", (self.cfg, value),
                                       timeout=self.cfg["memory"]["timeout_seconds"]+2)
             with self.journal.db:
@@ -388,14 +424,20 @@ class WeChatDeepSeekBot:
 
     def tick(self):
         self._poll_once()
+        if self.proactive:
+            self.proactive.priority(time.time())
         self.journal.seal(time.time())
         self._generation_step()
         self._ui_result_step()
         self._confirm_step()
         # 工作进程/数据库操作期间有新消息时，发送前必须再补读并校验版本。
         self._poll_once()
+        if self.proactive:
+            self.proactive.priority(time.time())
         self.journal.seal(time.time())
         self._generation_step()
+        if self.proactive:
+            self.proactive.step(time.time())
         self._send_step()
         self._memory_step()
         self.save_status()
@@ -415,10 +457,13 @@ class WeChatDeepSeekBot:
                 status["phase"] = "ready"
         status.update(pid=os.getpid(), updated_at=time.time(), started_at=self.started_at,
                       dry_run=bool(self.cfg["ui"].get("dry_run")), echo=self.echo,
-                      generation_workers=len(self.generators), context_window_seconds=600,
-                      require_mention_metadata=True)
+                      generation_workers=len(self.generators), context_window_seconds=self.cfg["target"]["context_window_seconds"],
+                      require_mention_metadata=True,
+                      pat_enabled=self.cfg["target"]["trigger"].get("pat_enabled", True))
         status["memory"] = dict(enabled=self.memory is not None, running=self.memory_job is not None,
                                 error=self.memory_error, **(self.memory.status(time.time()) if self.memory else {}))
+        status['reply_style'] = {key:self.cfg.get('reply_style', {}).get(key, default)
+            for key, default in (('wechat_emoticons_enabled', False), ('omit_trailing_period', True))}
         if stopped:
             status["phase"] = "stopped"
         self.status_path.parent.mkdir(parents=True, exist_ok=True)
@@ -429,6 +474,8 @@ class WeChatDeepSeekBot:
         os.replace(temp, self.status_path)
 
     def close(self):
+        if self.proactive:
+            self.proactive.cancel('stopped')
         self._pause_memory()
         for _, job in self.generators.values():
             job.close()

@@ -8,10 +8,25 @@
   "source": "db",
   "poll_interval_seconds": 2,
   "reply_to_backlog": false,
+  "reply_style": {
+    "wechat_emoticons_enabled": false,
+    "omit_trailing_period": true
+  },
   "queue": {
     "debounce_seconds": 0,
     "generation_concurrency": 2,
     "file": "/run/wxbridge-trial/queue.sqlite3"
+  },
+  "proactive": {
+    "enabled": false,
+    "window_seconds": 300,
+    "min_messages": 10,
+    "check_interval_seconds": 10,
+    "evaluation_interval_seconds": 60,
+    "min_new_messages": 3,
+    "reply_ttl_seconds": 60,
+    "timeout_seconds": 20,
+    "max_reply_chars": 30
   },
   "target": {
     "chat": "",
@@ -23,11 +38,12 @@
       ],
       "prefixes": [],
       "reply_all": false,
-      "require_mention_metadata": true
+      "require_mention_metadata": true,
+      "pat_enabled": true
     },
     "cooldown_seconds": 8,
     "max_message_age_seconds": 90,
-    "context_window_seconds": 600,
+    "context_window_seconds": 300,
     "context_max_chars": 24000,
     "max_reply_chars": 1800
   },
@@ -68,10 +84,18 @@
     "enabled": true,
     "directory": "memory",
     "model": "deepseek-flash",
+    "thinking": "enabled",
+    "reasoning_effort": "max",
     "min_interval_seconds": 60,
     "prompt_max_chars": 1200,
     "max_tokens": 2400,
-    "timeout_seconds": 30
+    "timeout_seconds": 30,
+    "avatar": {
+      "enabled": true,
+      "max_per_batch": 2,
+      "max_bytes": 524288,
+      "retry_interval_seconds": 3600
+    }
   },
   "ui": {
     "backend": "auto",

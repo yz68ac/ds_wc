@@ -3,6 +3,7 @@ import copy
 import unittest
 
 from wxbridge.ai.output import plain_text, response_prompt
+from wxbridge.wechat.messages import reply_chunks
 
 
 class OutputTests(unittest.TestCase):
@@ -23,6 +24,16 @@ class OutputTests(unittest.TestCase):
         text = '明确要求的完整说明。'*100
         self.assertEqual(plain_text(text), text)
 
+    def test_two_prose_paragraphs_send_separately_without_cutting_source_url(self):
+        first = '先把连接地址和端口核对一下，看看是否一致。'
+        second = '再检查服务器监听状态。https://example.com/check?q=one_two'
+        self.assertEqual(reply_chunks(first+'\n\n'+second, 1800), [first, second])
+        self.assertEqual(reply_chunks('知道还问。先顾好你自己。', 1800), ['知道还问。先顾好你自己。'])
+
+    def test_professional_code_keeps_internal_blank_lines_and_full_content(self):
+        code = 'def connect(host):\n    return host.strip()\n\ndef main():\n    return connect("example")'
+        self.assertEqual(reply_chunks(code, 1800), [code])
+
     def test_plain_urls_math_and_chinese_emphasis_do_not_conflict(self):
         url = 'https://example.com/__assets__/?q=**name**&key=some_value'
         self.assertEqual(plain_text(url), url)
@@ -35,6 +46,7 @@ class OutputTests(unittest.TestCase):
         prompt = response_prompt(messages)
         self.assertTrue(prompt[0]['content'].startswith('有主见的合成人格'))
         self.assertIn('只输出纯文本', prompt[0]['content'])
-        self.assertIn('80至160字', prompt[0]['content'])
+        self.assertIn('默认约10个字', prompt[0]['content'])
+        self.assertIn('专业问答', prompt[0]['content'])
         self.assertEqual(prompt[1], messages[1])
         self.assertEqual(messages, saved)

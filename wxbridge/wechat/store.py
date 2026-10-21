@@ -24,6 +24,7 @@ from wxbridge.wechat import crypto
 from wxbridge.wechat.keyscan import find_wechat_pids
 from wxbridge.storage.memoryfs import require_memory_directory
 from wxbridge.wechat.references import image_md5, local_image_cache_key, parse_quoted_reply
+from wxbridge.wechat.pats import parse_pat
 
 MSG_TYPE_LABEL = {
     1: "",
@@ -291,6 +292,36 @@ class WeChatStore:
             return c.get("remark") or c.get("nick_name") or fallback or username
         return fallback or username
 
+    def avatar(self, username: str, *, max_bytes=524288) -> dict:
+        """主进程按当前账号下的精确 username 读取头像缓存，不获取 URL。"""
+        from wxbridge.ai.images import validate_image
+        if not username or username.endswith("@chatroom"):
+            return dict(available=False, error="avatar_invalid_member")
+        conn = None
+        try:
+            conn = self._connect("head_image/head_image.db")
+            rows = conn.execute("SELECT update_time, length(image_buffer) AS size, "
+                "CASE WHEN length(image_buffer)<=? THEN image_buffer ELSE NULL END AS image "
+                "FROM head_image WHERE username=? ORDER BY update_time DESC LIMIT 2", (max_bytes, username)).fetchall()
+            if not rows:
+                return dict(available=False, error="avatar_not_cached")
+            if len(rows) == 2 and rows[0]["update_time"] == rows[1]["update_time"] and rows[0]["image"] != rows[1]["image"]:
+                return dict(available=False, error="avatar_ambiguous")
+            row = rows[0]
+            if not row["size"] or row["size"] > max_bytes:
+                return dict(available=False, error="avatar_size_limit")
+            data = bytes(row["image"])
+            mime, width, height = validate_image(data, max_bytes)
+            if mime not in ("image/png", "image/jpeg", "image/webp") or max(width, height) > 2048:
+                return dict(available=False, error="avatar_unsupported")
+            return dict(available=True, data=data, mime=mime, width=width, height=height,
+                        digest=hashlib.sha256(data).hexdigest(), observed_at=time.time())
+        except (StoreError, sqlite3.Error, OSError, ValueError, TypeError):
+            return dict(available=False, error="avatar_unavailable")
+        finally:
+            if conn is not None:
+                conn.close()
+
     def resolve_chat(self, target: str) -> tuple[str, str]:
         """把群名/备注/wxid 解析成 (username, display_name)。"""
         target = (target or "").strip()
@@ -424,9 +455,15 @@ class WeChatStore:
         reference = None
         picture_md5 = image_md5(text) if local_type == 3 else ""
         message_kind = "text" if local_type == 1 else "non_text"
+        pat = parse_pat(text, raw_type, chat_id) if local_type == 49 else None
+        known = set(contacts) | set((senders or {}).values())
+        if pat and (pat["actor"] not in known or pat["target"] not in known):
+            pat = None
         if local_type == 49 and text:
-            quoted = parse_quoted_reply(text, raw_type)
-            if quoted is not None:
+            quoted = parse_quoted_reply(text, raw_type) if pat is None else None
+            if pat is not None:
+                sender, text, message_kind = pat["actor"], "[拍一拍]", "pat"
+            elif quoted is not None:
                 text, reference = quoted
                 local_type, message_kind = 1, "quoted_text"
             else:
@@ -444,6 +481,7 @@ class WeChatStore:
             "raw_type": raw_type,
             "message_kind": message_kind,
             "reference": reference,
+            **({"pat": pat, "pat_target_name": self.display_name(contacts, pat["target"], pat["target"])} if pat else {}),
             "image_md5": picture_md5,
             **({"image_cache_key": local_image_cache_key(d.get("packed_info_data"))} if local_type == 3 else {}),
             "server_id": str(d.get("server_id") or ""),
@@ -453,7 +491,7 @@ class WeChatStore:
             "sender_name": sender_name,
             "text": text,
             "is_group": is_group,
-            "mentioned_users": parse_mentioned_users(source) if is_group else [],
+            "mentioned_users": [] if pat else parse_mentioned_users(source) if is_group else [],
         }
 
     def _query_messages(

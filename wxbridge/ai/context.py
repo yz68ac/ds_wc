@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Any
+from wxbridge.wechat.pats import is_pat
 
 
 class ContextError(ValueError):
@@ -21,7 +22,7 @@ def context_bounds(cfg: dict[str, Any], trigger: dict[str, Any]) -> tuple[int, i
     end = message_time(trigger)
     if end is None:
         raise ContextError("触发消息缺少可靠的发送时间，取消回复；不能用读取时间代替")
-    seconds = cfg["target"].get("context_window_seconds", 600)
+    seconds = cfg["target"].get("context_window_seconds", 300)
     if isinstance(seconds, bool) or not isinstance(seconds, int) or seconds <= 0:
         raise ContextError("context_window_seconds 必须是正整数")
     return end - seconds, end
@@ -36,7 +37,7 @@ def select_context(
         sent = message_time(message)
         if sent is None or not start <= sent <= end:
             continue
-        if message.get("type", 1) != 1 or not (message.get("text") or "").strip():
+        if (message.get("type", 1) != 1 and not is_pat(message)) or not (message.get("text") or "").strip():
             continue
         if trigger.get("local_id") and message.get("local_id") == trigger["local_id"]:
             continue  # 触发消息在提示词末尾单独提供

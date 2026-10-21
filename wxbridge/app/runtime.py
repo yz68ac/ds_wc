@@ -30,7 +30,6 @@ def run_bot(cfg, *, once=False, echo=False):
     if cfg.get("source") != "db":
         raise ValueError("当前运行链路只使用 db 消息源")
     cfg["target"]["trigger"].update(require_mention_metadata=True, reply_all=False, prefixes=[])
-    cfg["target"]["context_window_seconds"] = 600
     cfg["ui"]["verify_chat_selected"] = True
     cfg["reply_to_backlog"] = False
     if cfg["ui"].get("dry_run"):

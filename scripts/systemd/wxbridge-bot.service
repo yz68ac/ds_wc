@@ -1,0 +1,26 @@
+[Unit]
+Description=WeChat DeepSeek listener after login and key verification
+Requires=wxbridge-runtime.service
+BindsTo=wxbridge-session.service
+After=wxbridge-runtime.service wxbridge-session.service
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=wxbridge
+Group=wxbridge
+WorkingDirectory=/opt/wxbridge
+Environment=HOME=/var/lib/wxbridge
+EnvironmentFile=/run/wxbridge-trial/env
+ExecStart=/usr/bin/python3 /opt/wxbridge/scripts/run-live.py
+ExecStopPost=/usr/bin/python3 /opt/wxbridge/scripts/boot-recovery.py checkpoint
+KillSignal=SIGINT
+KillMode=mixed
+TimeoutStopSec=45
+Restart=on-failure
+RestartSec=10
+UMask=0077
+LimitCORE=0
+StandardOutput=append:/run/wxbridge-trial/bot-live.log
+StandardError=append:/run/wxbridge-trial/bot-live.log

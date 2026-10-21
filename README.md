@@ -1,6 +1,6 @@
 # Linux 微信 + DeepSeek 群聊桥接
 
-原生微信负责登录、同步和实际发消息。本程序读取本机数据库，每次真实 @ 独立排队并立即调度生成，默认关闭连续 @ 合并。API 与 UI 使用工作进程，主进程继续接收并核对发出记录。
+原生微信负责登录、同步和实际发消息。本程序读取本机数据库，每次真实 @ 或拍机器人独立排队并立即调度生成，默认关闭连续 @ 合并。API 与 UI 使用工作进程，主进程继续接收并核对发出记录。
 
 支持引用消息后真实 @ 提问，例如“@ds 这怎么看”：文字和链接快照单独提供；引用图片会读取本地缓存、内存解密，再随问题发送给模型理解。语音和视频暂不识别。见 [引用说明](docs/REFERENCES.md)和 [图片说明](docs/VISION.md)。
 
@@ -10,7 +10,7 @@
 
 | 阶段 | 入口与模块 |
 | --- | --- |
-| 配置 | `config.defaults.json` 默认值、`config.example.json` 自定义示例、`wxbridge/config.py` 加载与校验 |
+| 配置 | `config.defaults.json` 默认值、`config.example.jsonc` 带注释示例、`config.json` 实际覆盖配置、`wxbridge/config.py` 加载与校验 |
 | 人格设定 | `prompts/system.md`，由 `wxbridge/ai/prompts.py` 读取 |
 | 启动微信、手机登录 | `scripts/start-headless.sh`、`scripts/login-vnc.sh` |
 | 检查环境、准备数据库密钥 | `python -m wxbridge env`、`scan-keys`、`wxbridge/wechat/keyscan.py` |
@@ -25,11 +25,12 @@
 ## 当前规则
 
 - 模型 `deepseek-flash`，当前开启思考、深度 `high`，只发送最终 `content`，不发送内部推理。
-- 最终回复确认后后台整理本次十分钟窗口的人物记忆，按账号、群和 wxid 隔离；下次提问使用，详见 [记忆说明](docs/MEMORY.md)。
+- 微信表情由 `reply_style.wechat_emoticons_enabled` 控制，普通短句默认去掉尾部中文句号；内置20项梗义和使用分寸，见 [微信表情与标点](docs/EMOTICONS.md)。
+- 最终回复确认后后台整理本次五分钟窗口的人物记忆，按账号、群和 wxid 隔离；下次提问使用，详见 [记忆说明](docs/MEMORY.md)。
 - 需要新信息时按需调用 DeepSeek Search/Fetch，先发一次口语提示再给答案及真实来源；普通闲聊不搜索，详见 [搜索说明](docs/SEARCH.md)。
-- 只回应真实 @ 自己的群聊文本；首次接收过滤过旧、未来或无效记录。已有队列在重启后恢复；新部署才建立基线。
+- 回应真实 @ 自己的群聊文本和其他成员拍机器人的事件；首次接收过滤过旧、未来或无效记录。已有队列在重启后恢复；新部署才建立基线。
 - 私有内存 SQLite 同事务保存接收游标与任务，冷却只等待不丢弃；每个回复分片以新增本人发出记录确认，超时暂停发送并继续接收。
-- 按触发消息数据库发送时间 `t` 查询 `[t-600, t]`，再次排除同秒较晚记录；超出字符预算取消回复。
+- 按触发消息数据库发送时间 `t` 查询 `[t-300, t]`，再次排除同秒较晚记录；超出字符预算取消回复。
 - 发送前检查原生窗口、唯一群名、选中状态和输入框全文；结果不明不自动重发。
 - 解密副本和密钥放私有 `tmpfs,noswap`，日志默认不保存聊天正文。
 
@@ -46,12 +47,14 @@ python3 -m wxbridge --help
 
 ## 运行入口
 
+当前主机已准备持久 systemd 开机恢复，重启后的检查、手机登录边界及本轮自动关机开关见 [重启恢复说明](docs/BOOT_RECOVERY.md)。
+
 API Key 保存在本源码根目录的 `.env`，与本 README 同级，格式为 `DEEPSEEK_API_KEY=你的密钥`。真实文件已被 Git 忽略；`.env.example` 是可提交的空示例。程序始终从这个根目录读取 `.env`，不随运行目录或 `--config` 位置变化。Linux 对应 `/opt/wxbridge/.env`。
 
 人格提示词独立存放在 [prompts/system.md](prompts/system.md)，由 `wxbridge/ai/prompts.py` 读取，配置使用 `deepseek.system_prompt_file` 指向它。可直接写较长的 Markdown、多段描述和对话示例；仅替换 `{bot_name}`，其他花括号无需转义。编辑同一文件后，下一次生成回复时读取新内容；旧版内联 `system_prompt` 配置仍兼容。
 
-`config.example.json` 现在与实际数据库链路一致：`source: db`，运行数据默认指向 `/run/wxbridge-trial`，`dry_run: true`。本地没有从 Linux 复制真实配置或 API Key。
+[config.example.jsonc](config.example.jsonc) 是带注释的配置参考：`source: db`，运行数据默认指向 `/run/wxbridge-trial`，`dry_run: true`。实际运行使用标准 JSON 格式的 `config.json`，只填写要覆盖的字段即可；参考示例填写时去掉注释，未填写项继承 `config.defaults.json`。本地没有从 Linux 复制真实配置或 API Key。
 
 `python -m wxbridge run` 尊重配置中的 dry-run；`run --send` 显式启用当前进程发送，`run --dry-run` 关闭发送但仍可能调用模型，`--echo` 用固定回复代替模型。`scripts/run-live.py` 保留既有服务入口，转到同一个 CLI/runtime 流程并显式传入 `--send`。
 
-已有实机验证针对 Debian 13.7 amd64、微信 4.1.13.26。当前没有自动安装、开机恢复和长期重连机制；这些边界在运行说明中单独列出。
+已有实机验证针对 Debian 13.7 amd64、微信 4.1.13.26。当前已准备持久开机恢复，真实冷启动验证了手机登录后的密钥重建与监听恢复；登录/手机认证仍需人工参与。系统依赖自动安装、长期重连和客户端升级兼容仍需另行验证。

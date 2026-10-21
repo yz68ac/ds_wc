@@ -1,16 +1,22 @@
 # 配置项说明
 
-全部默认配置保存在源码根目录 [config.defaults.json](../config.defaults.json)，与 `wxbridge` 文件夹同级。`config.example.json` 是自定义配置示例，实际运行可用 `config.json` 覆盖默认值；真实 Linux 配置在 `/opt/wxbridge/config.json`，本地修改不会自动同步。默认 JSON 提取随本次人物记忆一起同步 Linux，保留服务器实际配置覆盖项。
+全部默认配置保存在源码根目录 [config.defaults.json](../config.defaults.json)，与 `wxbridge` 文件夹同级。[config.example.jsonc](../config.example.jsonc) 是带注释的自定义配置参考；实际运行使用标准 JSON 格式的 `config.json` 覆盖默认值。只需填写要覆盖的字段，无需复制全部示例；复制字段时去掉注释，程序不直接加载这个 JSONC 参考文件。真实 Linux 配置在 `/opt/wxbridge/config.json`，本地修改不会自动同步。
 
 ## 配置如何生效
 
-`config.defaults.json` → `config.json`（或 `--config` 指定的文件）→ 环境变量覆盖 → CLI 参数及 `app/runtime.py` 强制规则。默认 JSON 按源码位置读取，与启动目录及自定义配置位置无关；`config.py` 只负责读取、合并、路径解析与校验，不再内嵌配置字典。默认文件缺失或损坏时明确报错，不静默换回隐藏的默认值。源码根目录的 `.env` 会补充尚未存在的环境变量，已有进程环境优先。`.env` 固定与 `README.md`、`config.example.json` 同级，不受当前工作目录或 `--config` 路径影响。
+`config.defaults.json` → `config.json`（或 `--config` 指定的标准 JSON 文件）→ 环境变量覆盖 → CLI 参数及 `app/runtime.py` 强制规则。默认 JSON 按源码位置读取，与启动目录及自定义配置位置无关；`config.py` 只负责读取、合并、路径解析与校验，不再内嵌配置字典。默认文件缺失或损坏时明确报错，不静默换回隐藏的默认值。源码根目录的 `.env` 会补充尚未存在的环境变量，已有进程环境优先。`.env` 固定与 `README.md`、`config.example.jsonc` 同级，不受当前工作目录或 `--config` 路径影响。
 
 两份 JSON 配置均在启动时加载，修改后需要重启机器人进程；如果 `config.json` 已填写同名项，会覆盖默认 JSON 中的修改。独立提示词文件的内容每次生成回复时读取，同一路径下的内容修改在下一次生成时生效。`--config` 可指定配置文件；相对的密钥、解密、状态、日志和提示词文件路径按配置文件所在目录解析。`db_dir` 建议填写绝对路径。API Key 仍放 `.env`，不放默认 JSON。
 
 ## 群聊和回复
 
-人物记忆使用 `memory` 配置段：enabled（默认 true）、directory（源码根目录下 memory）、model（deepseek-flash）、min_interval_seconds（60）、prompt_max_chars（1200）、max_tokens（2400）、timeout_seconds（30）。后台始终关闭思考，不改变主回答 high；规则、期限和维护命令见 [MEMORY.md](MEMORY.md)。
+`reply_style.wechat_emoticons_enabled` 默认false，本轮在Linux实际配置开启；允许少量微信内置文本表情和适当的单发表情。`reply_style.omit_trailing_period` 默认true，普通短句省略尾部中文句号，保留技术内容与其他标点。两项均须布尔值，改后重启监听；20项梗义、来源及处理范围见 [微信表情与标点](EMOTICONS.md)。
+
+主动接话使用 `proactive` 配置段，默认关闭，本轮按用户要求在Linux实际配置开启。默认近300秒至少10条群成员文字、机器人无发言；最多每10秒检查，有新文字且满足资格才请求模型。两次判断至少60秒和3条新文字，模型可沉默；@优先，主动句子最多30字。全部参数、重启与失效规则见 [主动接话说明](PROACTIVE.md)。
+
+人物记忆使用 `memory` 配置段：enabled（默认 true）、directory（源码根目录下 memory）、model（deepseek-flash）、thinking（enabled）、reasoning_effort（max）、min_interval_seconds（60）、prompt_max_chars（1200）、max_tokens（2400）、timeout_seconds（30）。thinking 可选 enabled/disabled，reasoning_effort 可选 low/high/max，关闭思考时不发送深度参数；记忆整理独立于主回答的 high。规则、期限和维护命令见 [MEMORY.md](MEMORY.md)。
+
+`memory.avatar` 控制初见视觉参考：enabled（true）、max_per_batch（2）、max_bytes（524288）、retry_interval_seconds（3600）。只读取当前账号的头像缓存；文字印象及好感度请求看不到头像，视觉分类独立调用，失败不阻止文字整理。详见 [初见头像线索](MEMORY.md#初见头像线索)。
 
 | 配置项 | 示例值 | 作用 |
 | --- | --- | --- |
@@ -22,7 +28,7 @@
 | `target.context_max_chars` | `24000` | 格式化用户提示词的字符预算，包含上下文和触发等；超出则取消回复，非截断历史；正值启用预算 |
 | `target.max_reply_chars` | `1800` | 每条发送分片的字符上限，超过会分多条；不是整次答案的总长度限制，使用正整数 |
 
-提示词文件中“通常不超过 200 字”是给模型的回复长度指令；`max_tokens` 是生成 token 上限；`max_reply_chars` 是微信发送分片上限，三者都不限制人格提示词文件的长度。
+提示词要求常规闲聊、日常问答约 10 字、尽量不超过 30 字；专业问题按需要展开。它是模型表达偏好，不强行截字。确需分两条时由模型用一个空行分成两段，发送层保持顺序、逐条确认与原冷却；代码块中的空行保留，超长内容仍按传输上限分片。`max_tokens` 是生成 token 上限，`max_reply_chars` 是微信发送分片上限，都不限制人格提示词文件长度。
 
 ## DeepSeek
 
@@ -102,7 +108,6 @@ DEEPSEEK_API_KEY=
 | 项目 | 当前行为 |
 | --- | --- |
 | `source` | 整理版只接受 `db` |
-| `target.context_window_seconds` | `app/runtime.py` 固定为 `600` |
 | `target.trigger.require_mention_metadata` | 固定 `true`，要求真实 @ 的账号 ID |
 | `target.trigger.reply_all` | 固定 `false` |
 | `target.trigger.prefixes` | 固定空列表 |
@@ -112,6 +117,10 @@ DEEPSEEK_API_KEY=
 
 这些字段不能仅改 JSON 就改变实际策略。
 
+`target.context_window_seconds` 已恢复为可调整的正整数，默认 `300`（5 分钟），不再由 runtime 强制覆盖。前台回答和后台记忆整理使用同一窗口，修改后重启监听生效。长期人物记忆仍独立保留；明确引用的消息可以早于该窗口。
+
+`target.trigger.pat_enabled` 默认 `true`。其他群成员拍当前机器人时独立入队，读取最近上下文并自然回应；自己拍、拍其他人、错误群或不明确的事件不触发。拍一拍与文字 @ 不合并，仍遵守队列、冷却及数据库发送确认。设为 `false` 并重启可关闭拍一拍回复。
+
 ## 合并、队列和恢复
 
 | 配置项 | 默认值 | 作用 |
@@ -120,7 +129,7 @@ DEEPSEEK_API_KEY=
 | `queue.generation_concurrency` | `2` | 同时运行的有效生成进程上限；更新批次会终止旧本地进程，服务端旧请求可能继续计费 |
 | `queue.file` | `/run/wxbridge-trial/queue.sqlite3` | 当前用户所有的 0600 SQLite；父目录必须私有 0700 且位于 `tmpfs,noswap`，不允许磁盘回退 |
 
-默认每次 @ 独立入队、按接收顺序发送。只有显式启用合并窗口时才按窗口结束时间排队。最新版本生成完成、轮到队首且冷却结束才可提交。上下文以最后一条触发的实际发送时间取十分钟；启用合并时从历史去重全部触发问题。
+默认每次 @ 独立入队、按接收顺序发送。只有显式启用合并窗口时才按窗口结束时间排队。最新版本生成完成、轮到队首且冷却结束才可提交。上下文以最后一条触发的实际发送时间取五分钟；启用合并时从历史去重全部触发问题。
 
 `python3 -m wxbridge queue-status` 只读队列元数据，不读微信数据库或显示正文。进程重启保留任务及分片进度，主机重启清空内存队列。恢复时核对微信账号与群；待确认意图先核对发出记录，不盲目重试。确认超时仍接收和生成新任务，后续发送等待；晚到的匹配发出记录可自动解除该阻塞。
 
@@ -130,7 +139,7 @@ dry-run 使用独立的 `.dry-run` 队列及 `dry-run/live-status.json`，不消
 
 ## 引用回复
 
-引用一条消息后真实 @ 助手，可以直接问“这怎么看”。系统会把本次问题与被引用的正文、作者和原消息时间分别提供；明确引用可早于十分钟历史窗口，文字仍计入字符预算。支持文字、链接快照及被明确引用的本地图片；语音等暂不识别。详见 [引用消息说明](REFERENCES.md)。
+引用一条消息后真实 @ 助手，可以直接问“这怎么看”。系统会把本次问题与被引用的正文、作者和原消息时间分别提供；明确引用可早于五分钟历史窗口，文字仍计入字符预算。支持文字、链接快照及被明确引用的本地图片；语音等暂不识别。详见 [引用消息说明](REFERENCES.md)。
 
 `queue-status` / `live-status.json` 的 `recent_intake` 显示最近消息的接纳或跳过原因、真实 @ 标记及引用字符数，不包含正文。
 

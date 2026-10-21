@@ -1,0 +1,184 @@
+{
+  "schema_version": 1,
+  "reviewed_at": "2026-10-21",
+  "client_support": {
+    "source": "当前 Linux /opt/wechat/wechat 内置 Qt 资源及经典名称表；只读解析，无聊天数据",
+    "panel_entries": 109,
+    "new_mapping_entries": 45,
+    "note": "两份清单有重叠，不能相加；这里仅收录已核对的20项及已核实的新版英文别名。经典项未核实的英文别名留空。",
+    "resource_sha256": {
+      "emojipanel-config.xml": "7e1446a4563779941da6d6abb83b073f28ac2bac6e336d65b44ba68483858e30",
+      "newemoji-config.xml": "b30b478b168a0a8f184ddbb4f89b8ee4453478f26a7058f874b9d843a91062b1"
+    }
+  },
+  "sources": {
+    "client": {"kind": "installed_client", "description": "客户端映射用于证明名称和别名，不用于证明梗义。"},
+    "editorial": {"kind": "editorial_summary", "description": "人工归纳的语境建议，不是官方唯一释义；实际含义仍以正文、关系和场景为准。"},
+    "project": {"kind": "user_preference", "description": "本项目按用户要求移除微笑的礼貌、友好释义，仅采用冷淡、无语、反讽等用法。"},
+    "sarcasm": {"kind": "research", "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC11665359/", "scope": "中国青少年微信实验；支持微笑等表情有反讽用法，不能据此推断所有人、所有场景。"},
+    "facepalm": {"kind": "research", "url": "https://www.kci.go.kr/kciportal/ci/sereArticleSearch/ciSereArtiView.kci?sereArticleSearchBean.artiId=ART003339811", "scope": "微信真实对话中的捂脸互动功能、自嘲和无奈。"},
+    "doge": {"kind": "research", "url": "https://benjamins.com/catalog/ip.00124.wu", "scope": "Bilibili语料中的狗头与文字互动研究，只作为跨平台参考，不冒充微信群的固定规则。"}
+  },
+  "emoticons": [
+    {
+      "code": "[微笑]", "aliases": [], "literal": "嘴角上扬的面部图案",
+      "meanings": ["冷淡", "无语", "反讽", "阴阳语气", "轻微不满"],
+      "contexts": ["上下文明确的轻微不满或熟人反话"],
+      "avoid": ["普通示好", "感谢", "安慰", "友好收尾"],
+      "risk": "本项目不采用礼貌或友好释义；不能只凭群友发这个就认定恶意。",
+      "example": "行 你说了算[微笑]", "sources": ["client", "project", "sarcasm"]
+    },
+    {
+      "code": "[再见]", "aliases": ["[Bye]"], "literal": "挥手告别",
+      "meanings": ["结束话题", "无语到不想接话", "夸张地表示退场"],
+      "contexts": ["明确告别", "熟人间被逗得想退场的玩笑"],
+      "avoid": ["认真求助", "需要陪伴时突然结束对话"],
+      "risk": "可能被读成赶人或冷处理，不把挥手一概当成友好。",
+      "example": "这脑回路 我先退场[再见]", "sources": ["client", "editorial"]
+    },
+    {
+      "code": "[捂脸]", "aliases": ["[Facepalm]"], "literal": "用手遮住部分脸",
+      "meanings": ["尴尬", "无奈", "自嘲", "被逗笑后的不好意思"],
+      "contexts": ["说漏嘴", "自己的小失误", "好笑又无奈"],
+      "avoid": ["替别人认错", "对真实痛苦表现成看笑话"],
+      "risk": "不默认是在害羞或道歉，分清笑的是自己还是别人。",
+      "example": "怎么又被你逮到了[捂脸]", "sources": ["client", "editorial", "facepalm"]
+    },
+    {
+      "code": "[旺柴]", "aliases": ["[Doge]"], "literal": "斜眼的柴犬脸",
+      "meanings": ["开玩笑", "反话", "故意一本正经", "轻松的调侃语气标记"],
+      "contexts": ["熟人接梗", "显然夸张的玩笑", "自嘲"],
+      "avoid": ["真实伤害", "严肃安慰", "拿狗头为辱骂免责"],
+      "risk": "加狗头不会让伤人的正文自动无害，也不能把它一律理解为骂人。",
+      "example": "这班没你得散[旺柴]", "sources": ["client", "editorial", "doge"]
+    },
+    {
+      "code": "[奸笑]", "aliases": ["[Smirk]"], "literal": "带一点狡黠的笑",
+      "meanings": ["坏笑", "逗弄", "心照不宣", "小得意"],
+      "contexts": ["无伤大雅的小计谋", "熟人互相逗趣"],
+      "avoid": ["未经铺垫的暧昧", "别人倒霉时幸灾乐祸"],
+      "risk": "有时显得不怀好意，不自动引向性暗示。",
+      "example": "这回可让我抓到把柄了[奸笑]", "sources": ["client", "editorial", "sarcasm"]
+    },
+    {
+      "code": "[机智]", "aliases": ["[Smart]"], "literal": "示意想到了办法的表情",
+      "meanings": ["机灵", "想到办法", "小得意", "自嘲式地夸自己聪明"],
+      "contexts": ["解决一个小问题", "显然不太高明的搞笑主意"],
+      "avoid": ["当作真实智力评价", "严肃纠错时显摆优越"],
+      "risk": "可以是真夸也可以是反话，必须结合正文。",
+      "example": "办法不大 正好够用[机智]", "sources": ["client", "editorial", "sarcasm"]
+    },
+    {
+      "code": "[偷笑]", "aliases": [], "literal": "偷偷地笑",
+      "meanings": ["忍不住好笑", "暗自乐一下", "轻微得意"],
+      "contexts": ["轻松玩笑", "被夸后藏不住高兴"],
+      "avoid": ["他人认真诉苦", "真实失败或受伤"],
+      "risk": "对别人使用可能像幸灾乐祸，先确认场景轻松。",
+      "example": "就知道你会这么说[偷笑]", "sources": ["client", "editorial"]
+    },
+    {
+      "code": "[害羞]", "aliases": [], "literal": "不好意思的脸",
+      "meanings": ["被夸后的不好意思", "轻微羞怯", "含蓄回应亲近"],
+      "contexts": ["被认真夸奖", "双方已有亲近语境"],
+      "avoid": ["普通问答强行暧昧", "代替明确同意"],
+      "risk": "不能凭一个害羞表情认定恋爱关系或同意。",
+      "example": "夸一次就够了 我听见了[害羞]", "sources": ["client", "editorial"]
+    },
+    {
+      "code": "[调皮]", "aliases": [], "literal": "吐舌的调皮表情",
+      "meanings": ["轻松打趣", "小小逗弄", "不太正经地接梗"],
+      "contexts": ["无伤大雅的玩笑", "轻微嘴硬"],
+      "avoid": ["道歉时敷衍", "明确不喜欢被逗的人"],
+      "risk": "不能用来弱化需要认真承担的错误。",
+      "example": "这就开始得意啦[调皮]", "sources": ["client", "editorial"]
+    },
+    {
+      "code": "[呲牙]", "aliases": [], "literal": "露出牙齿的大笑",
+      "meanings": ["开心", "嬉皮一下", "有点得意", "视语境也可能是嘲弄"],
+      "contexts": ["轻松的好消息", "双方都在玩笑"],
+      "avoid": ["他人困境", "用嬉笑回应严肃批评"],
+      "risk": "别只看图像就断定友好或讽刺，正文决定笑点。",
+      "example": "今天这运气 可以啊[呲牙]", "sources": ["client", "editorial", "sarcasm"]
+    },
+    {
+      "code": "[得意]", "aliases": [], "literal": "一副很有把握的表情",
+      "meanings": ["小得意", "自信", "装酷", "玩笑式炫耀"],
+      "contexts": ["小事办成后", "明显开玩笑的自夸"],
+      "avoid": ["别人受挫时显摆", "没有依据的专业自信"],
+      "risk": "气势不能替代事实，得意应有分寸。",
+      "example": "这点小事 还难不住我[得意]", "sources": ["client", "editorial"]
+    },
+    {
+      "code": "[鼓掌]", "aliases": [], "literal": "拍手",
+      "meanings": ["赞赏", "庆祝", "配合夸张语气时也可反讽"],
+      "contexts": ["确实做得不错", "群体庆祝"],
+      "avoid": ["失败时假意鼓励", "冷嘲热讽的道贺"],
+      "risk": "正文若是反话会显得挖苦，不机械用于安慰。",
+      "example": "这回确实干得漂亮[鼓掌]", "sources": ["client", "editorial"]
+    },
+    {
+      "code": "[抱拳]", "aliases": ["[Salute]"], "literal": "抱拳致意",
+      "meanings": ["佩服", "感谢", "客气致意", "玩笑式甘拜下风"],
+      "contexts": ["帮忙后致谢", "佩服对方的操作"],
+      "avoid": ["每次答完都套客气结尾"],
+      "risk": "看正文区分真佩服和阴阳，别过度江湖腔。",
+      "example": "这操作 姐服了[抱拳]", "sources": ["client", "editorial"]
+    },
+    {
+      "code": "[吃瓜]", "aliases": ["[Onlooker]"], "literal": "吃着西瓜旁观",
+      "meanings": ["围观趣事", "好奇后续", "轻松看热闹"],
+      "contexts": ["无伤大雅的趣闻", "双方愿意分享的八卦"],
+      "avoid": ["真实受害", "隐私冲突", "把求助当热闹"],
+      "risk": "不要为了接梗窥探隐私或幸灾乐祸。",
+      "example": "然后呢 我听着[吃瓜]", "sources": ["client", "editorial"]
+    },
+    {
+      "code": "[破涕为笑]", "aliases": ["[Lol]"], "literal": "含泪的笑脸",
+      "meanings": ["笑出眼泪", "好笑又无奈", "视语境可能是嘲讽"],
+      "contexts": ["好笑的小乌龙", "自己的荒唐经历"],
+      "avoid": ["把真实悲伤理解为已经释怀", "笑话他人的损失"],
+      "risk": "不等于真的哭过或已经被安慰好。",
+      "example": "这乌龙 够我笑一会儿[破涕为笑]", "sources": ["client", "editorial", "sarcasm"]
+    },
+    {
+      "code": "[Emm]", "aliases": [], "literal": "犹豫地停顿一下",
+      "meanings": ["一言难尽", "犹豫", "保留意见", "有点无语"],
+      "contexts": ["不知从哪吐槽", "轻微不同意"],
+      "avoid": ["只用它敷衍需要明确答案的求助"],
+      "risk": "可能显得不耐烦，认真问题应配上实质回应。",
+      "example": "你这解释 还挺有想法[Emm]", "sources": ["client", "editorial"]
+    },
+    {
+      "code": "[翻白眼]", "aliases": ["[Boring]"], "literal": "眼睛向上翻",
+      "meanings": ["无语", "轻微嫌弃", "熟人间故作不耐烦"],
+      "contexts": ["熟悉的人无伤大雅地逗你"],
+      "avoid": ["陌生人认真提问", "情绪低落", "真实争执"],
+      "risk": "比普通吐槽更容易显得冒犯，谨慎使用。",
+      "example": "尾巴收一收 快翘天上了[翻白眼]", "sources": ["client", "editorial"]
+    },
+    {
+      "code": "[裂开]", "aliases": ["[Broken]"], "literal": "裂成两半的表情脸",
+      "meanings": ["夸张崩溃", "被整不会了", "难以置信", "自嘲倒霉"],
+      "contexts": ["生活小乌龙", "荒唐但不严重的坏消息"],
+      "avoid": ["把真实精神危机当段子"],
+      "risk": "网络夸张不等于临床状态，也别用它轻视真困境。",
+      "example": "刚收拾好 又来一遍[裂开]", "sources": ["client", "editorial"]
+    },
+    {
+      "code": "[苦涩]", "aliases": ["[Hurt]"], "literal": "带一点苦笑的脸",
+      "meanings": ["苦笑", "心酸", "无奈地自嘲", "表面撑着其实不太好受"],
+      "contexts": ["小失落", "事与愿违的自嘲"],
+      "avoid": ["替别人断言内心痛苦", "机械装可怜"],
+      "risk": "不能据此确定他人真实情绪，需看本人文字。",
+      "example": "计划挺好 现实另有安排[苦涩]", "sources": ["client", "editorial"]
+    },
+    {
+      "code": "[叹气]", "aliases": ["[Sigh]"], "literal": "呼气叹息",
+      "meanings": ["无奈", "疲惫", "认了", "轻微失落"],
+      "contexts": ["又碰到一个小麻烦", "温和表达无奈"],
+      "avoid": ["别人认真求助时显得嫌麻烦"],
+      "risk": "不必一律解释为生气或责备，也别给回答添不耐烦。",
+      "example": "行吧 再来一次[叹气]", "sources": ["client", "editorial"]
+    }
+  ]
+}

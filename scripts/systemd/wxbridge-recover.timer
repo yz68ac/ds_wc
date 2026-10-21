@@ -1,0 +1,10 @@
+[Unit]
+Description=Retry WeChat recovery after boot or manual login
+
+[Timer]
+OnBootSec=30
+OnUnitInactiveSec=60
+Unit=wxbridge-recover.service
+
+[Install]
+WantedBy=timers.target

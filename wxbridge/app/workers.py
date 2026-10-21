@@ -29,14 +29,18 @@ def _work(connection, kind, payload):
                         answer, search = answer_with_search(cfg, DeepSeekClient(cfg), prompt,
                             on_search=lambda: connection.send({"event": "search_started"}))
                     else:
-                        from wxbridge.ai.output import plain_text, response_prompt
-                        answer = DeepSeekClient(cfg).chat(response_prompt(prompt))
-                        answer = plain_text(answer)
+                        from wxbridge.ai.output import format_reply, response_prompt
+                        answer = DeepSeekClient(cfg).chat(response_prompt(prompt, cfg))
+                        answer = format_reply(answer, cfg)
                     result = {"reply": answer}
                     if vision is not None:
                         result["vision"] = vision
                     if search is not None:
                         result["search"] = search
+                elif kind == 'proactive':
+                    from wxbridge.ai.proactive import evaluate
+                    cfg, prompt = payload
+                    result = {'decision': evaluate(cfg, prompt)}
                 elif kind == "memory":
                     from wxbridge.ai.memory import extract
                     cfg, snapshot = payload

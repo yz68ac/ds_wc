@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import tempfile
+from wxbridge.ai.avatars import validate_visual, visual_description
 
 DAY = 86400
 LIMITS = {"scene": 10, "event": 10, "preference": 5, "impression": 3}
@@ -105,6 +106,9 @@ class MemoryStore:
                     require(isinstance(person["nickname"], str) and isinstance(person["aliases"], list))
                     require(type(person["affinity"]) is int and 0 <= person["affinity"] <= 100)
                     require(isinstance(person["entries"], list))
+                    initial = person.get("initial_impression", {})
+                    if initial.get("state") == "ready":
+                        validate_visual(initial["visual"])
                     for entry in person["entries"]:
                         require(entry["kind"] in TTL and entry["mode"] in ("real", "roleplay"))
                         require(isinstance(entry["summary"], str) and len(entry["summary"]) <= 220)
@@ -125,6 +129,9 @@ class MemoryStore:
             lines += ["", f"## {person['nickname']} ({uid})", f"好感度：{affinity_value(person, now)}"]
             lines += [f"- {e['kind']}/{e['mode']}（{fuzzy_time(e['occurred_at'], now)}）：{e['summary']}"
                       for e in active_entries(person, now)]
+            initial = person.get("initial_impression", {})
+            if initial.get("state") == "ready":
+                lines.append("- 初始头像视觉（非性格判断，低权重）："+visual_description(initial["visual"]))
         try:
             atomic_write(self.projection, "\n".join(lines)+"\n")
         except OSError as exc:
@@ -135,7 +142,8 @@ class MemoryStore:
     def status(self, now):
         return dict(revision=self.data["revision"], watermark=self.data["watermark"],
                     members=len(self.data["members"]),
-                    entries=sum(len(active_entries(p, now)) for p in self.data["members"].values()))
+                    entries=sum(len(active_entries(p, now)) for p in self.data["members"].values()),
+                    initial_impressions=sum(p.get("initial_impression", {}).get("state") == "ready" for p in self.data["members"].values()))
 
     def background(self, labels, now):
         result = {}
@@ -146,8 +154,8 @@ class MemoryStore:
                                      entries=active_entries(p, now))
         return result
 
-    def prompt(self, labels, asker, now, budget=1200):
-        result, used = [], 0
+    def prompt(self, labels, asker, now, budget=1200, *, use_avatar=True):
+        result, used, visual_hints = [], 0, []
         order = [asker, *[u for u in labels if u != asker and u in self.data["members"]]]
         for uid in order[:5]:
             p = self.data["members"].get(uid)
@@ -161,13 +169,28 @@ class MemoryStore:
                 continue
             result.append(header)
             used += len(header)+1
-            for e in sorted(active_entries(p, now), key=lambda e: (-e["confirmed_at"], -e["confidence"])):
+            initial = p.get("initial_impression", {})
+            entries = active_entries(p, now)
+            # 仅早期弱参考；直接发言形成的印象始终优先，避免头像先入为主。
+            if (use_avatar and initial.get("state") == "ready" and now-initial["learned_at"] < 30*DAY
+                    and p.get("interaction_batches", 0) < 4 and not any(e["kind"] == "impression" for e in entries)):
+                description = visual_description(initial["visual"])
+                line = (f"{labels[uid]} 初见视觉线索（弱背景）：{description}。"
+                        "不是本人身份、性格或偏好的证据，仅可轻微参考表达；不主动提头像、观察或评价过程，无关就忽略。")
+                if description:
+                    visual_hints.append(line)
+            for e in sorted(entries, key=lambda e: (-e["confirmed_at"], -e["confidence"])):
                 label = "暂时推测" if e["kind"] == "impression" else e["kind"]
                 line = json.dumps(dict(member=labels[uid], kind=label, mode=e["mode"],
                                        when=fuzzy_time(e["occurred_at"], now), summary=e["summary"]), ensure_ascii=False)
                 if used+len(line)+1 <= budget:
                     result.append(line)
                     used += len(line)+1
+        # 实际对话记忆和互动偏好先占预算，头像线索只用剩余空间。
+        for line in visual_hints:
+            if used+len(line)+1 <= budget:
+                result.append(line)
+                used += len(line)+1
         return "\n".join(result)
 
     def apply(self, proposal, snapshot, now):
@@ -176,7 +199,7 @@ class MemoryStore:
             raise ValueError("memory_stale_revision")
         if snapshot["watermark"] != self.data["watermark"]:
             raise ValueError("memory_stale_watermark")
-        if not isinstance(proposal, dict) or set(proposal) != {"updates"} or not isinstance(proposal["updates"], list):
+        if not isinstance(proposal, dict) or set(proposal) not in ({"updates"}, {"updates", "avatar_updates"}) or not isinstance(proposal["updates"], list):
             raise ValueError("memory_invalid_schema")
         if len(proposal["updates"]) > len(snapshot["members"]):
             raise ValueError("memory_invalid_members")
@@ -184,6 +207,8 @@ class MemoryStore:
         processed = set(self.data.get("processed_ids", []))
         evidence = {m["id"]: m for m in snapshot["messages"] if m["local_id"] > self.data["watermark"]
                     and m["local_id"] not in processed}
+        interactions = [m for m in snapshot.get("interactions", []) if m.get("kind") == "pat"
+                        and m["local_id"] > self.data["watermark"] and m["local_id"] not in processed]
         data, seen = copy.deepcopy(self.data), set()
         def sources(value, label):
             if not isinstance(value, list) or not value or len(value) > 30 or len(set(value)) != len(value):
@@ -252,9 +277,9 @@ class MemoryStore:
                 person["affinity_evidence"] = (person["affinity_evidence"]+[dict(delta=new_score-score, reason=reason,
                     sources=[m["local_id"] for m in src], time=max(m["time"] for m in src))])[-30:]
             person["daily"] = {d: n for d, n in person["daily"].items() if (datetime.fromtimestamp(now).date()-datetime.fromisoformat(d).date()).days <= 90}
-        # 元数据也只按新的真实发言更新，模型输出为空也推进处理水位。
+        # 真实互动可更新昵称与互动时间，但拍一拍不属于发言证据，不参与记事/好感计分。
         for uid, member in snapshot["members"].items():
-            own = [m for m in evidence.values() if m["member"] == member["label"]]
+            own = [m for m in [*evidence.values(), *interactions] if m["member"] == member["label"]]
             if not own:
                 continue
             p = data["members"].setdefault(uid, dict(nickname="", aliases=[], entries=[], affinity=50,
@@ -267,6 +292,8 @@ class MemoryStore:
                 p["affinity"] = affinity_value(p, now)
             p["last_interaction"] = max(m["time"] for m in own)
             p["decay_anchor"] = p["last_interaction"]
+            p["interaction_batches"] = p.get("interaction_batches", 0)+1
+            p.setdefault("initial_impression", dict(state="pending", checked_at=0, attempts=0))
             kept = active_entries(p, now)
             p["entries"] = []
             for kind, limit in LIMITS.items():
@@ -274,13 +301,50 @@ class MemoryStore:
                                         key=lambda e: (e["confidence"], e["confirmed_at"]), reverse=True)[:limit]
         for p in data["members"].values():
             p["entries"] = active_entries(p, now)
+        self._apply_avatars(data, proposal.get("avatar_updates", []), snapshot, now)
         data["watermark"] = max(data["watermark"], snapshot["through"])
         # 微信可能晚同步一条发送时间较早、local_id 却比触发大的消息。
         # 记录水位之外已处理来源，既不重复计分，也不跳过较小 ID 的后续触发。
-        data["processed_ids"] = sorted(i for i in processed | {m["local_id"] for m in evidence.values()}
+        data["processed_ids"] = sorted(i for i in processed | {m["local_id"] for m in [*evidence.values(), *interactions]}
                                        if i > data["watermark"])
         data["revision"] += 1
         self.persist(now, data=data)
+
+    def _apply_avatars(self, data, updates, snapshot, now):
+        bindings = snapshot.get("avatars", {})
+        mapping = {v["label"]: uid for uid, v in snapshot["members"].items()}
+        valid = {}
+        try:
+            if not isinstance(updates, list) or len(updates) > len(bindings):
+                raise ValueError("avatar_invalid_result")
+            for update in updates:
+                if not isinstance(update, dict) or set(update) != {"member", "digest", "visual"}:
+                    raise ValueError("avatar_invalid_result")
+                uid = mapping.get(update["member"])
+                binding = bindings.get(uid, {})
+                if (uid in valid or not binding.get("available") or update["digest"] != binding["digest"]
+                        or hashlib.sha256(binding["data"]).hexdigest() != binding["digest"]):
+                    raise ValueError("avatar_unknown_source")
+                valid[uid] = validate_visual(update["visual"])
+        except (ValueError, KeyError, TypeError):
+            valid = {}  # 头像建议不合格时仍提交独立的文本记忆，不写入未知来源。
+        for uid, binding in bindings.items():
+            if uid not in snapshot["members"] or uid not in data["members"]:
+                continue
+            p = data["members"][uid]
+            initial = p.get("initial_impression", {})
+            if initial.get("state") in ("ready", "forgotten", "expired"):
+                continue
+            attempts = initial.get("attempts", 0)+1
+            if uid in valid:
+                p["initial_impression"] = dict(state="ready", origin="avatar_visual", confidence=0.2,
+                    learned_at=now, checked_at=now, attempts=attempts, digest=binding["digest"],
+                    observed_at=binding["observed_at"], visual=valid[uid])
+            else:
+                code = binding.get("error")
+                if code not in {"avatar_invalid_member", "avatar_not_cached", "avatar_ambiguous", "avatar_size_limit", "avatar_unsupported", "avatar_unavailable"}:
+                    code = "avatar_analysis_unavailable"
+                p["initial_impression"] = dict(state="unavailable", checked_at=now, attempts=attempts, error=code)
 
     def maintain(self, action, *, member=None, entry=None, text=None, watermark=0, now):
         if action == "clear":
@@ -290,6 +354,12 @@ class MemoryStore:
             if not person:
                 raise ValueError("memory_member_not_found")
             if entry:
+                if entry == "initial":
+                    person["initial_impression"] = dict(state="forgotten", checked_at=now)
+                    self.data["watermark"] = max(self.data["watermark"], watermark)
+                    self.data["revision"] += 1
+                    self.persist(now)
+                    return
                 if not any(e["id"] == entry for e in person["entries"]):
                     raise ValueError("memory_entry_not_found")
                 person["entries"] = [e for e in person["entries"] if e["id"] != entry]
@@ -316,6 +386,10 @@ class MemoryStore:
             entries = active_entries(person, now)
             if entries != person["entries"]:
                 person["entries"] = entries
+                changed = True
+            initial = person.get("initial_impression", {})
+            if initial.get("state") == "ready" and now-initial["learned_at"] >= 90*DAY:
+                person["initial_impression"] = dict(state="expired", checked_at=initial["checked_at"])
                 changed = True
         if changed:
             data["revision"] += 1

@@ -8,6 +8,7 @@ import sqlite3
 from typing import Any, Callable
 
 from wxbridge.storage.memoryfs import require_memory_directory
+from wxbridge.wechat.pats import is_pat
 
 
 def checked_path(value: str, *, existing: bool = False) -> Path:
@@ -97,12 +98,14 @@ class Journal:
                 if describe:
                     events.append(describe(msg))
                 if accept(msg):
-                    task = next((t for t in tasks if debounce > 0 and t["phase"] == "open"
+                    kind = "pat" if is_pat(msg) else "mention"
+                    task = next((t for t in tasks if kind == "mention" and t.get("trigger_kind", "mention") == kind
+                                 and debounce > 0 and t["phase"] == "open"
                                  and t["sender"] == msg["sender"]
                                  and (now < t["deadline"] or msg["time"] < t["deadline"])), None)
                     if task is None:
                         row = self.db.execute("SELECT COALESCE(MAX(id),0)+1 FROM tasks").fetchone()
-                        task = dict(id=row[0], sender=msg["sender"], phase="open", version=0,
+                        task = dict(id=row[0], sender=msg["sender"], phase="open", version=0, trigger_kind=kind,
                                     triggers=[], trigger_ids=[], generation="pending", chunks=[], next_chunk=0,
                                     intent=None, blocked_reason="", closed_at=None)
                         tasks.append(task)
@@ -110,7 +113,7 @@ class Journal:
                     if (task.get("notice") or {}).get("state") == "pending" and not task["intent"]:
                         task.pop("notice", None)  # 仍在合并窗口的旧版本尚未发出的提示作废。
                     task.setdefault("trigger_ids", []).append(msg["local_id"])
-                    task.update(version=task["version"] + 1, deadline=now + debounce,
+                    task.update(version=task["version"] + 1, deadline=now + (0 if kind == "pat" else debounce),
                                 generation="pending", chunks=[], blocked_reason="")
                     self.put(task)
                 cursor = max(cursor, msg["local_id"])
@@ -128,7 +131,8 @@ class Journal:
 
     def head(self):
         # 未封批的较早窗口也占位，避免轮询/恢复时晚封批而插队。
-        tasks = sorted(self.tasks(), key=lambda t: (t["deadline"], t["id"]))
+        tasks = sorted(self.tasks(), key=lambda t: (not bool(t.get('intent')),
+            t.get('trigger_kind') == 'proactive', t['deadline'], t['id']))
         return tasks[0] if tasks else None
 
     def request_notice(self, task_id: int, version: int, text: str) -> bool:
@@ -145,6 +149,25 @@ class Journal:
         if task["intent"].get("kind") == "notice":
             return task["notice"]["text"]
         return task["chunks"][task["intent"]["part"]]
+
+    def enqueue_proactive(self, text, through, now, expires):
+        with self.db:
+            if self.tasks():
+                return None
+            identifier = self.db.execute('SELECT COALESCE(MAX(id),0)+1 FROM tasks').fetchone()[0]
+            task = dict(id=identifier, sender='', phase='queued', version=1, trigger_kind='proactive',
+                triggers=[], trigger_ids=[], generation='ready', chunks=[text], next_chunk=0,
+                intent=None, blocked_reason='', closed_at=now, deadline=now,
+                proactive=dict(snapshot_id=through, expires_at=expires))
+            self.put(task)
+            return task
+
+    def discard_proactive(self, identifier, reason):
+        with self.db:
+            task = self.task(identifier)
+            if task and task.get('trigger_kind') == 'proactive' and not task['intent']:
+                task.update(phase='done', chunks=[], triggers=[], blocked_reason='', cancelled=reason)
+                self.put(task)
 
     def generated(self, task_id: int, version: int, chunks: list[str], error: str = "", *, vision=None, search=None) -> bool:
         with self.db:
@@ -190,8 +213,11 @@ class Journal:
             task.update(intent=None, blocked_reason="", last_ack_id=local_id)
             task.update(pre_submit_attempts=0, retry_at=0)
             self.set("last_success", now)
+            if task.get('trigger_kind') == 'proactive':
+                self.set('proactive', {**self.get('proactive', {}), 'outcome': 'sent',
+                    'last_sent_at': now, 'last_ack_id': local_id, 'error': ''})
             if task["next_chunk"] == len(task["chunks"]):
-                if memory:
+                if memory and task.get('trigger_kind') != 'proactive':
                     # 与最终分片确认同事务；只留触发指针，主进程随后重读原窗口。
                     self.db.execute("INSERT OR IGNORE INTO memory_jobs VALUES (?,?)", (task_id,
                         json.dumps(dict(id=task_id, state="pending", retry_at=0, attempts=0,
@@ -226,8 +252,9 @@ class Journal:
                     recent_intake=self.get("recent_intake", [])[-20:],
                     last_vision=self.get("last_vision"),
                     last_search=self.get("last_search"),
+                    proactive=self.get('proactive'),
                     memory_pending=len(self.memory_jobs()), memory_error=self.get("memory_error", ""),
-                    tasks=[dict(id=t["id"], version=t["version"], phase=t["phase"],
+                    tasks=[dict(id=t["id"], version=t["version"], phase=t["phase"], trigger_kind=t.get('trigger_kind', 'mention'),
                                 generation=t["generation"], questions=len(t["triggers"]),
                                 next_chunk=t["next_chunk"], chunks=len(t["chunks"]),
                                 blocked_reason=t["blocked_reason"], vision=t.get("vision"), search=t.get("search"),

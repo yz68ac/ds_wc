@@ -65,6 +65,20 @@ class ProjectEnvTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     _load_defaults(path)
 
+    def test_memory_thinking_defaults_overrides_and_invalid_values(self):
+        with patch("wxbridge.config.PROJECT_ROOT", self.root), patch.dict(os.environ, {}, clear=True):
+            cfg = load_config(self.config_file)
+            self.assertEqual((cfg["memory"]["thinking"], cfg["memory"]["reasoning_effort"]), ("enabled", "max"))
+            self.config_file.write_text(json.dumps({"memory": {"thinking": "disabled", "reasoning_effort": "low"}}), encoding="utf-8")
+            cfg = load_config(self.config_file)
+            self.assertEqual((cfg["memory"]["thinking"], cfg["memory"]["reasoning_effort"]), ("disabled", "low"))
+            for key, value in (("thinking", "auto"), ("thinking", True), ("thinking", None),
+                               ("reasoning_effort", "ultra"), ("reasoning_effort", 1), ("reasoning_effort", [])):
+                with self.subTest(key=key, value=value):
+                    self.config_file.write_text(json.dumps({"memory": {key: value}}), encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, "memory."+key):
+                        load_config(self.config_file)
+
 
 if __name__ == "__main__":
     unittest.main()

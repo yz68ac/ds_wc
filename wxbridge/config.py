@@ -65,6 +65,28 @@ def load_config(path: str | Path = "config.json") -> dict[str, Any]:
         cfg["deepseek"]["system_prompt_file"] = ""
     if cfg["deepseek"].get("reasoning_effort") not in (None, "low", "high", "max"):
         raise ValueError("deepseek.reasoning_effort 必须为 low/high/max")
+    window = cfg["target"]["context_window_seconds"]
+    if type(window) is not int or window <= 0:
+        raise ValueError("target.context_window_seconds 必须是正整数")
+    if type(cfg["target"]["trigger"]["pat_enabled"]) is not bool:
+        raise ValueError("target.trigger.pat_enabled 必须为布尔值")
+    style = cfg['reply_style']
+    if not isinstance(style, dict):
+        raise ValueError('reply_style 必须为 JSON 对象')
+    for key in ('wechat_emoticons_enabled', 'omit_trailing_period'):
+        if type(style[key]) is not bool:
+            raise ValueError(f'reply_style.{key} 必须为布尔值')
+    proactive = cfg['proactive']
+    if type(proactive['enabled']) is not bool:
+        raise ValueError('proactive.enabled 必须为布尔值')
+    for key, minimum, maximum in (('window_seconds', 60, 3600), ('min_messages', 2, 100),
+            ('check_interval_seconds', 1, 60), ('evaluation_interval_seconds', 30, 3600),
+            ('min_new_messages', 1, 100), ('reply_ttl_seconds', 1, 300),
+            ('timeout_seconds', 1, 30), ('max_reply_chars', 1, 30)):
+        if type(proactive[key]) is not int or not minimum <= proactive[key] <= maximum:
+            raise ValueError(f'proactive.{key} 超出范围 {minimum}–{maximum}')
+    if proactive['reply_ttl_seconds'] < proactive['timeout_seconds']:
+        raise ValueError('proactive.reply_ttl_seconds 不能小于 timeout_seconds')
 
     # 环境变量覆盖常用项
     if os.environ.get("WX_DB_DIR"):
@@ -104,10 +126,21 @@ def load_config(path: str | Path = "config.json") -> dict[str, Any]:
     cfg["memory"]["directory"] = str(directory if directory.is_absolute() else PROJECT_ROOT/directory)
     if not isinstance(memory["enabled"], bool) or not isinstance(memory["model"], str) or not memory["model"].strip():
         raise ValueError("memory 开关或模型无效")
+    if memory["thinking"] not in ("enabled", "disabled"):
+        raise ValueError("memory.thinking 必须为 enabled 或 disabled")
+    if memory["reasoning_effort"] not in ("low", "high", "max"):
+        raise ValueError("memory.reasoning_effort 必须为 low、high 或 max")
     for key, minimum, maximum in (("min_interval_seconds", 60, 86400), ("prompt_max_chars", 100, 1200),
                                   ("max_tokens", 256, 2400), ("timeout_seconds", 1, 30)):
         if type(memory[key]) is not int or not minimum <= memory[key] <= maximum:
             raise ValueError(f"memory.{key} 超出范围 {minimum}–{maximum}")
+    avatar = memory["avatar"]
+    if not isinstance(avatar["enabled"], bool):
+        raise ValueError("memory.avatar.enabled 必须为布尔值")
+    for key, minimum, maximum in (("max_per_batch", 1, 2), ("max_bytes", 1024, 524288),
+                                  ("retry_interval_seconds", 60, 86400)):
+        if type(avatar[key]) is not int or not minimum <= avatar[key] <= maximum:
+            raise ValueError(f"memory.avatar.{key} 超出范围 {minimum}–{maximum}")
     vision = cfg["vision"]
     if not isinstance(vision["enabled"], bool) or vision["detail"] not in ("original", "high", "low", "auto"):
         raise ValueError("vision.enabled 必须为布尔值，detail 必须为 original/high/low/auto")

@@ -76,7 +76,7 @@ class SearchTests(unittest.TestCase):
         self.client.complete.side_effect = [dict(tool_calls=[call(query='合成资料')]),
             dict(tool_calls=[call('web_fetch', url='https://example.com/detail')]), dict(content='**查到了**，这次主要改了速度。')]
         text, _ = self.answer()
-        self.assertEqual(text, '查到了，这次主要改了速度。\n参考：https://example.com/detail')
+        self.assertEqual(text, '查到了，这次主要改了速度\n参考：https://example.com/detail')
         rules = self.client.complete.call_args.args[0][0]['content']
         self.assertTrue(rules.startswith('合成人格'))
         self.assertIn('只发纯文本', rules)

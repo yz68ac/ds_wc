@@ -351,8 +351,8 @@ class A11y:
     def find_list(self, app, names: Iterable[str]):
         wanted = [n.lower() for n in names]
         lists = []
-        for node, role, name, bounds in self.walk(app):
-            if self._is_list(role):
+        for node, role, name, bounds in self.walk(app, max_depth=35):
+            if self._is_list(role) and bounds:
                 lists.append((node, role, name, bounds))
         for node, _role, name, _bounds in lists:
             if (name or "").lower() in wanted:
@@ -385,8 +385,9 @@ class A11y:
         app = self.require_app()
         target = chat_name.strip()
         candidates = []
-        for node, role, name, bounds in self.walk(app, max_depth=14):
-            if not name or not chat_label_matches(name, target):
+        # 登录后保留的隐藏窗口和主界面可能同时存在，主列表也可嵌套得更深。
+        for node, role, name, bounds in self.walk(app, max_depth=35):
+            if not name or not bounds or not chat_label_matches(name, target):
                 continue
             if role in ("list item", "listitem", "table row", "table cell", "cell", "label", "text", "push button"):
                 # 更偏向真正的列表项
@@ -633,17 +634,16 @@ class A11y:
         return results
 
     def select_chat(self, chat_name: str) -> None:
-        app = self.require_app()
+        self.require_app()
         x11 = X11(self.cfg)
-        try:
-            x11.activate()
-        except UIError:
-            pass
-        item = self.find_chat_item(chat_name)
-        if item is not None:
-            self.click_node(item)
-            time.sleep(self.cfg.get("chat_open_wait", 1.0))
+        x11.activate()
+        if self.chat_is_selected(chat_name) is True:
             return
+        item = self.find_chat_item(chat_name)
+        if item is not None and self._select_visible_chat(chat_name, item):
+            return
+        if item is not None:
+            raise WrongChatError("点击目标群后仍未确认选中，取消发送")
 
         # 不在当前列表：用搜索。先按 Ctrl+F 聚焦搜索框，避免误点输入框。
         x11 = X11(self.cfg)
@@ -655,11 +655,28 @@ class A11y:
         time.sleep(0.9)
 
         item = self.find_chat_item(chat_name)
-        if item is not None:
-            self.click_node(item)
-        else:
-            x11.key("Return")
-        time.sleep(self.cfg.get("chat_open_wait", 1.0))
+        if item is None or not self._select_visible_chat(chat_name, item):
+            raise WrongChatError("无法确认目标搜索结果，取消发送")
+
+    def _select_visible_chat(self, chat_name: str, item) -> bool:
+        """只重选群聊，不输入正文；有界等待异步选择状态，始终保留发送校验。"""
+        for attempt in range(2):
+            if attempt:
+                item = self.find_chat_item(chat_name)
+                if item is None:
+                    return False
+            bounds = self._bounds(item)
+            if not bounds:
+                return False
+            X11(self.cfg).checked_click(bounds)
+            deadline = time.monotonic() + max(2.0, float(self.cfg.get("chat_open_wait", 1.0)))
+            while True:
+                if self.chat_is_selected(chat_name) is True:
+                    return True
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(0.1)
+        return False
 
     def composer(self):
         editor, _send = self.composer_controls()

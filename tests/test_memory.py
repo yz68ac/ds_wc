@@ -156,14 +156,34 @@ class MemoryTests(unittest.TestCase):
         self.assertIn("完整历史", short)
         self.assertNotIn("以下人物记忆", short)
 
-    def test_extractor_disables_thinking_preserves_foreground_and_uses_no_tools(self):
+    def test_extractor_uses_memory_thinking_preserves_foreground_and_uses_no_tools(self):
+        self.cfg["memory"].update(thinking="enabled", reasoning_effort="max")
+        before = copy.deepcopy(self.cfg)
         with patch("wxbridge.ai.client.DeepSeekClient") as client:
-            client.return_value.complete.return_value = dict(content='{"updates":[]}')
+            client.return_value.complete.return_value = dict(content='{"updates":[]}', reasoning_content="PRIVATE_REASONING")
             self.assertEqual(extract(self.cfg, self.snap()), dict(updates=[]))
             config = client.call_args.args[0]
-            self.assertEqual(config["deepseek"]["thinking"], "disabled")
+            self.assertEqual(config["deepseek"]["thinking"], "enabled")
+            self.assertEqual(config["deepseek"]["reasoning_effort"], "max")
             self.assertEqual(self.cfg["deepseek"]["reasoning_effort"], "high")
+            self.assertEqual(self.cfg, before)
             self.assertNotIn("tools", client.return_value.complete.call_args.kwargs)
+
+    def test_memory_thinking_switch_and_effort_reach_api_payload(self):
+        from wxbridge.ai.client import DeepSeekClient
+        for thinking, effort in (("enabled", "low"), ("enabled", "high"), ("enabled", "max"), ("disabled", "max")):
+            with self.subTest(thinking=thinking, effort=effort):
+                self.cfg["memory"].update(thinking=thinking, reasoning_effort=effort)
+                with patch("wxbridge.ai.client.deepseek_api_key", return_value="synthetic-key"), \
+                        patch.object(DeepSeekClient, "_post", return_value={"choices": [{"message": {"content": '{"updates":[]}'}}]}) as post:
+                    self.assertEqual(extract(self.cfg, self.snap()), dict(updates=[]))
+                payload = post.call_args.args[0]
+                self.assertEqual(payload["thinking"], {"type": thinking})
+                if thinking == "enabled":
+                    self.assertEqual(payload["reasoning_effort"], effort)
+                else:
+                    self.assertNotIn("reasoning_effort", payload)
+                self.assertNotIn("tools", payload)
 
     def test_image_prompt_rebuild_preserves_memory_and_reference_author_label(self):
         from wxbridge.ai.images import prepare_multimodal
@@ -356,6 +376,23 @@ class MemoryPipelineTests(PipelineTests):
         self.bot._memory_step()
         self.store.messages_in_window.assert_not_called()
         self.assertEqual(self.bot.journal.memory_jobs(), [])
+
+    def test_two_reply_bubbles_confirm_in_order_and_enqueue_memory_only_after_second(self):
+        self.enable()
+        first, second = '先检查连接地址和端口，确认没有填错。', '再检查服务监听状态，看看是不是只绑定了本地。'
+        self.add(1)
+        self.bot.tick()
+        self.generated(first+'\n\n'+second)
+        self.assertEqual(self.sends()[0].payload[2], first)
+        self.sends()[0].result = dict(ok=True, ui=dict(submitted=True))
+        self.add(2, sender="wxid_self", text=first, mention=False)
+        self.bot.tick()
+        self.assertEqual(self.sends()[-1].payload[2], second)
+        self.assertEqual(self.bot.journal.memory_jobs(), [])
+        self.add(3, sender="wxid_self", text=second, mention=False)
+        self.bot.tick()
+        self.assertEqual(len(self.bot.journal.memory_jobs()), 1)
+        self.assertEqual(self.bot.journal.task(1)["phase"], "done")
 
 
 def load_tests(loader, tests, pattern):

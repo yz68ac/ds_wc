@@ -4,25 +4,48 @@ from __future__ import annotations
 import copy
 import re
 
+from wxbridge.ai.emoticons import is_token, semantics_prompt, token_pattern
+
 
 REPLY_RULES = (
     "\n\n【群聊输出要求】沿用原有人格、语气和称呼偏好，联网回答也一样。"
-    "默认用两到四句短话回答，正文尽量控制在80至160字，通常不超过200字，最多两小段；简单问题一句就够。"
-    "先直接说判断，再挑最有用的理由，不铺背景、不写报告式模板、总结标题或固定收尾。"
-    "只有用户明确要求详细解释、完整步骤或长内容时才展开；不要硬删必要事实、风险或不确定性。"
+    "常规闲聊和日常问答默认约10个字，尽量不超过30字；优先只说一句，没有不可省略的新信息就不补第二句。"
+    "不为展示人设自动补建议、反问、叮嘱或客套，不另开吃饭休息等无关话题。"
+    "确需补充时可分两条各自完整的短消息，用一个空行分隔；不要每次都拆两条。"
+    "专业问答、故障分析、推理、步骤和代码按实际信息需要展开，可以超过30字，无须用户额外要求详细。"
+    "先给结论，再给必要依据或操作，保持精炼，不铺背景、不写报告式模板、总结标题或固定收尾。"
+    "不要硬删关键条件、必要事实、风险或不确定性；连续步骤、代码保持连贯，真实网址不按字数截断。"
+    "不要直说对群友的考察、打分、隐藏动机或心理旁白；性格靠语气自然体现，不做自我解释。"
     "务必只输出纯文本，不使用Markdown：不用标题标记、加粗、斜体、反引号、代码围栏、引用块、表格或项目符号。"
     "需要给链接时直接写网址，不用Markdown链接；需要代码时写普通文本。"
     "自然分句或换行即可，不把整条回复挤成长段，也不机械套用‘首先、其次、最后’。"
 )
 
 
-def response_prompt(messages):
+def reply_rules(cfg=None):
+    settings = (cfg or {}).get('reply_style', {})
+    rules = REPLY_RULES
+    if settings.get('wechat_emoticons_enabled', False):
+        rules += ('\n【本轮微信表情已开启】闲聊按语境偶尔用下方清单里的中文方括号表情，通常不用，每条最多一个。'
+                  '适合接梗或简单回应时可以只回一个；需要事实、操作或安慰时不要只用表情敷衍。'
+                  '不机械追加、不连续刷屏、不自造名称，不把[微笑]用于示好、感谢、安慰或友好收尾。'
+                  '微信表情标记属于正文，不是Markdown。用户明确要求解释、引用或列出表情时可原样给出多个。')
+    else:
+        rules += ('\n【本轮自动微信表情已关闭】不要为装饰主动添加微信表情或单回微信表情。'
+                  '群友原文、引用、代码、用户明确要求的表情解释或原样输出仍可保留，不机械删除方括号。')
+    if settings.get('omit_trailing_period', True):
+        rules += ('\n【日常标点】普通短句末尾不加中文句号“。”，表情前也不加句号。'
+                  '问号、感叹号、逗号和省略号按语气保留；代码、命令、链接、小数、引用原文及专业长答保持准确。')
+    return rules+semantics_prompt()
+
+
+def response_prompt(messages, cfg=None):
     """不修改原提示词、图片或工具调用链；即使搜索关闭也应用输出偏好。"""
     conversation = copy.deepcopy(messages)
     if conversation and conversation[0].get("role") == "system":
-        conversation[0]["content"] += REPLY_RULES
+        conversation[0]["content"] += reply_rules(cfg)
     else:
-        conversation.insert(0, dict(role="system", content=REPLY_RULES.strip()))
+        conversation.insert(0, dict(role="system", content=reply_rules(cfg).strip()))
     return conversation
 
 
@@ -54,6 +77,12 @@ def plain_text(text):
         if code:
             rendered.append(line)
             continue
+        literals = []
+        def keep_code(match):
+            literals.append(match[2])
+            return "\x00"+str(len(literals)-1)+"\x00"
+        # 内联代码先保护，不能把里面的连续方括号误当引用链接。
+        line = re.sub(r'(`+)(.+?)\1', keep_code, line)
         line = re.sub(r"^\s{0,3}(?:>\s*)+", "", line)
         line = re.sub(r"^\s{0,3}#{1,6}\s+(.+?)(?:\s+#+)?\s*$", r"\1", line)
         if re.fullmatch(r"\s*(?:[-*_]\s*){3,}|\s*=+\s*", line):
@@ -64,16 +93,15 @@ def plain_text(text):
         if line.strip().startswith("|") and line.strip().endswith("|"):
             line = "，".join(cell.strip() for cell in line.strip().strip("|").split("|"))
         # 支持 URL 中的一层括号，不改动查询参数，也不丢失链接目标。
+        def label(value):
+            token = '['+value+']'
+            return token if is_token(token) else value
         line = re.sub(r'!?\[([^\]\n]*)\]\((<?(?:[^\s()]|\([^\n()]*\))+>?)(?:\s+"[^"\n]*")?\)',
-                      lambda m: (m[1]+" "+m[2].strip("<>")) if m[1] != m[2].strip("<>") else m[1], line)
+                      lambda m: (label(m[1])+" "+m[2].strip("<>")) if m[1] != m[2].strip("<>") else label(m[1]), line)
         line = re.sub(r'\[([^\]\n]+)\]\[([^\]\n]*)\]',
-                      lambda m: m[1]+(" "+definitions[(m[2] or m[1]).casefold()] if (m[2] or m[1]).casefold() in definitions else ""), line)
+                      lambda m: label(m[1])+" "+definitions[(m[2] or m[1]).casefold()]
+                      if (m[2] or m[1]).casefold() in definitions else m[0], line)
         line = re.sub(r'<(https?://[^<>\s]+)>', r'\1', line)
-        literals = []
-        def keep_code(match):
-            literals.append(match[2])
-            return "\x00"+str(len(literals)-1)+"\x00"
-        line = re.sub(r'(`+)(.+?)\1', keep_code, line)
         def keep_url(match):
             literals.append(match[0])
             return "\x00"+str(len(literals)-1)+"\x00"
@@ -84,3 +112,28 @@ def plain_text(text):
         line = re.sub(r'\x00(\d+)\x00', lambda m: literals[int(m[1])] if int(m[1]) < len(literals) else m[0], line)
         rendered.append(line)
     return re.sub(r"\n{3,}", "\n\n", "\n".join(rendered)).strip()
+
+
+def format_reply(text, cfg=None):
+    """同一出口：保留原文/技术结构，只为保守识别的普通短句去中文尾句号。"""
+    original = text
+    result = plain_text(text)
+    if not (cfg or {}).get('reply_style', {}).get('omit_trailing_period', True):
+        return result
+    if not result or len(result) > 30 or '\n' in result:
+        return result
+    # 引用和代码在去 Markdown 前识别，避免去掉原样字符串的内容。
+    if (re.search(r"[`'\"“”‘’=<>\\{}]|https?://|\d\.\d", original)
+            or re.match(r'^\s*(?:>|#{1,6}\s|[-*+]\s)', original)):
+        return result
+    prose = re.sub(token_pattern(), '', result)
+    if re.fullmatch(token_pattern()+r'。+', result):
+        return result.rstrip('。')
+    if not re.search(r'[\u3400-\u9fff]', prose) or '[' in prose or ']' in prose:
+        return result
+    if re.match(r'\s*(?:sudo|echo|printf|python[\d.]*|git|curl|systemctl|ss|lsof|export)\s', prose):
+        return result
+    # 最多两次，兼容“知道啦。[偷笑]。”；不删句内标点或 ASCII 的句点。
+    for _ in range(2):
+        result = re.sub(r'。+\s*('+token_pattern()+r')?$', lambda m: m[1] or '', result)
+    return result

@@ -15,11 +15,16 @@ class ContextTests(unittest.TestCase):
         self.trigger = msg(50, NOW, "@DeepSeek 请总结")
 
     def test_exact_inclusive_bounds_and_sender_order(self):
-        records = [msg(1, NOW - 601, "过期"), msg(4, NOW + 1, "未来"),
-                   msg(3, NOW, "同秒群友", "B"), msg(2, NOW - 600, "边界", "A"),
+        records = [msg(1, NOW - 301, "过期"), msg(4, NOW + 1, "未来"),
+                   msg(3, NOW, "同秒群友", "B"), msg(2, NOW - 300, "边界", "A"),
                    self.trigger, msg(5, None, "未知时间")]
         selected = select_context(self.cfg, records, self.trigger)
         self.assertEqual([m["text"] for m in selected], ["边界", "同秒群友"])
+
+    def test_explicit_larger_window_is_respected(self):
+        self.cfg["target"]["context_window_seconds"] = 600
+        rows = [msg(1, NOW-600, "边界"), msg(2, NOW-601, "过期")]
+        self.assertEqual([m["local_id"] for m in select_context(self.cfg, rows, self.trigger)], [1])
 
     def test_unknown_observation_timestamp_never_used(self):
         parsed = {"time": None, "time_source": "unknown", "text": "合成未知时间消息"}

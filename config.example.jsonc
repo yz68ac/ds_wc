@@ -1,0 +1,125 @@
+// 配置参考：这里的注释供阅读，实际运行使用标准 JSON 格式的 config.json。
+// 只需将要覆盖的字段写入 config.json；未填写项继承 config.defaults.json。
+// API Key 放同目录的 .env，人格正文放 prompts/system.md。
+{
+  // Linux 原生微信数据目录；空值表示自动发现当前账号。
+  "db_dir": "",
+  // 密钥、解密副本和队列须位于私有 tmpfs,noswap，不能随意改到普通磁盘。
+  "keys_file": "/run/wxbridge-trial/keys.json",
+  "decrypted_dir": "/run/wxbridge-trial/decrypted",
+  "state_file": "/run/wxbridge-trial/state.json",
+  "log_file": "/run/wxbridge-trial/bot.log",
+  "source": "db",
+  "poll_interval_seconds": 2.0, // 调度等待上限，实际最多休眠 0.5 秒。
+  "reply_to_backlog": false, // 生产入口强制关闭，避免新部署补答旧消息。
+  // 输出语气：只控制机器人表达，不修改群友原文；改配置后重启监听。
+  "reply_style": {
+    "wechat_emoticons_enabled": false, // 开启后偶尔用一个微信表情，也可单发表情；Linux本轮开启。
+    "omit_trailing_period": true // 普通短句去掉末尾“。”及表情前的句号；保留其他标点和技术内容。
+  },
+  // @ 回复队列：合并默认关闭，每次真实 @ 独立排队。
+  "queue": {
+    "debounce_seconds": 0, // 0 不合并；正数为同一人连续 @ 的合并静默窗口（秒）。
+    "generation_concurrency": 2, // 有效 API 任务上限，只能为 1 或 2。
+    "file": "/run/wxbridge-trial/queue.sqlite3"
+  },
+  // 主动接话：达到门槛后仍可选择沉默；真实 @ 优先。
+  "proactive": {
+    "enabled": false, // 示例默认关闭；当前 Linux 实际配置已开启。
+    "window_seconds": 300, // 检查最近 5 分钟，期间机器人有发言就不插话。
+    "min_messages": 10, // 至少 10 条群成员文字，图片/表情/系统消息不计数。
+    "check_interval_seconds": 10, // 有新消息时，资格检查的最短间隔。
+    "evaluation_interval_seconds": 60, // 两次模型判断至少间隔 60 秒。
+    "min_new_messages": 3, // 再次判断需 3 条新文字，也用于作废过时短句。
+    "reply_ttl_seconds": 60, // 主动结果有效期；不得小于下面的请求时限。
+    "timeout_seconds": 20, // 判断关闭思考，不影响普通 @ 回复的 high。
+    "max_reply_chars": 30 // 主动短句硬上限，过长则放弃。
+  },
+  "target": {
+    "chat": "把这里改成你们的群名", // 推荐完整群名，也可填写稳定的群 ID。
+    "bot_name": "DeepSeek", // 替换人格中的 {bot_name}，不会修改微信昵称。
+    "trigger": {
+      "mentions": ["@DeepSeek", "@deepseek", "@小D"], // 兼容识别配置，生产仍以真实 @ 元数据为准。
+      "prefixes": [],
+      "reply_all": false,
+      "require_mention_metadata": true, // 生产强制开启；手打 @ 名称不算真实 @。
+      "pat_enabled": true // 事件识别开关；当前微信拍一拍实时同步问题仍搁置。
+    },
+    "cooldown_seconds": 8, // 每条实际发出确认后的最短发送间隔，排队等待而非丢弃。
+    "max_message_age_seconds": 90, // 仅首次接收过滤旧触发；已入队问题不会因此过期。
+    "context_window_seconds": 300, // 普通回复上下文 5 分钟；人物记忆单独注入。
+    "context_max_chars": 24000, // 上下文字符预算；超出时取消，不悄悄截断历史。
+    "max_reply_chars": 1800 // 微信单条分片上限；日常短答偏好另由提示词控制。
+  },
+  // 普通 @ 回复的模型；密钥不要直接写在这里。
+  "deepseek": {
+    "api_key_env": "DEEPSEEK_API_KEY", // 从项目根目录 .env 或已有环境变量读取。
+    "base_url": "https://api.deepseek.com",
+    "model": "deepseek-flash",
+    "thinking": "enabled", // enabled 开启思考，disabled 关闭。
+    "reasoning_effort": "high", // 开启思考时可选 low / high / max。
+    "temperature": 1.0,
+    "timeout_seconds": 60, // 单次 HTTP 请求超时，不等于整轮处理时限。
+    "max_tokens": 1200, // 输出 token 预算，不是中文字数。
+    "system_prompt_file": "prompts/system.md" // 每次生成重读，同一路径下改人格无需重启。
+  },
+  // 按需联网；搜索提示先发，随后给最终回答。
+  "search": {
+    "enabled": true,
+    "base_url": "https://api.deepseek.com",
+    "timeout_seconds": 15,
+    "total_timeout_seconds": 120, // 一整轮搜索回答的总时限。
+    "max_tool_rounds": 2,
+    "max_requests": 3,
+    "max_results": 5,
+    "feedback_enabled": true,
+    "feedback_phrases": ["我去查查，等我一下。", "我上网搜搜，核实一下。", "这事我去看看。"]
+  },
+  // 仅处理明确引用的图片，读取当前账号本地缓存，不自动解读所有群图片。
+  "vision": {
+    "enabled": true,
+    "detail": "original", // 优先原图，受微信实际缓存情况限制。
+    "max_images": 4,
+    "max_image_bytes": 8388608,
+    "cache_wait_seconds": 3
+  },
+  // 按机器人账号、群和成员 wxid 隔离的持久摘要；完整说明见 docs/MEMORY.md。
+  "memory": {
+    "enabled": true,
+    "directory": "memory",
+    "model": "deepseek-flash",
+    "thinking": "enabled", // 记忆文字整理独立开关：enabled / disabled。
+    "reasoning_effort": "max", // low / high / max；只在开启思考时发送。
+    "min_interval_seconds": 60, // 后台整理最短间隔，前台回复优先。
+    "prompt_max_chars": 1200, // 每轮注入的记忆字符预算。
+    "max_tokens": 2400,
+    "timeout_seconds": 30,
+    // 头像只提供私下的弱初见线索，不据此改变好感分数。
+    "avatar": {
+      "enabled": true,
+      "max_per_batch": 2,
+      "max_bytes": 524288,
+      "retry_interval_seconds": 3600
+    }
+  },
+  // Linux AT-SPI / X11 发送与保护；一般不需要修改控件名称及快捷键。
+  "ui": {
+    "backend": "auto",
+    "input_method": "auto",
+    "verify_chat_selected": true, // 生产强制检查目标群，避免发送到错误聊天。
+    "app_names": ["wechat", "WeChat", "微信"],
+    "chat_list_names": ["Chats", "聊天", "会话"],
+    "messages_list_names": ["Messages", "消息"],
+    "window_class": "wechat",
+    "native_executable": "/opt/wechat/wechat",
+    "window_names": ["微信", "WeChat"],
+    "search_shortcut": "ctrl+f",
+    "paste_shortcut": "ctrl+v",
+    "select_all_shortcut": "ctrl+a",
+    "send_key": "Return",
+    "post_send_wait": 0.8,
+    "send_confirm_timeout_seconds": 10, // 核对数据库发出记录的等待时间，不以按钮点击作成功。
+    "chat_open_wait": 1.0,
+    "dry_run": true // 示例不发送；生产 run --send 显式启用，模拟仍可能调用模型。
+  }
+}
