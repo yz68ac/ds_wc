@@ -40,8 +40,9 @@ def _work(connection, kind, payload):
                         result["search"] = search
                 elif kind == 'proactive':
                     from wxbridge.ai.proactive import evaluate
-                    cfg, prompt = payload
-                    result = {'decision': evaluate(cfg, prompt)}
+                    cfg, prompt = payload[:2]
+                    role = payload[2] if len(payload) > 2 else 'participation'
+                    result = {'decision': evaluate(cfg, prompt, role=role)}
                 elif kind == "memory":
                     from wxbridge.ai.memory import extract
                     cfg, snapshot = payload

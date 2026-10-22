@@ -277,6 +277,11 @@ class ProactiveController:
             candidate = self.candidate(rows, now)
             if not candidate:
                 return
+            role = 'reply' if candidate['reason'] == 'addressed' and any(
+                m['local_id'] in candidate['source_ids'] and addresses_bot(
+                    m, self.bot.cfg, self.bot.store.self_wxid, include_reference=False)
+                for m in rows) else 'participation'
+            candidate['model_role'] = role
             memory = None
             if self.bot.memory:
                 labels = member_labels(rows, [rows[-1]], self.bot.store.self_wxid)
@@ -289,10 +294,10 @@ class ProactiveController:
             through = max(m['local_id'] for m in self.dialogue)
             self.update(last_evaluated_id=through, last_evaluated_at=now,
                         evaluations=state['evaluations']+1, outcome='evaluating', mode=candidate['mode'],
-                        opportunity=candidate['reason'], error='')
+                        opportunity=candidate['reason'], model_role=role, error='')
             from wxbridge.ai.roles import model_settings
-            worker = self.bot.job_factory('proactive', (self.bot.cfg, prompt),
-                timeout=model_settings(self.bot.cfg, 'participation')['timeout_seconds']+2)
+            worker = self.bot.job_factory('proactive', (self.bot.cfg, prompt, role),
+                timeout=model_settings(self.bot.cfg, role)['timeout_seconds']+2)
             self.pending = candidate
             self.job = (worker, through, candidate['expires_at'])
             log.info('主动接话判断 mode=%s reason=%s messages=%s', candidate['mode'], candidate['reason'], len(rows))

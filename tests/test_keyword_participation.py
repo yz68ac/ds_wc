@@ -1,5 +1,6 @@
 """句中点名按上下文唤起，绕过随机入场限制但保留队列确认和真实@优先。"""
 import unittest
+import copy
 from unittest.mock import patch
 
 from wxbridge.ai.client import DeepSeekClient
@@ -95,18 +96,19 @@ class KeywordParticipationTests(unittest.TestCase):
         self.assertIn('被讨论的内容', prompt[1]['content'])
         self.assertIn('优先结合上下文自然回应', prompt[0]['content'])
 
-    def test_keyword_read_uses_non_thinking_role_but_real_mention_preempts_it(self):
+    def test_keyword_uses_reply_max_role_but_real_mention_still_preempts_it(self):
         self.ordinary('这事ds怎么看')
         job = self.bot.proactive.job[0]
-        cfg, prompt = job.payload
+        cfg, prompt, role = job.payload
+        self.assertEqual(role, 'reply')
         with patch('wxbridge.ai.client.deepseek_api_key', return_value='synthetic-key'), \
                 patch.object(DeepSeekClient, '_post', return_value={'choices': [{'message': {
                     'content': '{"speak":false,"text":"","reply_to":null}'}}]}) as post:
-            self.assertFalse(evaluate(cfg, prompt)['speak'])
+            self.assertFalse(evaluate(cfg, prompt, role=role)['speak'])
         body = post.call_args.args[0]
-        self.assertEqual(body['thinking'], {'type': 'disabled'})
-        self.assertNotIn('reasoning_effort', body)
-        self.assertEqual(body['max_tokens'], 256)
+        self.assertEqual(body['thinking'], {'type': 'enabled'})
+        self.assertEqual(body['reasoning_effort'], 'max')
+        self.assertEqual(body['max_tokens'], 1200)
         self.assertEqual(cfg['deepseek']['reasoning_effort'], 'max')
         self.add(2)
         self.bot.tick()
@@ -123,3 +125,77 @@ class KeywordParticipationTests(unittest.TestCase):
         self.bot.tick()
         self.assertEqual(len(self.sends()), 1)
         self.assertTrue(self.bot.journal.status()['conversation']['active'])
+
+    def test_unnamed_entry_uses_non_thinking_participation_worker(self):
+        from unittest.mock import Mock
+        from wxbridge.app.workers import _work
+        import logging
+        self.ordinary('今天又输了几把')
+        self.ordinary('我也差不多', sender='wxid_other')
+        self.now += 10
+        self.ordinary('看来得换个打法')
+        job = self.bot.proactive.job[0]
+        self.assertEqual(job.payload[2], 'participation')
+        before = copy.deepcopy(self.cfg)
+        connection = Mock()
+        disabled = logging.root.manager.disable
+        try:
+            with patch('wxbridge.ai.client.deepseek_api_key', return_value='synthetic-key'), \
+                    patch.object(DeepSeekClient, '_post', return_value={'choices': [{'message': {
+                        'content': '{"speak":false,"text":"","reply_to":null}'}}]}) as post:
+                _work(connection, 'proactive', job.payload)
+        finally:
+            logging.disable(disabled)
+        self.assertTrue(connection.send.call_args.args[0]['ok'])
+        self.assertEqual(connection.send.call_args.args[0]['model_metrics'][0]['role'], 'participation')
+        payload = post.call_args.args[0]
+        self.assertEqual(payload['thinking'], {'type': 'disabled'})
+        self.assertNotIn('reasoning_effort', payload)
+        self.assertEqual(payload['max_tokens'], 256)
+        self.assertEqual(self.cfg, before)
+
+    def test_window_followup_without_name_is_disabled_but_new_keyword_uses_reply(self):
+        self.ordinary('这事让ds来评评')
+        self.decision()
+        self.confirm()
+        self.now += 10
+        self.ordinary('你再说一句')
+        self.assertEqual(self.bot.proactive.job[0].payload[2], 'participation')
+        self.decision(speak=False)
+        self.now += 10
+        self.ordinary('那DS怎么看后面那句')
+        self.assertEqual(self.bot.proactive.job[0].payload[2], 'reply')
+
+    def test_quote_without_name_does_not_enable_thinking(self):
+        self.ordinary('这个说得不错', reference=dict(sender='wxid_self', kind='text', text='旧回复'))
+        self.assertEqual(self.bot.proactive.pending['reason'], 'addressed')
+        self.assertEqual(self.bot.proactive.job[0].payload[2], 'participation')
+
+    def test_keyword_worker_inherits_reply_overrides_and_request_deadline(self):
+        from unittest.mock import Mock
+        from wxbridge.app.workers import _work
+        import logging
+        self.cfg['models']['reply'] = dict(model='synthetic-reply', thinking='enabled',
+                                          reasoning_effort='max', timeout_seconds=5, max_tokens=1700)
+        self.ordinary('这事ds怎么看')
+        job = self.bot.proactive.job[0]
+        before = copy.deepcopy(self.cfg)
+        connection = Mock()
+        disabled = logging.root.manager.disable
+        try:
+            with patch('wxbridge.ai.client.deepseek_api_key', return_value='synthetic-key'), \
+                    patch.object(DeepSeekClient, '_post', return_value={'choices': [{'message': {
+                        'content': '{"speak":false,"text":"","reply_to":null}'}}]}) as post:
+                _work(connection, 'proactive', job.payload)
+        finally:
+            logging.disable(disabled)
+        result = connection.send.call_args.args[0]
+        self.assertTrue(result['ok'])
+        self.assertEqual(result['model_metrics'][0]['role'], 'reply')
+        payload = post.call_args.args[0]
+        self.assertEqual(payload['model'], 'synthetic-reply')
+        self.assertEqual(payload['thinking'], {'type': 'enabled'})
+        self.assertEqual(payload['reasoning_effort'], 'max')
+        self.assertEqual(payload['max_tokens'], 1700)
+        self.assertLessEqual(post.call_args.args[1], 5)
+        self.assertEqual(self.cfg, before)

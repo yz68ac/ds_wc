@@ -27,12 +27,12 @@ def activity(rows, account, now, seconds):
     return sorted(texts, key=lambda m: (m['time'], m['local_id'])), own
 
 
-def addresses_bot(message, cfg, account):
+def addresses_bot(message, cfg, account, *, include_reference=True):
     """只用于候选筛选；称呼不等同真实@，是否开口仍由模型判断。"""
     mentioned = message.get('mentioned_users') or []
     if mentioned and account not in mentioned:
         return False
-    if (message.get('reference') or {}).get('sender') == account:
+    if include_reference and (message.get('reference') or {}).get('sender') == account:
         return True
     names = [cfg['target'].get('bot_name', ''), *cfg['proactive']['opportunities']['address_names']]
     names += [n.lstrip('@') for n in cfg['target']['trigger'].get('mentions', [])]
@@ -111,10 +111,12 @@ def parse_decision(content, max_chars=30, cfg=None):
     return result
 
 
-def evaluate(cfg, prompt):
+def evaluate(cfg, prompt, *, role='participation'):
     from wxbridge.ai.client import DeepSeekClient
+    if role not in ('participation', 'reply'):
+        raise ValueError('proactive_invalid_model_role')
     settings = cfg['proactive']
     from wxbridge.ai.roles import model_settings
-    result = DeepSeekClient(cfg, role='participation').complete(prompt,
-        deadline=time.monotonic()+model_settings(cfg, 'participation')['timeout_seconds'])
+    result = DeepSeekClient(cfg, role=role).complete(prompt,
+        deadline=time.monotonic()+model_settings(cfg, role)['timeout_seconds'])
     return parse_decision(result.get('content'), settings['max_reply_chars'], cfg)

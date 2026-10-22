@@ -185,6 +185,8 @@ dry-run 使用独立的 `.dry-run` 队列及 `dry-run/live-status.json`，不消
 
 参与角色目前仍一次请求同时判断是否参与、生成短句；只是可以独立选模型，并未额外增加一次判断请求。真实 @ 不经过这个判断。搜索工具仍单独使用 `search.base_url` 和旧 `deepseek.api_key_env` 指定的 DeepSeek Key，不会自动拿新回复服务的 Key 调用搜索。
 
+正文中出现ds/DS等配置称呼的关键词接话使用 reply 角色，与真实@共用 `deepseek` 加 `models.reply` 的模型、思考、预算和超时配置（当前max）。未点名的主动接话、仅引用机器人而正文未点名的接话仍用 participation（当前关闭思考）。关键词仍一次请求判断并生成短句，不额外先调用 participation；既有30字短句、两分钟窗口和发送确认保持。修改 `models.participation` 不会改变关键词接话的思考深度。
+
 ## 生成重试与记录保留
 
 | 配置项 | 默认值 | 行为 |
