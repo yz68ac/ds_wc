@@ -106,8 +106,14 @@ class DeepSeekClient:
                     provider=self.cfg.get('provider', 'deepseek'), elapsed_ms=round((time.monotonic()-started)*1000, 2),
                     finish_reason=finish, usage=usage, error=error))
 
-    def complete(self, messages, **kwargs) -> dict:
-        return self.request(messages, **kwargs).message
+    def complete(self, messages, *, require_complete=False, **kwargs) -> dict:
+        result = self.request(messages, **kwargs)
+        if require_complete and result.finish_reason == 'length':
+            values = _metrics.get()
+            if values:
+                values[-1]['error'] = 'output_limit'
+            raise DeepSeekError('output_limit', retryable=True)
+        return result.message
 
     def chat(self, messages):
         return (self.complete(messages).get('content') or '').strip()

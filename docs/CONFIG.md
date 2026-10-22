@@ -14,7 +14,7 @@
 
 主动接话使用 `proactive` 配置段，默认关闭，可在实际配置中按需开启。保留近300秒十条文字、自然称呼/引用与低频多人聊天候选；默认取消小时入场与接话轮数上限（对应字段0）。新正文句中出现独立的ds/DS等称呼也可按上下文唤起，绕过随机入场的五分钟冷却、小时预算和六十秒判断间隔，仍遵守十秒检查节流和八秒发送间隔。真实@接纳时或自主首句确认发出后进入120秒参与窗口；成员新消息续期，机器人发言不续期，连续安静两分钟退出。沉默一次或换了聊天对象不退出，不增加旧版无人回应后的十分钟退让。未点名的独立重新入场保留五分钟冷却；真实@优先与30字短句上限继续生效。没有新的成员文字不请求判断模型。全部参数、重启与失效规则见 [主动接话说明](PROACTIVE.md)。
 
-人物记忆使用 `memory` 配置段：enabled（默认 true）、directory（源码根目录下 memory）、model（deepseek-flash）、thinking（enabled）、reasoning_effort（max）、min_interval_seconds（60）、prompt_max_chars（1200）、max_tokens（2400）、timeout_seconds（30）。thinking 可选 enabled/disabled，reasoning_effort 可选 low/high/max，关闭思考时不发送深度参数；记忆整理与主回答的思考配置各自独立，当前默认均为 max。规则、期限和维护命令见 [MEMORY.md](MEMORY.md)。
+人物记忆使用 `memory` 配置段：enabled（默认 true）、directory（源码根目录下 memory）、model（deepseek-flash）、thinking（enabled）、reasoning_effort（max）、min_interval_seconds（60）、prompt_max_chars（1200）、max_tokens（8192）、timeout_seconds（90）。thinking 可选 enabled/disabled，reasoning_effort 可选 low/high/max，关闭思考时不发送深度参数；记忆整理与主回答的思考配置各自独立，当前默认均为 max。规则、期限和维护命令见 [MEMORY.md](MEMORY.md)。
 
 `memory.avatar` 控制初见视觉参考：enabled（true）、max_per_batch（2）、max_bytes（524288）、retry_interval_seconds（3600）。只读取当前账号的头像缓存；文字印象及好感度请求看不到头像，视觉分类独立调用，失败不阻止文字整理。详见 [初见头像线索](MEMORY.md#初见头像线索)。
 

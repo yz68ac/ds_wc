@@ -109,7 +109,7 @@ def extract(cfg, value):
             raise ValueError('memory_prompt_empty')
         answer = DeepSeekClient(cfg, role='memory').complete([{"role": "system", "content": INSTRUCTIONS+LEARNING_PROTOCOL+'\n'+instructions+semantics_prompt()},
             {"role": "user", "content": json.dumps(public, ensure_ascii=False)}],
-            deadline=deadline)
+            deadline=deadline, require_complete=True)
         content = answer.get("content") or ""
         if len(content) > 24000:
             raise ValueError("memory_response_limit")

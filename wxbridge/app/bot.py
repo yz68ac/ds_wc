@@ -309,7 +309,8 @@ class WeChatDeepSeekBot:
                 self.memory_job = None
                 self.metrics.record_models(result.get('model_metrics'))
                 if not result.get("ok"):
-                    raise ValueError("memory_worker_failed")
+                    from wxbridge.app.task_policy import memory_failure_code
+                    raise ValueError(memory_failure_code(result))
                 self.memory.apply(result["proposal"], value, now)
                 self.journal.finish_memory(record["id"], now)
                 log.info("记忆更新 task=%s revision=%s", record["id"], self.memory.data["revision"])
@@ -390,7 +391,7 @@ class WeChatDeepSeekBot:
                                                    min(300, 60*(record["attempts"]+1))))
                     self.journal.put_memory(record)
                 import re
-                code = str(exc) if re.fullmatch(r"memory_[a-z_]+", str(exc)) else type(exc).__name__
+                code = str(exc) if re.fullmatch(r"memory_[a-z0-9_]{1,64}", str(exc)) else type(exc).__name__
                 self.journal.set("memory_error", code)
             log.warning("记忆延后 category=%s", code)
 

@@ -127,8 +127,8 @@
     },
     "min_interval_seconds": 60,
     "prompt_max_chars": 1200,
-    "max_tokens": 2400,
-    "timeout_seconds": 30,
+    "max_tokens": 8192,
+    "timeout_seconds": 90,
     "avatar": {
       "enabled": true,
       "max_per_batch": 2,

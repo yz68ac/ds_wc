@@ -157,7 +157,7 @@ def load_config(path: str | Path = "config.json") -> dict[str, Any]:
         if type(learning.get(key)) is not int or not minimum <= learning[key] <= maximum:
             raise ValueError('memory.learning.'+key+' 超出范围')
     for key, minimum, maximum in (("min_interval_seconds", 60, 86400), ("prompt_max_chars", 100, 1200),
-                                  ("max_tokens", 256, 2400), ("timeout_seconds", 1, 30)):
+                                  ("max_tokens", 256, 8192), ("timeout_seconds", 1, 120)):
         if type(memory[key]) is not int or not minimum <= memory[key] <= maximum:
             raise ValueError(f"memory.{key} 超出范围 {minimum}–{maximum}")
     avatar = memory["avatar"]

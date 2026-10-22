@@ -6,7 +6,7 @@
 
 当前回答读取已有记忆。最终分片经数据库确认后，同事务登记后台任务再清理触发正文；搜索提示不登记任务。主进程按原触发时间重读五分钟窗口，后台只整理本人直接发言及来源，不从引用转述、机器人想象中提取现实事实。另支持活跃闲聊后台整理全部记忆，默认5分钟10条新文字、2位成员、最短5分钟一批；不预先扫描全部历史。语境学习、跨天确认及新配置见[LEARNING.md](LEARNING.md)。
 
-后台默认 deepseek-flash、开启思考、max 深度、2400 tokens、30 秒超时。文字整理通过 memory.thinking 和 memory.reasoning_effort 独立配置，关闭思考时不发送深度参数，模型内部推理不写入记忆或日志。头像分析另用 models.avatar，默认开启思考/max、1200 tokens；前台正文也为 max。后台最多一个，成功更新间隔至少 60 秒。前后台 API 总并发最多两个，前台需要位置时终止后台本地进程并重新排队；服务端请求可能仍会结束。后台失败只延后重试，不阻止接收或回复。积压按任务顺序处理。
+后台默认 deepseek-flash、开启思考、max 深度、8192 tokens、90 秒超时。文字整理通过 memory.thinking 和 memory.reasoning_effort 独立配置，关闭思考时不发送深度参数，模型内部推理不写入记忆或日志。头像分析另用 models.avatar，默认开启思考/max、1200 tokens；前台正文也为 max。后台最多一个，成功更新间隔至少 60 秒。前后台 API 总并发最多两个，前台需要位置时终止后台本地进程并重新排队；服务端请求可能仍会结束。后台失败只延后重试，不阻止接收或回复。积压按任务顺序处理。
 
 ## 数据与期限
 
@@ -42,7 +42,7 @@ impression 始终作为暂时推测，real/roleplay 分开；不保存整段聊�
 
 ## 配置与维护
 
-`config.defaults.json` / `config.json` 的 memory 配置：enabled、directory、model、thinking（默认enabled，可选disabled）、reasoning_effort（默认max，可选low/high）、min_interval_seconds（默认60，最小60）、prompt_max_chars（默认1200，上限1200）、max_tokens（默认2400）、timeout_seconds（默认30）。directory 相对源码根目录；修改配置后重启。可见状态在 live-status.json 的 memory 和 queue-status 的 memory_pending/memory_error。
+`config.defaults.json` / `config.json` 的 memory 配置：enabled、directory、model、thinking（默认enabled，可选disabled）、reasoning_effort（默认max，可选low/high）、min_interval_seconds（默认60，最小60）、prompt_max_chars（默认1200，上限1200）、max_tokens（默认8192）、timeout_seconds（默认90）。directory 相对源码根目录；修改配置后重启。可见状态在 live-status.json 的 memory 和 queue-status 的 memory_pending/memory_error。
 
 专用整理提示词通过system_prompt_file配置，默认prompts/memory.md；表达学习与被动整理通过learning配置，具体参数与维护作用域见[LEARNING.md](LEARNING.md)。修改整理提示词下一批直接读取，协议及来源/数值限制由代码控制。
 

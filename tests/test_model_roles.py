@@ -151,3 +151,23 @@ class ModelRoleTests(unittest.TestCase):
         self.assertEqual(value['models']['reply']['errors'], 1)
         self.assertEqual(value['models']['reply']['prompt_tokens'], 10)
         self.assertNotIn('PRIVATE', json.dumps(value))
+
+    def test_structured_memory_rejects_truncation_before_json_parse_and_keeps_safe_usage(self):
+        client = self.client('memory')
+        response = dict(choices=[dict(message=dict(content='{"updates":[', reasoning_content='PRIVATE'),
+                                     finish_reason='length')], usage=dict(completion_tokens=2400))
+        with capture_metrics() as metrics, patch.object(client, '_post', return_value=response):
+            with self.assertRaises(DeepSeekError) as error:
+                client.complete([], require_complete=True)
+        self.assertEqual(error.exception.code, 'output_limit')
+        self.assertEqual(metrics[0]['finish_reason'], 'length')
+        self.assertEqual(metrics[0]['usage']['completion_tokens'], 2400)
+        self.assertEqual(metrics[0]['error'], 'output_limit')
+        self.assertNotIn('PRIVATE', json.dumps(metrics))
+
+    def test_memory_failure_codes_remain_specific_without_echoing_error_text(self):
+        from wxbridge.app.task_policy import memory_failure_code
+        for code, expected in (('output_limit','memory_output_limit'), ('JSONDecodeError','memory_invalid_json'),
+                               ('http_429','memory_http_429'), ('PRIVATE_CHAT','memory_worker_failed'),
+                               ({'body':'PRIVATE'},'memory_worker_failed')):
+            self.assertEqual(memory_failure_code(dict(error=code)), expected)

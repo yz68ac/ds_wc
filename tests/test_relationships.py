@@ -262,6 +262,20 @@ class RelationshipPipelineTests(unittest.TestCase):
     enable = memory_tests.MemoryPipelineTests.enable
     confirmed = memory_tests.MemoryPipelineTests.confirmed
 
+    def test_output_limit_is_reported_and_requeued_without_writing_partial_memory(self):
+        self.enable()
+        self.confirmed()
+        revision = self.bot.memory.data['revision']
+        self.bot.memory_job[2].result = dict(ok=False, error='output_limit')
+        self.bot.tick()
+        self.assertEqual(self.bot.journal.get('memory_error'), 'memory_output_limit')
+        self.assertEqual(self.bot.memory.data['revision'], revision)
+        self.assertEqual(self.bot.journal.memory_jobs()[0]['state'], 'pending')
+        self.assertEqual(self.bot.journal.memory_jobs()[0]['attempts'], 1)
+        self.add(3)
+        self.bot.tick()
+        self.assertTrue(self.bot.generators)
+
     def test_confirmed_reply_updates_relationship_and_next_reply_gets_natural_background(self):
         self.enable()
         self.confirmed()

@@ -3,6 +3,17 @@ from dataclasses import dataclass
 import re
 
 
+def memory_failure_code(result):
+    code = result.get('error')
+    known = {'output_limit': 'memory_output_limit', 'JSONDecodeError': 'memory_invalid_json',
+             'WorkerTimeout': 'memory_worker_timeout', 'WorkerExited': 'memory_worker_exited',
+             'connection_failed': 'memory_connection_failed', 'deadline_exceeded': 'memory_deadline_exceeded',
+             'missing_api_key': 'memory_missing_api_key', 'invalid_response': 'memory_invalid_response'}
+    if isinstance(code, str) and re.fullmatch(r'http_[0-9]{3}', code):
+        return 'memory_'+code
+    return known.get(code, 'memory_worker_failed') if isinstance(code, str) else 'memory_worker_failed'
+
+
 @dataclass(frozen=True)
 class GenerationFailure:
     code: str

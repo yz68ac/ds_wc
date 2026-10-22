@@ -135,8 +135,8 @@
     },
     "min_interval_seconds": 60, // 后台整理最短间隔，前台回复优先。
     "prompt_max_chars": 1200, // 每轮注入的记忆字符预算。
-    "max_tokens": 2400,
-    "timeout_seconds": 30,
+    "max_tokens": 8192, // 包含思考与结构化输出，max 思考时留足预算；并非固定用满。
+    "timeout_seconds": 90, // 后台总时限，前台需要并发位置时仍可抢占。
     // 头像只提供私下的弱初见线索，不据此改变好感分数。
     "avatar": {
       "enabled": true,

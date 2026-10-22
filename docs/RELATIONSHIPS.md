@@ -49,3 +49,9 @@ additional_prompt.md显示各维度及近期变化依据，供维护查看；实
 原memory status/show/forget/clear命令继续可用。停止监听并取得原单实例锁后，可用 `python3 -m wxbridge memory forget --member wxid_xxx --entry relationship` 重置该成员关系（好感50、信任50、熟悉0、清情绪），保留昵称、事实和偏好，并保留处理水位。整人成员遗忘会同时删除所有关系维度。
 
 本轮阈值集中在 `wxbridge/storage/relationships.py`，未增加复杂配置组合。部署前备份私有记忆；回退代码时保留实时数据，新字段可被旧版忽略，不用旧快照覆盖新收发进度。
+
+## 整理预算与失败诊断
+
+后台max思考与结构化正文共享输出预算，默认改为8192 tokens、90秒总时限（配置允许256–8192 tokens、1–120秒）。主回复和参与判断预算不变，前台抢占及总并发限制继续生效。max_tokens是上限，不要求用满。
+
+结构化整理显式拒绝finish_reason=length的截断结果，报告memory_output_limit并保留任务重试，不尝试写入部分JSON。网络、HTTP、工作进程超时及JSON格式错误分别使用安全错误码，日志和状态不包含模型正文或内部推理。
