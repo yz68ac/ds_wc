@@ -188,7 +188,7 @@ class WeChatDeepSeekBot:
             job.close()
             del self.generators[task_id]
             reply = result.get("reply") or ""
-            error = "generation:" + GenerationFailure.from_result(result).code if not result["ok"] or not reply else ""
+            error = "generation:" + GenerationFailure.from_result(result).code if not result["ok"] else ""
             chunks = reply_chunks(reply, int(self.cfg["target"].get("max_reply_chars", 1800))) if not error else []
             if error:
                 self._generation_failed(task_id, version, result)

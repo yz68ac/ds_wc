@@ -157,6 +157,7 @@ class MemoryTests(unittest.TestCase):
         self.assertNotIn("以下人物记忆", short)
 
     def test_extractor_uses_memory_thinking_preserves_foreground_and_uses_no_tools(self):
+        self.cfg["deepseek"]["reasoning_effort"] = "high"
         self.cfg["memory"].update(thinking="enabled", reasoning_effort="max")
         before = copy.deepcopy(self.cfg)
         with patch("wxbridge.ai.client.DeepSeekClient") as client:

@@ -14,7 +14,7 @@
 
 主动接话使用 `proactive` 配置段，默认关闭，可在实际配置中按需开启。保留近300秒十条文字的门槛，增加自然称呼/引用与低频多人聊天候选；每小时默认最多三次主动入场，五分钟入场冷却只从独立主动发言确认算起，普通@回复和接话不重置；八秒发送间隔继续生效。确认发出后可在120秒内判断是否继续，最多额外两轮；没有新消息不请求模型，真实@优先，短句最多30字。全部参数、重启与失效规则见 [主动接话说明](PROACTIVE.md)。
 
-人物记忆使用 `memory` 配置段：enabled（默认 true）、directory（源码根目录下 memory）、model（deepseek-flash）、thinking（enabled）、reasoning_effort（max）、min_interval_seconds（60）、prompt_max_chars（1200）、max_tokens（2400）、timeout_seconds（30）。thinking 可选 enabled/disabled，reasoning_effort 可选 low/high/max，关闭思考时不发送深度参数；记忆整理独立于主回答的 high。规则、期限和维护命令见 [MEMORY.md](MEMORY.md)。
+人物记忆使用 `memory` 配置段：enabled（默认 true）、directory（源码根目录下 memory）、model（deepseek-flash）、thinking（enabled）、reasoning_effort（max）、min_interval_seconds（60）、prompt_max_chars（1200）、max_tokens（2400）、timeout_seconds（30）。thinking 可选 enabled/disabled，reasoning_effort 可选 low/high/max，关闭思考时不发送深度参数；记忆整理与主回答的思考配置各自独立，当前默认均为 max。规则、期限和维护命令见 [MEMORY.md](MEMORY.md)。
 
 `memory.avatar` 控制初见视觉参考：enabled（true）、max_per_batch（2）、max_bytes（524288）、retry_interval_seconds（3600）。只读取当前账号的头像缓存；文字印象及好感度请求看不到头像，视觉分类独立调用，失败不阻止文字整理。详见 [初见头像线索](MEMORY.md#初见头像线索)。
 
@@ -38,7 +38,7 @@
 | --- | --- | --- |
 | `model` | `deepseek-flash` | 请求的模型名称，须为所用服务实际支持的模型 |
 | `thinking` | `enabled` | `enabled` / `disabled` 时发送相应参数；当前按用户要求开启试用 |
-| `reasoning_effort` | `high` | 思考深度，可用 low/high/max；开启思考时传给模型，关闭时不发送 |
+| `reasoning_effort` | `max` | 思考深度，可用 low/high/max；开启思考时传给模型，关闭时不发送 |
 | `system_prompt_file` | `prompts/system.md` | 独立 UTF-8 人格提示词文件，支持 Markdown、多行和长文本；仅替换 `{bot_name}`，其余花括号原样保留 |
 | `system_prompt` | 旧版兼容项 | 旧配置只有内联提示词时仍可使用；显式配置文件后以文件为准 |
 | `temperature` | `1.0` | 传给模型的采样参数，支持范围由接口决定 |
@@ -137,7 +137,7 @@ DEEPSEEK_API_KEY=
 
 `python3 -m wxbridge queue-status` 只读队列元数据，不读微信数据库或显示正文。进程重启保留任务及分片进度，主机重启清空内存队列。恢复时核对微信账号与群；待确认意图先核对发出记录，不盲目重试。确认超时仍接收和生成新任务，后续发送等待；晚到的匹配发出记录可自动解除该阻塞。
 
-`generation:*` 表示生成失败，任务保留且队首可见；应先解决模型/提示词问题。未知发送状态需要检查草稿和发出记录后人工处理，不能用删除队列来假装发送成功。`--once` 仅运行一个调度回合，子进程会停止，任务保留。
+`generation:*` 表示生成失败，按下方重试预算处理。模型成功返回但正文为空时静默结束该任务，不补发兜底话、不更新发送冷却或登记记忆，后续任务继续出队；已有待确认发送意图仍先核对发出记录。未知发送状态需要检查草稿和发出记录后人工处理，不能用删除队列来假装发送成功。`--once` 仅运行一个调度回合，子进程会停止，任务保留。
 
 dry-run 使用独立的 `.dry-run` 队列及 `dry-run/live-status.json`，不消费生产任务。生产和模拟监听仍对共享解密目录互斥。
 

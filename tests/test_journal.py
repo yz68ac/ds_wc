@@ -123,6 +123,19 @@ class JournalSafetyTests(unittest.TestCase):
         self.assertFalse(journal.memory_jobs())
         policy.assert_not_called()
 
+    def test_silent_completion_does_not_update_cooldown_or_enqueue_memory(self):
+        journal = self.open_journal()
+        task = self.task(1, 'queued')
+        task['triggers'] = [dict(local_id=1, time=100)]
+        with journal.db:
+            journal.put(task)
+        self.assertTrue(journal.generated(1, 1, [], search=dict(attempted=True, calls=1, results=1, errors=['empty_reply'])))
+        self.assertEqual(journal.task(1)['phase'], 'done')
+        self.assertIsNone(journal.head())
+        self.assertEqual(journal.get('last_success'), 0)
+        self.assertFalse(journal.memory_jobs())
+        self.assertIn('empty_reply', journal.get('last_search')['errors'])
+
     def test_readonly_legacy_status_does_not_migrate_database(self):
         with sqlite3.connect(self.path) as db:
             db.executescript('CREATE TABLE tasks(id INTEGER PRIMARY KEY,data TEXT NOT NULL);'

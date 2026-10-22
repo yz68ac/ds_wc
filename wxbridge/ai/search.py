@@ -114,7 +114,8 @@ def answer_with_search(cfg, client, messages, on_search=None, *, search_client=N
     def finish(text):
         text = format_reply(text, cfg)
         if not text.strip():
-            text = "这次没能整理出可靠的回答，稍后再问我一次。"
+            errors.append('empty_reply')
+            return '', metadata()
         if sources and sources[0]["url"] not in text:
             text += "\n参考："+sources[0]["url"]
         return text.strip(), metadata()
@@ -130,6 +131,8 @@ def answer_with_search(cfg, client, messages, on_search=None, *, search_client=N
             return finish("刚才联网查询后，整理回答超时了。能确认的来源放在下面，稍后可以再问我。" if sources else "这次联网没能完成，我暂时核实不了，稍后再试。")
         tool_calls = message.get("tool_calls") or []
         if not tool_calls:
+            if not format_reply(message.get('content') or '', cfg).strip():
+                return finish('')
             if attempted and not sources:
                 return finish("这次没有查到可用的网页结果，暂时核实不了。你可以换个更具体的关键词，我再查。" if not errors else "这次联网查询没有完成，暂时核实不了，稍后再试。")
             return finish(message.get("content") or "")

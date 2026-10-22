@@ -25,7 +25,7 @@ class ModelRoleTests(unittest.TestCase):
         self.assertEqual(judge.api_key, 'judge-secret')
         self.assertEqual(judge.base_url, 'https://judge.example/v1')
         self.assertEqual(reply.api_key, 'reply-secret')
-        self.assertEqual(reply.cfg['reasoning_effort'], 'high')
+        self.assertEqual(reply.cfg['reasoning_effort'], 'max')
         self.assertEqual(model_settings(self.cfg, 'memory')['reasoning_effort'], 'max')
         self.assertEqual(model_settings(self.cfg, 'avatar')['thinking'], 'disabled')
         self.assertEqual(self.cfg, original)

@@ -73,7 +73,7 @@
     "base_url": "https://api.deepseek.com",
     "model": "deepseek-flash",
     "thinking": "enabled", // enabled 开启思考，disabled 关闭。
-    "reasoning_effort": "high", // 开启思考时可选 low / high / max。
+    "reasoning_effort": "max", // 开启思考时可选 low / high / max。
     "temperature": 1.0,
     "timeout_seconds": 60, // 单次 HTTP 请求超时，不等于整轮处理时限。
     "max_tokens": 1200, // 输出 token 预算，不是中文字数。

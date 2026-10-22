@@ -171,6 +171,10 @@ class Journal:
             for task in self.tasks():
                 if task["phase"] == "open" and now >= task["deadline"]:
                     task.update(phase="queued", closed_at=task["deadline"])
+                    if task['generation'] == 'silent' and not task['intent']:
+                        task.update(phase='done', triggers=[], chunks=[])
+                        if (task.get('notice') or {}).get('state') == 'pending':
+                            task.pop('notice', None)
                     self.put(task)
 
     def head(self):
@@ -225,8 +229,13 @@ class Journal:
             task = self.task(task_id)
             if not task or task["version"] != version or task["phase"] == "done":
                 return False
-            task.update(generation="failed" if error else "ready", chunks=chunks,
-                        blocked_reason=error)
+            silent = not error and not chunks
+            task.update(generation='failed' if error else 'silent' if silent else 'ready', chunks=chunks,
+                        blocked_reason=task['blocked_reason'] if silent and task['intent'] else error)
+            if silent and not task['intent'] and task['phase'] != 'open':
+                task.update(phase='done', triggers=[])
+                if (task.get('notice') or {}).get('state') == 'pending':
+                    task.pop('notice', None)
             if vision is not None:
                 task["vision"] = vision  # 仅格式、分辨率、质量、数量和错误码；无路径、图片数据或密钥。
                 self.set("last_vision", dict(task_id=task_id, **vision))
@@ -288,6 +297,8 @@ class Journal:
                 reason = task["blocked_reason"] if task["generation"] == "failed" else ""
                 task.update(intent=None, blocked_reason=reason, last_notice_ack_id=local_id,
                             pre_submit_attempts=0, retry_at=0)
+                if task['generation'] == 'silent':
+                    task.update(phase='done', triggers=[], chunks=[])
                 self.set("last_success", now)
                 self.put(task)
                 return

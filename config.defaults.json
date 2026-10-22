@@ -68,7 +68,7 @@
     "base_url": "https://api.deepseek.com",
     "model": "deepseek-flash",
     "thinking": "enabled",
-    "reasoning_effort": "high",
+    "reasoning_effort": "max",
     "temperature": 1,
     "timeout_seconds": 60,
     "max_tokens": 1200,

@@ -470,6 +470,53 @@ class PipelineTests(unittest.TestCase):
         self.assertFalse(self.bot.journal.memory_jobs())
         self.assertIsNone(self.bot.journal.get('proactive_session'))
 
+    def test_empty_reply_finishes_without_sending_and_later_task_continues(self):
+        self.cfg['queue']['debounce_seconds'] = 0
+        self.add(1)
+        self.add(2)
+        self.bot.tick()
+        jobs = [j for j in self.jobs if j.kind == 'generate']
+        jobs[0].result = dict(ok=True, reply=' \n ')
+        jobs[1].result = dict(ok=True, reply='后面的正常回答')
+        self.bot.tick()
+        self.assertEqual(self.bot.journal.task(1)['phase'], 'done')
+        self.assertEqual(self.bot.journal.task(1)['generation'], 'silent')
+        self.assertEqual(self.bot.journal.task(1)['triggers'], [])
+        self.assertEqual([j.payload[2] for j in self.sends()], ['后面的正常回答'])
+        self.assertEqual(self.bot.journal.get('last_success'), 0)
+
+    def test_empty_open_batch_seals_silently_after_restart_without_regeneration(self):
+        self.add(1)
+        self.bot.tick()
+        self.generated('')
+        self.assertEqual(self.bot.journal.head()['phase'], 'open')
+        self.restart()
+        self.now += 3
+        self.bot.tick()
+        self.assertEqual(self.bot.journal.status()['queue_length'], 0)
+        self.assertFalse(self.sends())
+        self.assertEqual(len([j for j in self.jobs if j.kind == 'generate']), 1)
+
+    def test_empty_reply_preserves_existing_notice_intent_until_confirmed(self):
+        self.cfg['queue']['debounce_seconds'] = 0
+        self.cfg['search']['feedback_enabled'] = True
+        self.add(1)
+        self.bot.tick()
+        generator = self.search_started()
+        notice = self.sends()[0].payload[2]
+        generator.result = dict(ok=True, reply='')
+        self.bot.tick()
+        self.assertEqual(self.bot.journal.head()['intent']['kind'], 'notice')
+        self.assertEqual(self.bot.journal.head()['generation'], 'silent')
+        self.sends()[0].result = dict(ok=True, ui=dict(submitted=True))
+        self.add(2, sender='wxid_self', text=notice, mention=False)
+        self.bot.tick()
+        self.assertEqual(self.bot.journal.status()['queue_length'], 0)
+        self.assertEqual(len(self.sends()), 1)
+        self.restart()
+        self.bot.tick()
+        self.assertEqual(len(self.sends()), 1)
+
     def test_generation_retry_deadline_and_budget_survive_restart(self):
         self.cfg['queue'].update(debounce_seconds=0, generation_retries=1)
         self.add(1)
