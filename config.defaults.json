@@ -82,7 +82,11 @@
       "max_tokens": 256
     },
     "memory": {},
-    "avatar": {}
+    "avatar": {
+      "thinking": "enabled",
+      "reasoning_effort": "max",
+      "max_tokens": 1200
+    }
   },
   "search": {
     "enabled": true,

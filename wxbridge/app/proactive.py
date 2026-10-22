@@ -29,7 +29,7 @@ class ProactiveController:
             self.close_session('policy_updated', 0)
         with bot.journal.db:
             bot.journal.set('proactive_entry_not_before', 0)  # 清除旧版无人回应的额外十分钟退让。
-        if self.state().get('outcome') == 'evaluating':
+        if self.state().get('outcome') in ('evaluating', 'generating_reply'):
             self.update(outcome='interrupted')
 
     def state(self):
@@ -234,6 +234,10 @@ class ProactiveController:
                 result = worker.poll()
                 if result is None:
                     return
+                if result.get('event') == 'proactive_reply_started':
+                    self.bot.metrics.record_models(result.get('model_metrics'))
+                    self.update(outcome='generating_reply', model_role='reply', error='')
+                    return
                 worker.close()
                 self.job = None
                 self.bot.metrics.record_models(result.get('model_metrics'))
@@ -277,11 +281,6 @@ class ProactiveController:
             candidate = self.candidate(rows, now)
             if not candidate:
                 return
-            role = 'reply' if candidate['reason'] == 'addressed' and any(
-                m['local_id'] in candidate['source_ids'] and addresses_bot(
-                    m, self.bot.cfg, self.bot.store.self_wxid, include_reference=False)
-                for m in rows) else 'participation'
-            candidate['model_role'] = role
             memory = None
             if self.bot.memory:
                 labels = member_labels(rows, [rows[-1]], self.bot.store.self_wxid)
@@ -294,10 +293,13 @@ class ProactiveController:
             through = max(m['local_id'] for m in self.dialogue)
             self.update(last_evaluated_id=through, last_evaluated_at=now,
                         evaluations=state['evaluations']+1, outcome='evaluating', mode=candidate['mode'],
-                        opportunity=candidate['reason'], model_role=role, error='')
+                        opportunity=candidate['reason'], model_role='participation', error='')
             from wxbridge.ai.roles import model_settings
-            worker = self.bot.job_factory('proactive', (self.bot.cfg, prompt, role),
-                timeout=model_settings(self.bot.cfg, role)['timeout_seconds']+2)
+            remaining = max(0, candidate['expires_at']-now)
+            options = dict(source_ids=candidate['source_ids'], timeout_seconds=remaining)
+            timeout = min(remaining, model_settings(self.bot.cfg, 'participation')['timeout_seconds']
+                          + model_settings(self.bot.cfg, 'reply')['timeout_seconds'])+2
+            worker = self.bot.job_factory('proactive', (self.bot.cfg, prompt, options), timeout=timeout)
             self.pending = candidate
             self.job = (worker, through, candidate['expires_at'])
             log.info('主动接话判断 mode=%s reason=%s messages=%s', candidate['mode'], candidate['reason'], len(rows))

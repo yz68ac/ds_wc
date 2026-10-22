@@ -41,8 +41,13 @@ def _work(connection, kind, payload):
                 elif kind == 'proactive':
                     from wxbridge.ai.proactive import evaluate
                     cfg, prompt = payload[:2]
-                    role = payload[2] if len(payload) > 2 else 'participation'
-                    result = {'decision': evaluate(cfg, prompt, role=role)}
+                    options = payload[2] if len(payload) > 2 else {}
+                    def reply_started(identifier):
+                        connection.send(dict(event='proactive_reply_started', reply_to=identifier,
+                                             model_metrics=list(metrics)))
+                        metrics.clear()  # 判断用量在阶段事件中上报，最终结果只带生成用量。
+                    result = {'decision': evaluate(cfg, prompt, source_ids=options.get('source_ids'),
+                        timeout_seconds=options.get('timeout_seconds'), on_reply=reply_started)}
                 elif kind == "memory":
                     from wxbridge.ai.memory import extract
                     cfg, snapshot = payload

@@ -27,12 +27,21 @@ class ModelRoleTests(unittest.TestCase):
         self.assertEqual(reply.api_key, 'reply-secret')
         self.assertEqual(reply.cfg['reasoning_effort'], 'max')
         self.assertEqual(model_settings(self.cfg, 'memory')['reasoning_effort'], 'max')
-        self.assertEqual(model_settings(self.cfg, 'avatar')['thinking'], 'disabled')
+        self.assertEqual(model_settings(self.cfg, 'avatar')['thinking'], 'enabled')
+        self.assertEqual(model_settings(self.cfg, 'avatar')['reasoning_effort'], 'max')
         self.assertEqual(self.cfg, original)
 
     def client(self, role='reply'):
         with patch('wxbridge.ai.client.deepseek_api_key', return_value='synthetic-key'):
             return DeepSeekClient(self.cfg, role=role)
+
+    def test_all_non_judgment_roles_send_enabled_max(self):
+        for role in ('reply', 'memory', 'avatar'):
+            with self.subTest(role=role), patch.object(DeepSeekClient, '_post', return_value={
+                    'choices': [{'message': {'content': 'synthetic'}}]}) as post:
+                self.client(role).complete([])
+                self.assertEqual(post.call_args.args[0]['thinking'], {'type': 'enabled'})
+                self.assertEqual(post.call_args.args[0]['reasoning_effort'], 'max')
 
     def test_openai_adapter_omits_vendor_thinking_and_uses_role_endpoint(self):
         self.cfg['models']['participation'] = dict(provider='openai', base_url='https://judge.example/v1',
@@ -100,8 +109,8 @@ class ModelRoleTests(unittest.TestCase):
                 client = self.client('participation')
                 with patch('wxbridge.ai.client.DeepSeekClient', return_value=client), \
                         patch.object(client, '_post', return_value={'choices': [{'message': {
-                            'content': '{"speak":false,"text":""}', 'reasoning_content': 'PRIVATE_REASONING'}}]}) as post:
-                    self.assertEqual(evaluate(self.cfg, []), dict(speak=False, text=''))
+                            'content': '{"speak":false,"reply_to":null}', 'reasoning_content': 'PRIVATE_REASONING'}}]}) as post:
+                    self.assertEqual(evaluate(self.cfg, []), dict(speak=False, text='', reply_to=None))
                 payload = post.call_args.args[0]
                 self.assertEqual(payload['thinking'], {'type': thinking})
                 self.assertEqual(payload['max_tokens'], 1200)

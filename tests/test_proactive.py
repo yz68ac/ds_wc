@@ -6,7 +6,7 @@ import json
 import unittest
 from unittest.mock import Mock, patch
 
-from wxbridge.ai.proactive import activity, build_prompt, evaluate, parse_decision
+from wxbridge.ai.proactive import activity, build_prompt, build_reply_prompt, evaluate, parse_decision
 from wxbridge.config import DEFAULTS, load_config
 from wxbridge.app.workers import _work
 from synthetic import NOW, msg
@@ -36,7 +36,10 @@ class DecisionTests(unittest.TestCase):
         cfg['deepseek'].update(system_prompt_file='',system_prompt='合成人格')
         rows=[msg(i,NOW,'普通文字') for i in range(1,11)]
         prompt=build_prompt(cfg,rows,'合成群',dict(labels={'wxid_friend':'U1'},text='合成背景'))
-        self.assertTrue(prompt[0]['content'].startswith('合成人格'))
+        self.assertNotIn('合成人格', prompt[0]['content'])
+        reply_prompt = build_reply_prompt(cfg, prompt, 10)
+        self.assertTrue(reply_prompt[0]['content'].startswith('合成人格'))
+        self.assertEqual(reply_prompt[1], prompt[1])
         self.assertIn('保持沉默',prompt[0]['content'])
         self.assertNotIn('@你的人',prompt[1]['content'])
         self.assertIn('合成背景',prompt[1]['content'])
@@ -48,7 +51,7 @@ class DecisionTests(unittest.TestCase):
     def test_participation_disables_thinking_and_preserves_foreground_config(self):
         cfg=copy.deepcopy(DEFAULTS)
         client=Mock()
-        client.complete.return_value={'content':'{"speak":false,"text":""}','reasoning_content':'PRIVATE_REASONING'}
+        client.complete.return_value={'content':'{"speak":false,"reply_to":null}','reasoning_content':'PRIVATE_REASONING'}
         original=copy.deepcopy(cfg)
         with patch('wxbridge.ai.client.DeepSeekClient',return_value=client) as factory:
             self.assertFalse(evaluate(cfg,[])['speak'])

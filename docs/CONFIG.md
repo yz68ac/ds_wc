@@ -161,7 +161,7 @@ dry-run 使用独立的 `.dry-run` 队列及 `dry-run/live-status.json`，不消
 
 ## 独立模型角色
 
-`models` 下有 `reply`、`participation`、`memory`、`avatar` 四个覆盖对象。主回复继承 `deepseek`；记忆继承 `deepseek` 的接口和 `memory` 的模型/思考/预算；头像默认继承旧记忆模型且关闭思考；参与判断继承 `deepseek` 的接口与模型，默认 JSON 中的 participation 显式关闭思考、256 tokens，超时继承 `proactive.timeout_seconds`（默认30秒）。参与角色保留的 high 仅供重新开启思考时使用，当前不发送深度参数。每个角色最后再应用自己的覆盖值，不会修改其他角色；`models.reply` 也不会覆盖其他角色的设置。
+`models` 下有 `reply`、`participation`、`memory`、`avatar` 四个覆盖对象。主回复继承 `deepseek`；记忆继承 `deepseek` 的接口和 `memory` 的模型/思考/预算；头像继承记忆模型，默认开启思考/max、1200 tokens；参与判断继承 `deepseek` 的接口与模型，默认 JSON 中的 participation 显式关闭思考、256 tokens，超时继承 `proactive.timeout_seconds`（默认30秒）。参与角色保留的 high 仅供重新开启思考时使用，当前不发送深度参数。每个角色最后再应用自己的覆盖值，不会修改其他角色；`models.reply` 也不会覆盖其他角色的设置。
 
 可覆盖字段：`provider`、`base_url`、`api_key_env`、`model`、`thinking`、`reasoning_effort`、`temperature`、`timeout_seconds`、`max_tokens`。角色覆盖优先于前面的旧配置和环境覆盖，修改后重启监听。示例：
 
@@ -183,9 +183,9 @@ dry-run 使用独立的 `.dry-run` 队列及 `dry-run/live-status.json`，不消
 
 对应密钥只写项目根目录 `.env`。`provider=deepseek` 使用现有 DeepSeek 参数；`provider=openai` 表示 Chat Completions 兼容协议，不发送 DeepSeek 专有 `thinking` 字段。具体服务仍须支持所选模型及参数；这里没有实现 Anthropic Messages 接口。`base_url` 填 `/chat/completions` 之前的地址，例如服务要求 `/v1/chat/completions` 时填到 `/v1`。
 
-参与角色目前仍一次请求同时判断是否参与、生成短句；只是可以独立选模型，并未额外增加一次判断请求。真实 @ 不经过这个判断。搜索工具仍单独使用 `search.base_url` 和旧 `deepseek.api_key_env` 指定的 DeepSeek Key，不会自动拿新回复服务的 Key 调用搜索。
+participation 只判断是否介入及回应目标，不生成正文；决定开口后才调用 reply 生成正文，决定沉默则没有第二次请求。真实 @ 不经过参与判断。搜索工具仍单独使用 `search.base_url` 和旧 `deepseek.api_key_env` 指定的 DeepSeek Key，不会自动拿新回复服务的 Key 调用搜索。
 
-正文中出现ds/DS等配置称呼的关键词接话使用 reply 角色，与真实@共用 `deepseek` 加 `models.reply` 的模型、思考、预算和超时配置（当前max）。未点名的主动接话、仅引用机器人而正文未点名的接话仍用 participation（当前关闭思考）。关键词仍一次请求判断并生成短句，不额外先调用 participation；既有30字短句、两分钟窗口和发送确认保持。修改 `models.participation` 不会改变关键词接话的思考深度。
+关键词ds/DS、仅引用机器人、无人点名的自主入场及窗口内接话都采用“participation 判断 → reply 正文”两阶段；只有判断关闭思考，所有实际回复共用 `deepseek` 加 `models.reply`（当前开启/max）。记忆和头像也默认开启/max。修改 `models.participation` 只影响判断，不改变正文深度。两阶段共享候选剩余有效期，默认总计不超过60秒；既有30字短句、两分钟窗口和发送确认保持。
 
 ## 生成重试与记录保留
 

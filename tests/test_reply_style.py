@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 
 from wxbridge.ai.emoticons import catalog, tokens
 from wxbridge.ai.output import format_reply, plain_text, reply_rules, response_prompt
-from wxbridge.ai.proactive import build_prompt, parse_decision
+from wxbridge.ai.proactive import build_prompt, build_reply_prompt, parse_decision
 from wxbridge.ai.search import answer_with_search
 from wxbridge.app.workers import _work
 from wxbridge.config import DEFAULTS, load_config
@@ -139,7 +139,7 @@ class ReplyStyleTests(unittest.TestCase):
     def test_proactive_rules_and_parser_respect_both_settings(self):
         cfg=settings()
         prompt=build_prompt(cfg,[msg(1,NOW,'合成闲聊')],'合成群')
-        self.assertIn('本轮微信表情已开启',prompt[0]['content'])
+        self.assertIn('本轮微信表情已开启',build_reply_prompt(cfg,prompt,1)[0]['content'])
         payload=json.dumps(dict(speak=True,text='知道啦。[偷笑]'),ensure_ascii=False)
         self.assertEqual(parse_decision(payload,30,cfg)['text'],'知道啦[偷笑]')
         self.assertEqual(parse_decision(payload,30,settings(omit=False))['text'],'知道啦。[偷笑]')

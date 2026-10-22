@@ -21,7 +21,7 @@ def model_settings(cfg, role='reply'):
         result.update(thinking='disabled', reasoning_effort=None, max_tokens=256,
                       timeout_seconds=cfg.get('proactive', {}).get('timeout_seconds', 20))
     if role == 'avatar':
-        result.update(thinking='disabled', reasoning_effort=None, max_tokens=600)
+        result.update(thinking='enabled', reasoning_effort='max', max_tokens=1200)
     result.update(cfg.get('models', {}).get(role, {}))
     return result
 
