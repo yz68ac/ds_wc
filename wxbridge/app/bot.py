@@ -516,7 +516,7 @@ class WeChatDeepSeekBot:
                 self.tick()
                 if once:
                     return
-                # 工作进程与发送确认及时调度；消息查询另由 next_poll_at 限流。
-                time.sleep(min(float(self.cfg.get("poll_interval_seconds", 2)), 0.5))
+                # 队列、工作进程与发送确认每秒调度；消息查询另由 next_poll_at 限流。
+                time.sleep(min(float(self.cfg.get("poll_interval_seconds", 2)), 1.0))
         except KeyboardInterrupt:
             log.info("停止监听，未完成任务保留在内存队列")
