@@ -175,19 +175,27 @@ class ProactivePipelineTests(unittest.TestCase):
         self.assertEqual(self.bot.journal.head()['trigger_kind'],'mention')
         self.assertFalse(self.sends())
 
-    def test_second_poll_mention_preempts_before_starting_foreground_workers(self):
+    def test_next_poll_mention_preempts_before_starting_foreground_workers(self):
         self.chat()
         old=self.bot.proactive.job[0]
         original=self.bot._poll_once
+        factory=self.bot.job_factory
         calls=0
         def poll():
             nonlocal calls
             calls+=1
-            if calls==2:
+            original()
+            if calls==1:
                 self.add(11)
                 self.add(12,sender='another_member')
-            original()
-        with patch.object(self.bot,'_poll_once',side_effect=poll):
+        def make(kind, payload, **kwargs):
+            if kind=='generate':
+                self.assertTrue(old.closed)
+            return factory(kind, payload, **kwargs)
+        with patch.object(self.bot,'_poll_once',side_effect=poll), patch.object(self.bot,'job_factory',side_effect=make):
+            self.bot.tick()
+            self.assertFalse(old.closed)
+            self.assertFalse(self.bot.generators)
             self.bot.tick()
         self.assertTrue(old.closed)
         self.assertEqual(len(self.bot.generators),2)

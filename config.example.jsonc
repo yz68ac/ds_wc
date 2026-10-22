@@ -10,7 +10,7 @@
   "state_file": "/run/wxbridge-trial/state.json",
   "log_file": "/run/wxbridge-trial/bot.log",
   "source": "db",
-  "poll_interval_seconds": 2.0, // 调度等待上限，实际最多休眠 0.5 秒。
+  "poll_interval_seconds": 2.0, // 新消息常规查询间隔（秒）；发送就绪时补读，工作进程与发送确认仍及时调度。
   "reply_to_backlog": false, // 生产入口强制关闭，避免新部署补答旧消息。
   // 输出语气：只控制机器人表达，不修改群友原文；改配置后重启监听。
   "reply_style": {

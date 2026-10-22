@@ -100,6 +100,7 @@ class WeChatDeepSeekBot:
         self.maintenance_at = 0
         self.metrics, self.build = Metrics(), runtime_identity(cfg)
         self.status_signature, self.status_written_at = None, 0
+        self.next_poll_at = 0
 
     _chunk = staticmethod(chunk_text)
 
@@ -167,6 +168,21 @@ class WeChatDeepSeekBot:
                 return
             if self.last_local_id <= old_cursor:
                 raise StoreError("消息分页游标未前进")
+
+    def _poll_messages(self, *, force=False):
+        if not force and time.monotonic() < self.next_poll_at:
+            return False
+        with self.metrics.measure('pre_send_intake' if force else 'intake'):
+            self._poll_once()
+        self.next_poll_at = time.monotonic() + float(self.cfg.get('poll_interval_seconds', 2))
+        # 可选合并模式只在补齐新消息后封批，避免较长轮询跨过窗口末尾。
+        self.journal.seal(time.time())
+        return True
+
+    def _refresh_before_send(self):
+        self._poll_messages(force=True)
+        if self.proactive:
+            self.proactive.priority(time.time())
 
     def _generation_step(self):
         for task_id, (version, job) in list(self.generators.items()):
@@ -283,7 +299,8 @@ class WeChatDeepSeekBot:
         self.delivery.confirm(memory=self.memory is not None)
 
     def _send_step(self):
-        self.delivery.send(self.job_factory, self.proactive.validate if self.proactive else None)
+        self.delivery.send(self.job_factory, self.proactive.validate if self.proactive else None,
+                           refresh=self._refresh_before_send)
 
     def _pause_memory(self):
         if self.memory_job:
@@ -419,25 +436,15 @@ class WeChatDeepSeekBot:
             log.warning("记忆延后 category=%s", code)
 
     def tick(self):
-        with self.metrics.measure('intake'):
-            self._poll_once()
+        self._poll_messages()
         if self.proactive:
             self.proactive.priority(time.time())
-        self.journal.seal(time.time())
         with self.metrics.measure('generation'):
             self._generation_step()
         with self.metrics.measure('ui_result'):
             self._ui_result_step()
         with self.metrics.measure('confirmation'):
             self._confirm_step()
-        # 工作进程/数据库操作期间有新消息时，发送前必须再补读并校验版本。
-        with self.metrics.measure('intake'):
-            self._poll_once()
-        if self.proactive:
-            self.proactive.priority(time.time())
-        self.journal.seal(time.time())
-        with self.metrics.measure('generation'):
-            self._generation_step()
         if self.proactive:
             with self.metrics.measure('participation'):
                 self.proactive.step(time.time())
@@ -509,6 +516,7 @@ class WeChatDeepSeekBot:
                 self.tick()
                 if once:
                     return
+                # 工作进程与发送确认及时调度；消息查询另由 next_poll_at 限流。
                 time.sleep(min(float(self.cfg.get("poll_interval_seconds", 2)), 0.5))
         except KeyboardInterrupt:
             log.info("停止监听，未完成任务保留在内存队列")

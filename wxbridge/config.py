@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import os
 from pathlib import Path
 from typing import Any
@@ -59,6 +60,9 @@ def load_config(path: str | Path = "config.json") -> dict[str, Any]:
     if p.exists():
         data = json.loads(p.read_text(encoding="utf-8"))
     cfg = _deep_merge(DEFAULTS, data)
+    poll = cfg['poll_interval_seconds']
+    if type(poll) not in (int, float) or not math.isfinite(poll) or poll <= 0:
+        raise ValueError('poll_interval_seconds 必须是有限的正数')
     # 旧配置只提供内联提示词时继续使用它；显式提供文件时以文件为准。
     deepseek_data = data.get("deepseek") or {}
     if "system_prompt" in deepseek_data and "system_prompt_file" not in deepseek_data:

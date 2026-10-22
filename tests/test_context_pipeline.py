@@ -35,6 +35,8 @@ class PipelineTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(dir=parent)
         self.addCleanup(self.temp.cleanup)
         self.cfg = _deep_merge(DEFAULTS, {})
+        # 旧链路用例每次 tick 显式模拟接收；实际轮询节流在 test_polling 单独验证。
+        self.cfg['poll_interval_seconds'] = 0
         self.cfg["memory"]["enabled"] = False
         self.cfg["target"].update(chat="合成群", cooldown_seconds=0)
         self.cfg["ui"]["dry_run"] = False

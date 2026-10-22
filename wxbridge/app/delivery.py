@@ -77,9 +77,7 @@ class DeliveryController:
                 task["blocked_reason"] = "send_confirmation_timeout:" + code + ": 无匹配发出记录，暂停发送，继续接收"
                 self.journal.put(task)
 
-    def send(self, job_factory, validate=None):
-        if self.job is not None:
-            return
+    def _candidate(self, now):
         task = self.journal.head()
         if not task or task["phase"] != "queued" or task["intent"] or task["blocked_reason"]:
             return
@@ -92,11 +90,29 @@ class DeliveryController:
             notice = False
         if not notice and task["generation"] != "ready":
             return
-        now = time.time()
         if now < task.get("retry_at", 0):
             return
         if now - self.journal.get("last_success", 0) < float(self.cfg["target"].get("cooldown_seconds", 8)):
             return
+        return task, notice
+
+    def send(self, job_factory, validate=None, *, refresh=None):
+        if self.job is not None:
+            return
+        candidate = self._candidate(time.time())
+        if candidate is None:
+            return
+        task, notice = candidate
+        if refresh:
+            refresh()
+            candidate = self._candidate(time.time())
+            if candidate is None:
+                return
+            current, notice = candidate
+            if (current['id'], current['version']) != (task['id'], task['version']):
+                return
+            task = current
+        now = time.time()
         if validate and not validate(task, now):
             return
         if self.cfg["ui"].get("dry_run"):
