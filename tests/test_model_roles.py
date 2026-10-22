@@ -36,7 +36,7 @@ class ModelRoleTests(unittest.TestCase):
 
     def test_openai_adapter_omits_vendor_thinking_and_uses_role_endpoint(self):
         self.cfg['models']['participation'] = dict(provider='openai', base_url='https://judge.example/v1',
-                                                 model='synthetic-judge')
+                                                 model='synthetic-judge', thinking='disabled')
         client = self.client('participation')
         response = Mock()
         response.__enter__ = Mock(return_value=response)
@@ -92,13 +92,25 @@ class ModelRoleTests(unittest.TestCase):
 
     def test_participation_and_memory_workers_honor_role_deadlines(self):
         from wxbridge.ai.proactive import evaluate
-        self.cfg['models']['participation'] = dict(timeout_seconds=5, max_tokens=99)
-        client = self.client('participation')
-        with patch('wxbridge.ai.client.DeepSeekClient', return_value=client), \
-                patch.object(client, '_post', return_value={'choices': [{'message': {'content': '{"speak":false,"text":""}'}}]}) as post:
-            self.assertFalse(evaluate(self.cfg, [])['speak'])
-        self.assertEqual(post.call_args.args[0]['max_tokens'], 99)
-        self.assertLessEqual(post.call_args.args[1], 5)
+        for thinking, effort in (('enabled', 'high'), ('enabled', 'max'), ('disabled', 'high')):
+            with self.subTest(thinking=thinking, effort=effort):
+                self.cfg['models']['participation'] = dict(thinking=thinking, reasoning_effort=effort,
+                                                         timeout_seconds=5, max_tokens=1200)
+                original = copy.deepcopy(self.cfg)
+                client = self.client('participation')
+                with patch('wxbridge.ai.client.DeepSeekClient', return_value=client), \
+                        patch.object(client, '_post', return_value={'choices': [{'message': {
+                            'content': '{"speak":false,"text":""}', 'reasoning_content': 'PRIVATE_REASONING'}}]}) as post:
+                    self.assertEqual(evaluate(self.cfg, []), dict(speak=False, text=''))
+                payload = post.call_args.args[0]
+                self.assertEqual(payload['thinking'], {'type': thinking})
+                self.assertEqual(payload['max_tokens'], 1200)
+                if thinking == 'enabled':
+                    self.assertEqual(payload['reasoning_effort'], effort)
+                else:
+                    self.assertNotIn('reasoning_effort', payload)
+                self.assertLessEqual(post.call_args.args[1], 5)
+                self.assertEqual(self.cfg, original)
 
     def test_worker_returns_safe_error_and_usage_without_sensitive_details(self):
         import logging

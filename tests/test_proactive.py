@@ -45,7 +45,7 @@ class DecisionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             build_prompt(cfg,rows,'合成群')
 
-    def test_background_thinking_disabled_and_foreground_config_preserved(self):
+    def test_participation_uses_high_thinking_and_preserves_foreground_config(self):
         cfg=copy.deepcopy(DEFAULTS)
         client=Mock()
         client.complete.return_value={'content':'{"speak":false,"text":""}','reasoning_content':'PRIVATE_REASONING'}
@@ -55,8 +55,10 @@ class DecisionTests(unittest.TestCase):
         request_cfg=factory.call_args.args[0]
         self.assertEqual(factory.call_args.kwargs['role'], 'participation')
         from wxbridge.ai.roles import model_settings
-        self.assertEqual(model_settings(request_cfg, 'participation')['thinking'],'disabled')
-        self.assertEqual(model_settings(request_cfg, 'participation')['max_tokens'],256)
+        self.assertEqual(model_settings(request_cfg, 'participation')['thinking'],'enabled')
+        self.assertEqual(model_settings(request_cfg, 'participation')['reasoning_effort'],'high')
+        self.assertEqual(model_settings(request_cfg, 'participation')['max_tokens'],1200)
+        self.assertEqual(model_settings(request_cfg)['reasoning_effort'],'max')
         self.assertEqual(cfg,original)
         self.assertIsNotNone(client.complete.call_args.kwargs['deadline'])
 

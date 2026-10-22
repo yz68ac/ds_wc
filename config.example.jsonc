@@ -29,13 +29,13 @@
   // 主动接话：达到门槛后仍可选择沉默；真实 @ 优先。
   "proactive": {
     "enabled": false, // 默认关闭；确认群内使用方式后按需开启。
-    "window_seconds": 300, // 检查最近 5 分钟，期间机器人有发言就不插话。
+    "window_seconds": 300, // 检查最近 5 分钟；正常 @ 回复和接话不会重置主动入场冷却。
     "min_messages": 10, // 至少 10 条群成员文字，图片/表情/系统消息不计数。
     "check_interval_seconds": 10, // 有新消息时，资格检查的最短间隔。
-    "evaluation_interval_seconds": 60, // 两次模型判断至少间隔 60 秒。
+    "evaluation_interval_seconds": 60, // 独立入场的两次模型判断至少间隔 60 秒；短会话用10秒检查间隔。
     "min_new_messages": 3, // 再次判断需 3 条新文字，也用于作废过时短句。
     "reply_ttl_seconds": 60, // 主动结果有效期；不得小于下面的请求时限。
-    "timeout_seconds": 20, // 判断关闭思考，不影响普通 @ 回复的 high。
+    "timeout_seconds": 30, // 主动接话请求时限；思考开关和深度在 models.participation 中调整。
     "max_reply_chars": 30, // 主动短句硬上限，过长则放弃。
     "entry_cooldown_seconds": 300, // 从上次主动入场确认算起5分钟；@回复和接话不重置，八秒发送间隔仍生效。
     "max_entries_per_hour": 3, // 滚动一小时最多3次主动入场，真实@不计入。
@@ -79,13 +79,17 @@
     "max_tokens": 1200, // 输出 token 预算，不是中文字数。
     "system_prompt_file": "prompts/system.md" // 每次生成重读，同一路径下改人格无需重启。
   },
-  // 模型角色覆盖。空对象沿用原配置；可独立指定 model/base_url/api_key_env/thinking 等。
+  // 模型角色覆盖。未填写的字段沿用默认配置；可独立指定 model/base_url/api_key_env/thinking 等。
   // provider: deepseek 发送 DeepSeek thinking 参数；openai 仅为 Chat Completions 兼容协议。
-  // 例如 participation: {"model":"你的判断模型", "thinking":"disabled", "timeout_seconds":10}。
+  // participation 的思考独立于普通 @ 回复；下面可设 enabled/disabled 和 low/high/max。
   // 主动接话仍由一次请求判断并给出短句；真实 @ 不经过参与判断。
   "models": {
     "reply": {},
-    "participation": {},
+    "participation": {
+      "thinking": "enabled", // 主动入场和后续接话都使用此角色，改后重启监听。
+      "reasoning_effort": "high", // 关闭思考时不发送深度参数；不影响普通 @ 的 max。
+      "max_tokens": 1200 // 为思考和JSON决策留出预算；实际发出的短句仍最多30字。
+    },
     "memory": {},
     "avatar": {}
   },

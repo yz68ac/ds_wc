@@ -161,7 +161,7 @@ dry-run 使用独立的 `.dry-run` 队列及 `dry-run/live-status.json`，不消
 
 ## 独立模型角色
 
-`models` 下有 `reply`、`participation`、`memory`、`avatar` 四个覆盖对象，默认均为空，因此原配置继续生效。主回复继承 `deepseek`；记忆继承 `deepseek` 的接口和 `memory` 的模型/思考/预算；头像默认继承旧记忆模型且关闭思考；参与判断继承 `deepseek` 的接口与模型、关闭思考、256 tokens，超时继承 `proactive.timeout_seconds`。每个角色最后再应用自己的覆盖值，不会修改其他角色；`models.reply` 也不会覆盖其他角色的设置。
+`models` 下有 `reply`、`participation`、`memory`、`avatar` 四个覆盖对象。主回复继承 `deepseek`；记忆继承 `deepseek` 的接口和 `memory` 的模型/思考/预算；头像默认继承旧记忆模型且关闭思考；参与判断继承 `deepseek` 的接口与模型，默认 JSON 中的 participation 显式开启思考、深度 high、1200 tokens，超时继承 `proactive.timeout_seconds`（默认30秒）。每个角色最后再应用自己的覆盖值，不会修改其他角色；`models.reply` 也不会覆盖其他角色的设置。旧代码中参与角色的关闭思考/256 tokens 是兼容回退值，正常加载默认 JSON 时以 JSON 中的设置为准。
 
 可覆盖字段：`provider`、`base_url`、`api_key_env`、`model`、`thinking`、`reasoning_effort`、`temperature`、`timeout_seconds`、`max_tokens`。角色覆盖优先于前面的旧配置和环境覆盖，修改后重启监听。示例：
 
@@ -172,8 +172,10 @@ dry-run 使用独立的 `.dry-run` 队列及 `dry-run/live-status.json`，不消
       "provider": "deepseek",
       "model": "你的判断模型",
       "api_key_env": "PARTICIPATION_API_KEY",
-      "thinking": "disabled",
-      "timeout_seconds": 10
+      "thinking": "enabled",
+      "reasoning_effort": "high",
+      "max_tokens": 1200,
+      "timeout_seconds": 30
     }
   }
 }
