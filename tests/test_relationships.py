@@ -250,7 +250,33 @@ class RelationshipTests(unittest.TestCase):
         public = json.loads(prompt[1]['content'])
         self.assertEqual(public['existing']['U1']['relationship']['trust'], 51)
         self.assertEqual(public['messages'][0]['id'], 'm2')
+        self.assertEqual(public['source_ids_by_member'], {'U1':['m2']})
         self.assertNotIn('avatars', public)
+
+    def test_empty_historical_member_placeholder_is_ignored_without_reapplying_decay(self):
+        self.turn(delta=1)
+        old = msg(1, NOW, '旧发言', 'wxid_a')
+        new = msg(2, NOW+1, '新发言', 'wxid_b')
+        value = snapshot(self.cfg, [old], [new], IDENTITY, self.memory, NOW+1)
+        item = proposal()['updates'][0]
+        item['member'] = value['members']['wxid_a']['label']
+        before = copy.deepcopy(self.memory.data['members']['wxid_a'])
+        self.memory.apply(dict(updates=[item]), value, NOW+1)
+        self.assertEqual(self.memory.data['members']['wxid_a'], before)
+        self.assertEqual(self.memory.data['members']['wxid_b']['relationship']['familiarity'], 2)
+        self.assertEqual(self.memory.data['watermark'], 2)
+
+    def test_extractor_only_lists_new_speakers_as_update_members(self):
+        self.turn()
+        old = msg(1, NOW, '旧发言', 'wxid_a')
+        new = msg(2, NOW+1, '新发言', 'wxid_b')
+        value = snapshot(self.cfg, [old], [new], IDENTITY, self.memory, NOW+1)
+        with patch('wxbridge.ai.client.DeepSeekClient') as client:
+            client.return_value.complete.return_value = dict(content='{"updates":[]}')
+            extract(self.cfg, value)
+        public = json.loads(client.return_value.complete.call_args.args[0][1]['content'])
+        self.assertEqual(set(public['members']), {value['members']['wxid_b']['label']})
+        self.assertEqual(public['source_ids_by_member'], {'U1':['m2']})
 
     def test_recovery_request_explicitly_disables_expression_learning_without_extra_call(self):
         m = msg(1, NOW, '实际发言', 'wxid_a')

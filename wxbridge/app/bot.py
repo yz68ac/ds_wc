@@ -331,7 +331,9 @@ class WeChatDeepSeekBot:
                 self.journal.finish_memory(record["id"], self.journal.get("memory_last_update", 0))
                 return
             previous_error = record.get('last_error', self.journal.get('memory_error', ''))
-            if (record['attempts'] >= 3 and isinstance(previous_error, str) and previous_error.startswith('memory_learning_')
+            source_errors = ('memory_unknown_source', 'memory_unknown_member')
+            if (record['attempts'] >= 3 and isinstance(previous_error, str)
+                    and (previous_error.startswith('memory_learning_') or previous_error in source_errors)
                     and not record.get('learning_suppressed')):
                 # 新请求明确收窄能力；旧失败结果不写入，来源校验保持不变。
                 record.update(learning_suppressed=True, recovery_reason=previous_error, retry_at=now)
@@ -368,6 +370,8 @@ class WeChatDeepSeekBot:
             if record.get('learning_suppressed'):
                 value.update(learning_enabled=False, learning_source_ids=[], learning_existing=[],
                              recovery=dict(section='expression_learning', reason=record['recovery_reason']))
+                if record['recovery_reason'] in source_errors:
+                    value['dialogue'] = []  # 本批只用新本人发言；不从旧对白提取证据。
             avatars = self.cfg["memory"].get("avatar", {})
             if avatars.get("enabled"):
                 value["avatars"] = {}

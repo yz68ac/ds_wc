@@ -265,6 +265,16 @@ class MemoryStore:
             if label not in mapping or label in seen:
                 raise ValueError("memory_unknown_member")
             if not any(m['member'] == label for m in evidence.values()):
+                # 模型可为只出现在旧对白中的成员返回空占位；它不产生记忆或关系变化。
+                def zero(value):
+                    return (isinstance(value, dict) and type(value.get('delta')) is int and value['delta'] == 0
+                            and value.get('sources') == [] and value.get('reason') == '')
+                extra = update.get('relationship')
+                if (update['memories'] == [] and zero(update['affinity'])
+                        and (extra is None or (isinstance(extra, dict) and set(extra) == {'trust', 'mood'}
+                                               and zero(extra['trust']) and extra['mood'] is None))):
+                    seen.add(label)
+                    continue
                 raise ValueError('memory_unknown_source')
             seen.add(label)
             uid = mapping[label]

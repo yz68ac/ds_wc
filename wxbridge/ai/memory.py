@@ -62,7 +62,8 @@ def snapshot(cfg, context, triggers, identity, memory, now, *, window=None):
             members[uid] = dict(label=labels[uid], nickname=m.get("sender_name") or uid)
         if (uid in labels or uid == identity['account']) and m.get('type') == 1 and (m.get('text') or '').strip():
             dialogue.append(dict(id='m'+str(m['local_id']), member=labels.get(uid, 'BOT'),
-                                 time=m['time'], text=m['text'], read_only=m['local_id'] <= memory.data['watermark'] or uid == identity['account']))
+                                 time=m['time'], text=m['text'], read_only=m['local_id'] <= memory.data['watermark']
+                                 or m['local_id'] in memory.data.get('processed_ids', []) or uid == identity['account']))
         if (uid not in labels or m["local_id"] <= memory.data["watermark"] or
                 m["local_id"] in memory.data.get("processed_ids", []) or not (m.get("text") or "").strip()):
             continue
@@ -93,7 +94,9 @@ def extract(cfg, value):
     from wxbridge.ai.roles import model_settings
     public = {k: value[k] for k in ("revision", "watermark", "messages", "existing")}
     new_labels = {m["member"] for m in value["messages"]}
-    public["members"] = {v["label"]: v["nickname"] for v in value["members"].values()}
+    public["members"] = {v["label"]: v["nickname"] for v in value["members"].values() if v['label'] in new_labels}
+    public['source_ids_by_member'] = {label: [m['id'] for m in value['messages'] if m['member'] == label]
+                                      for label in sorted(new_labels)}
     public["existing"] = {k: v for k, v in public["existing"].items() if k in new_labels}
     for key in ('dialogue', 'learning_enabled', 'learning_existing', 'learning_source_ids'):
         public[key] = value.get(key, [] if key != 'learning_enabled' else False)
@@ -110,7 +113,8 @@ def extract(cfg, value):
         if not instructions.strip():
             raise ValueError('memory_prompt_empty')
         recovery = ('\n本批表达学习曾反复不满足来源校验，这次只整理人物事实、偏好、印象和关系；'
-                    '必须返回learning=[]，不要输出任何表达学习条目。下一批新任务可恢复表达学习。') if value.get('recovery') else ''
+                    '必须返回learning=[]，不要输出任何表达学习条目。sources必须逐项从source_ids_by_member中本人的列表选择，'
+                    '不能使用existing或旧对白的来源。下一批新任务可恢复表达学习。') if value.get('recovery') else ''
         answer = DeepSeekClient(cfg, role='memory').complete([{"role": "system", "content": INSTRUCTIONS+LEARNING_PROTOCOL+'\n'+instructions+semantics_prompt()+recovery},
             {"role": "user", "content": json.dumps(public, ensure_ascii=False)}],
             deadline=deadline, require_complete=True)
