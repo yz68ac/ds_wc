@@ -83,7 +83,7 @@ def load_config(path: str | Path = "config.json") -> dict[str, Any]:
             ('check_interval_seconds', 1, 60), ('evaluation_interval_seconds', 30, 3600),
             ('min_new_messages', 1, 100), ('reply_ttl_seconds', 1, 300),
             ('timeout_seconds', 1, 30), ('max_reply_chars', 1, 30),
-            ('entry_cooldown_seconds', 60, 3600), ('max_entries_per_hour', 1, 12)):
+            ('entry_cooldown_seconds', 60, 3600), ('max_entries_per_hour', 0, 12)):
         if type(proactive[key]) is not int or not minimum <= proactive[key] <= maximum:
             raise ValueError(f'proactive.{key} 超出范围 {minimum}–{maximum}')
     if proactive['reply_ttl_seconds'] < proactive['timeout_seconds']:
@@ -93,7 +93,7 @@ def load_config(path: str | Path = "config.json") -> dict[str, Any]:
             raise ValueError(f'proactive.{section}.enabled 必须为布尔值')
     for section, key, minimum, maximum in (
             ('opportunities', 'min_messages', 2, 100), ('opportunities', 'min_senders', 2, 20),
-            ('conversation', 'window_seconds', 30, 300), ('conversation', 'max_followups', 1, 2)):
+            ('conversation', 'window_seconds', 30, 300), ('conversation', 'max_followups', 0, 2)):
         value = proactive[section].get(key)
         if type(value) is not int or not minimum <= value <= maximum:
             raise ValueError(f'proactive.{section}.{key} 超出范围 {minimum}–{maximum}')

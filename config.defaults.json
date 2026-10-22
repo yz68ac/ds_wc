@@ -31,7 +31,7 @@
     "timeout_seconds": 30,
     "max_reply_chars": 30,
     "entry_cooldown_seconds": 300,
-    "max_entries_per_hour": 3,
+    "max_entries_per_hour": 0,
     "opportunities": {
       "enabled": true,
       "min_messages": 3,
@@ -41,7 +41,7 @@
     "conversation": {
       "enabled": true,
       "window_seconds": 120,
-      "max_followups": 2
+      "max_followups": 0
     }
   },
   "target": {

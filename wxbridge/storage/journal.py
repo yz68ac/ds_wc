@@ -130,8 +130,9 @@ class Journal:
                 self.put(task)
 
     def intake(self, messages: list[dict], accept: Callable[[dict], bool], now: float,
-               debounce: float, describe: Callable[[dict], dict] | None = None):
-        """accept 抛异常时整个事务回滚，包括游标；普通聊天只推进游标。"""
+               debounce: float, describe: Callable[[dict], dict] | None = None,
+               observe: Callable[[dict, bool], None] | None = None):
+        """接纳、成员活动和游标同事务提交；回调抛异常时一起回滚。"""
         events = []
         with self.db:
             cursor = self.get("cursor", 0)
@@ -141,7 +142,8 @@ class Journal:
                     continue
                 if describe:
                     events.append(describe(msg))
-                if accept(msg):
+                accepted = accept(msg)
+                if accepted:
                     kind = "pat" if is_pat(msg) else "mention"
                     task = next((t for t in tasks if kind == "mention" and t.get("trigger_kind", "mention") == kind
                                  and debounce > 0 and t["phase"] == "open"
@@ -160,6 +162,8 @@ class Journal:
                                 generation="pending", chunks=[], blocked_reason="", generation_attempts=0,
                                 generation_retry_at=0, generation_failed=False, last_generation_error='')
                     self.put(task)
+                if observe:
+                    observe(msg, accepted)
                 cursor = max(cursor, msg["local_id"])
             self.set("cursor", cursor)
             if events:
@@ -292,6 +296,7 @@ class Journal:
             if not task["intent"]:
                 return
             task['last_confirmation_seconds'] = max(0, now-task['intent'].get('created_at', now))
+            self.set('last_confirmed_outbound_id', max(local_id, self.get('last_confirmed_outbound_id', 0)))
             if task["intent"].get("kind") == "notice":
                 task["notice"].update(state="confirmed", text="", ack_id=local_id)
                 reason = task["blocked_reason"] if task["generation"] == "failed" else ""
@@ -363,7 +368,8 @@ class Journal:
                     last_search=self.get("last_search"),
                     proactive=self.get('proactive'),
                     conversation=dict(active=bool(session), expires_at=session.get('expires_at'),
-                                      followups_sent=session.get('followups', 0)),
+                                      followups_sent=session.get('followups', 0),
+                                      activity_at=session.get('last_activity_at'), origin=session.get('origin')),
                     memory_pending=len(self.memory_jobs()), memory_error=self.get("memory_error", ""),
                     passive_learning=self.get('passive_learning'),
                     tasks=[dict(id=t["id"], version=t["version"], phase=t["phase"], trigger_kind=t.get('trigger_kind', 'mention'),

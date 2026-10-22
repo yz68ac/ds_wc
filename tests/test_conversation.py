@@ -1,4 +1,4 @@
-"""主动入场与两轮接话的端到端合成回归，无微信或API请求。"""
+"""主动入场、成员活动续期与可选次数限制的合成回归，无微信或API请求。"""
 from __future__ import annotations
 
 import copy
@@ -97,9 +97,11 @@ class ConversationTests(unittest.TestCase):
             self.ordinary('你说得有点意思')
             self.decision()
             self.confirm()
-        self.assertFalse(self.bot.journal.get('proactive_session'))
+        self.assertEqual(self.bot.journal.get('proactive_session')['followups'], 2)
         self.assertEqual(self.bot.journal.get('proactive_entries'), [first_entry])
         self.now = first_entry+300
+        self.bot.tick()  # 安静到期后，之后的新消息才可重新入场。
+        self.now += 10
         self.ordinary('ds又有个事能接话')
         self.assertEqual(self.bot.proactive.pending['mode'], 'entry')
 
@@ -113,19 +115,21 @@ class ConversationTests(unittest.TestCase):
         self.assertEqual(self.bot.proactive.pending['source_ids'], [row['local_id']])
         self.assertEqual(self.bot.proactive.pending['mode'], 'entry')
 
-    def test_changed_group_conversation_can_enter_after_recent_mention_reply(self):
+    def test_changed_group_conversation_stays_in_participation_and_can_change_recipient(self):
         self.answer_mention()
         self.now += 10
         self.ordinary('我们今天又输了几把', sender='wxid_other')
+        self.decision(speak=False)
         self.ordinary('我也差不多', sender='wxid_third')
         self.now += 10
         row = self.ordinary('看来得换个打法了', sender='wxid_other')
-        self.assertFalse(self.bot.journal.get('proactive_session'))
-        self.assertEqual(self.bot.proactive.pending['reason'], 'small_conversation')
+        self.assertTrue(self.bot.journal.get('proactive_session'))
+        self.assertEqual(self.bot.proactive.pending['mode'], 'followup')
         self.assertNotIn(1, self.bot.proactive.pending['source_ids'])
         self.assertIn(row['local_id'], self.bot.proactive.pending['source_ids'])
 
     def test_hourly_entry_budget_still_blocks_after_normal_mention_reply(self):
+        self.cfg['proactive']['max_entries_per_hour'] = 3  # 保留显式启用旧限制的兼容能力。
         self.cfg['proactive']['conversation']['enabled'] = False
         with self.bot.journal.db:
             self.bot.journal.set('proactive_entries', [self.now-400, self.now-800, self.now-1200])
@@ -184,7 +188,8 @@ class ConversationTests(unittest.TestCase):
         self.ordinary('ds说得对吧', mentioned_users=['wxid_other'])
         self.assertFalse(self.jobs)
 
-    def test_two_followups_bypass_five_minute_silence_then_stop(self):
+    def test_optional_two_followup_limit_still_works(self):
+        self.cfg['proactive']['conversation']['max_followups'] = 2
         self.enter()
         for count in range(1, 3):
             self.now += 10
@@ -206,13 +211,15 @@ class ConversationTests(unittest.TestCase):
         self.ordinary('嗯')
         self.decision(speak=False)
         self.assertEqual(len(self.sends()), 1)
-        self.assertFalse(self.bot.journal.get('proactive_session'))
+        self.assertTrue(self.bot.journal.get('proactive_session'))
 
-    def test_unrelated_member_does_not_become_a_reply_but_name_can_join(self):
+    def test_any_member_can_join_and_model_can_ignore_unrelated_message(self):
         self.enter()
         self.now += 10
         self.ordinary('晚饭吃什么', sender='wxid_other')
-        self.assertIsNone(self.bot.proactive.job)
+        self.assertEqual(self.bot.proactive.pending['mode'], 'followup')
+        self.decision(speak=False)
+        self.assertTrue(self.bot.journal.get('proactive_session'))
         self.now += 10
         row = self.ordinary('ds这句说得还行', sender='wxid_other')
         self.assertEqual(self.bot.proactive.pending['source_ids'], [row['local_id']])
@@ -266,7 +273,7 @@ class ConversationTests(unittest.TestCase):
         self.assertEqual(len(self.sends()), 1)
         self.assertEqual(self.bot.proactive.state()['outcome'], 'context_changed')
 
-    def test_silence_causes_no_calls_and_expiry_backs_off_entry(self):
+    def test_silence_expires_without_calls_or_extra_ten_minute_backoff(self):
         self.enter()
         count = len(self.jobs)
         self.now += 121
@@ -275,9 +282,11 @@ class ConversationTests(unittest.TestCase):
         self.assertEqual(len(self.jobs), count)
         self.now += 200
         self.ordinary('ds在吗')
-        self.assertEqual(len(self.jobs), count)
+        self.assertEqual(len(self.jobs), count+1)
+        self.assertEqual(self.bot.proactive.pending['mode'], 'entry')
 
     def test_hourly_budget_blocks_entry_and_rolls_over(self):
+        self.cfg['proactive']['max_entries_per_hour'] = 3
         with self.bot.journal.db:
             self.bot.journal.set('proactive_entries', [self.now-100, self.now-200, self.now-300])
         self.ordinary('ds你怎么看')
@@ -312,7 +321,7 @@ class ConversationTests(unittest.TestCase):
         self.bot.tick()
         self.assertEqual(len(self.bot.journal.get('proactive_entries')), 1)
 
-    def test_real_mention_preempts_followup_and_final_ack_opens_fresh_session(self):
+    def test_real_mention_preempts_followup_and_opens_window_at_intake(self):
         self.enter()
         self.now += 10
         self.ordinary('接着说呀')
@@ -320,11 +329,13 @@ class ConversationTests(unittest.TestCase):
         row = self.add(4, sender='wxid_other')
         self.bot.tick()
         self.assertTrue(old.closed)
-        self.assertFalse(self.bot.journal.get('proactive_session'))
+        self.assertEqual(self.bot.journal.get('proactive_session')['origin'], 'mention')
+        expires = self.bot.journal.get('proactive_session')['expires_at']
         self.jobs[-1].result = dict(ok=True, reply='正常回答真实提问')
         self.bot.tick()
         self.confirm()
         self.assertEqual(self.bot.journal.get('proactive_session')['participant'], row['sender'])
+        self.assertEqual(self.bot.journal.get('proactive_session')['expires_at'], expires)
         self.assertEqual(len(self.bot.journal.get('proactive_entries')), 1)
 
     def test_database_failure_before_send_discards_optional_reply_and_keeps_intake(self):

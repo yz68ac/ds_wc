@@ -157,7 +157,9 @@ class WeChatDeepSeekBot:
             now, old_cursor = time.time(), self.last_local_id
             events = self.journal.intake(rows, lambda m: self._accept(m, now), now,
                                          float(self.cfg["queue"]["debounce_seconds"]),
-                                         describe=lambda m: self._intake_metadata(m, now))
+                                         describe=lambda m: self._intake_metadata(m, now),
+                                         observe=(lambda m, accepted: self.proactive.observe(m, accepted, now))
+                                         if self.proactive else None)
             for event in events:
                 if event["real_mention"] or event["text_has_at"] or event["kind"] == "pat":
                     log.info("接收判定 metadata=%s", json.dumps(event, ensure_ascii=False))

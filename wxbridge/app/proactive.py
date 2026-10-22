@@ -7,6 +7,7 @@ import logging
 from wxbridge.ai.proactive import activity, addresses_bot, build_prompt, parse_decision, timeline
 from wxbridge.ai.memory import member_labels
 from wxbridge.wechat.pats import is_pat
+from wxbridge.app.conversation import SESSION_POLICY, observation_updates
 
 log = logging.getLogger('wxbridge')
 
@@ -22,6 +23,12 @@ class ProactiveController:
                     evaluations=0, last_evaluated_at=0, last_checked_at=0,
                     last_checked_id=bot.last_local_id, outcome='waiting_new_messages', error=''))
         self.update(enabled=self.cfg['enabled'])
+        session = bot.journal.get('proactive_session')
+        if session and session.get('policy') != SESSION_POLICY:
+            # 旧计时由机器人回复续期，无法当作成员活动证据；只迁移会话，不改收发任务。
+            self.close_session('policy_updated', 0)
+        with bot.journal.db:
+            bot.journal.set('proactive_entry_not_before', 0)  # 清除旧版无人回应的额外十分钟退让。
         if self.state().get('outcome') == 'evaluating':
             self.update(outcome='interrupted')
 
@@ -46,8 +53,9 @@ class ProactiveController:
         value = self.bot.journal.get('proactive_session')
         if not value:
             return None
+        limit = self.cfg['conversation']['max_followups']
         if (not self.cfg['conversation']['enabled'] or now >= value['expires_at']
-                or value['followups'] >= self.cfg['conversation']['max_followups']):
+                or (limit and value['followups'] >= limit)):
             self.close_session('expired' if now >= value['expires_at'] else 'finished', now)
             return None
         return value
@@ -57,9 +65,18 @@ class ProactiveController:
         if not value:
             return
         with self.bot.journal.db:
-            if value and value['origin'] == 'entry' and not value['followups'] and reason == 'expired':
-                self.bot.journal.set('proactive_entry_not_before', now+2*self.cfg['entry_cooldown_seconds'])
             self.bot.journal.set('proactive_session', None)
+            self.bot.journal.set('proactive_entry_floor', max(self.bot.last_local_id,
+                self.bot.journal.get('proactive_entry_floor', 0)))
+
+    def observe(self, message, accepted, now):
+        """仅在 Journal.intake 的接收事务内调用，不另开事务或查询微信数据库。"""
+        changes = observation_updates(message, accepted, now, self.bot.journal.get('proactive_session'),
+            settings=self.cfg, account=self.bot.store.self_wxid)
+        for key, value in changes.items():
+            if key == 'proactive_entry_floor':
+                value = max(value, self.bot.journal.get(key, 0))
+            self.bot.journal.set(key, value)
 
     def context(self, now):
         raw = self.bot.store.messages_in_window(self.bot.chat_id, int(now-self.cfg['window_seconds']), int(now))
@@ -77,42 +94,39 @@ class ProactiveController:
 
     def entry_block_reason(self, now):
         entries = self.bot.journal.get('proactive_entries', [])
-        if len([t for t in entries if 0 <= now-t < 3600]) >= self.cfg['max_entries_per_hour']:
+        limit = self.cfg['max_entries_per_hour']
+        if limit and len([t for t in entries if 0 <= now-t < 3600]) >= limit:
             return 'entry_budget'
         if entries and now-max(entries) < self.cfg['entry_cooldown_seconds']:
             return 'entry_cooldown'
-        if now < self.bot.journal.get('proactive_entry_not_before', 0):
-            return 'entry_backoff'
         return ''
 
     def candidate(self, rows, now):
         state = self.state()
         # 已发言前的旧提问仍用于理解语境，不重新作为主动回复目标。
-        floor = max(state['last_evaluated_id'], self.latest_own_id)
+        session = self.session(now)
+        floor = max(state['last_evaluated_id'], self.latest_own_id,
+                    self.bot.journal.get('proactive_entry_floor', 0), session['start_id'] if session else 0)
         fresh = [m for m in rows if m['local_id'] > floor
                  and now-m['time'] <= self.cfg['reply_ttl_seconds']]
         if not fresh:
             self.update(outcome='waiting_new_messages')
             return None
         account = self.bot.store.self_wxid
-        session = self.session(now)
         if session:
-            if self.latest_own_id > session['anchor_id']:
+            if self.latest_own_id > max(session['anchor_id'], self.bot.journal.get('last_confirmed_outbound_id', 0)):
                 self.close_session('manual_own_message', now)
                 self.update(outcome='manual_own_message')
                 return None
             replies = [m for m in fresh if m['local_id'] > session['anchor_id']
                        and not (m.get('mentioned_users') and account not in m['mentioned_users'])
-                       and (not (m.get('reference') or {}).get('sender') or m['reference']['sender'] == account)
-                       and (m['sender'] == session['participant'] or addresses_bot(m, self.bot.cfg, account))]
+                       and (not (m.get('reference') or {}).get('sender') or m['reference']['sender'] == account)]
             if replies:
                 return dict(mode='followup', reason='conversation', source_ids=[m['local_id'] for m in replies],
-                            anchor_id=session['anchor_id'], expires_at=min(session['expires_at'], now+self.cfg['reply_ttl_seconds']))
-            if len(fresh) >= self.cfg['min_new_messages']:
-                self.close_session('conversation_moved_on', now)
-            else:
-                self.update(outcome='waiting_conversation_reply')
-                return None
+                            anchor_id=session['anchor_id'], session_id=session['session_id'],
+                            expires_at=min(session['expires_at'], now+self.cfg['reply_ttl_seconds']))
+            self.update(outcome='waiting_conversation_reply')
+            return None
         blocked = self.entry_block_reason(now)
         if blocked:
             self.update(outcome=blocked)
@@ -156,7 +170,8 @@ class ProactiveController:
                 reason = 'activity_changed'
             elif data.get('mode') == 'followup':
                 session = self.session(now)
-                if not session or session['anchor_id'] != data['anchor_id']:
+                if (not session or session['anchor_id'] != data['anchor_id']
+                        or session['session_id'] != data.get('session_id')):
                     reason = 'conversation_finished'
                 elif newer:
                     reason = 'context_changed'
@@ -191,7 +206,8 @@ class ProactiveController:
     def priority(self, now):
         if self.foreground() or not self.cfg['enabled']:
             self.cancel('foreground_or_disabled')
-            self.close_session('foreground_or_disabled', now)
+            if not self.cfg['enabled']:
+                self.close_session('disabled', now)
             for task in self.bot.journal.tasks():
                 if task.get('trigger_kind') == 'proactive' and not task.get('intent'):
                     self.bot.journal.discard_proactive(task['id'], 'foreground_or_disabled')
@@ -215,8 +231,6 @@ class ProactiveController:
                     raise ValueError('proactive_worker_failed')
                 decision = parse_decision(json.dumps(result['decision'], ensure_ascii=False), self.cfg['max_reply_chars'], self.bot.cfg)
                 if not decision['speak']:
-                    if pending['mode'] == 'followup':
-                        self.close_session('silent', now)
                     self.update(outcome='silent', error='')
                     return
                 if now > expires:
