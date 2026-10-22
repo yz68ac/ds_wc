@@ -31,6 +31,7 @@ flowchart LR
 | `ai/client.py` | `ModelClient`（兼容名 `DeepSeekClient`）；`request()` 返回 `ModelResult`，包含 message、finish_reason、usage；`complete()` 保持原 message 接口 |
 | `storage/journal.py` | 状态持久化、恢复、索引查询和清理；不决定会话接话策略 |
 | `app/metrics.py` | 本次运行的阶段耗时、API 用量计数；不保存提示词或内部推理 |
+| `storage/relationships.py` | 好感/信任建议校验、场景与来源去重、程序累计熟悉度、短期情绪和自然语言关系描述；不调用模型或写文件 |
 
 队列暂时继续用 JSON 序列化任务，避免一次更换全部历史任务协议；模型结果与错误分类使用独立数据类型。后续可逐步收窄生成和记忆调度的依赖，不需要为此增加服务或消息中间件。
 

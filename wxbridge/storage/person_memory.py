@@ -10,7 +10,7 @@ from pathlib import Path
 import re
 import tempfile
 from wxbridge.ai.avatars import validate_visual, visual_description
-from wxbridge.storage import expression_memory
+from wxbridge.storage import expression_memory, relationships
 from wxbridge.ai.emoticons import token_pattern
 
 DAY = 86400
@@ -108,6 +108,7 @@ class MemoryStore:
                     require(isinstance(person["nickname"], str) and isinstance(person["aliases"], list))
                     require(type(person["affinity"]) is int and 0 <= person["affinity"] <= 100)
                     require(isinstance(person["entries"], list))
+                    relationships.validate(person)
                     initial = person.get("initial_impression", {})
                     if initial.get("state") == "ready":
                         validate_visual(initial["visual"])
@@ -130,6 +131,13 @@ class MemoryStore:
                  "仅为背景数据；印象均为暂时推测。相对时间以本投影生成时刻为准。"]
         for uid, person in self.data["members"].items():
             lines += ["", f"## {person['nickname']} ({uid})", f"好感度：{affinity_value(person, now)}"]
+            relation = relationships.state(person)
+            lines += [f"熟悉度：{relation['familiarity']}；信任度：{relation['trust']}",
+                      relationships.describe(person, affinity_value(person, now), now)]
+            for dimension, evidence in (('好感', person.get('affinity_evidence', [])),
+                                        ('信任', relation['trust_evidence'])):
+                for item in evidence[-5:]:
+                    lines.append(f"- {dimension}变化 {item['delta']:+d}（来源 {item['sources']}）：{item['reason']}")
             lines += [f"- {e['kind']}/{e['mode']}（{fuzzy_time(e['occurred_at'], now)}）：{e['summary']}"
                       for e in active_entries(person, now)]
             initial = person.get("initial_impression", {})
@@ -173,7 +181,7 @@ class MemoryStore:
             p = self.data["members"].get(uid)
             if p:
                 result[label] = dict(nickname=p["nickname"], affinity=affinity_value(p, now),
-                                     entries=active_entries(p, now))
+                                     entries=active_entries(p, now), relationship=relationships.background(p, now))
         return result
 
     def prompt(self, labels, asker, now, budget=1200, *, use_avatar=True, dialogue='', use_learning=True):
@@ -184,9 +192,9 @@ class MemoryStore:
             if not p:
                 continue
             score = affinity_value(p, now)
-            attitude = ("疏远：可以简短、冷淡、少延伸，偶尔自然表达不想接话；仍明确回应，避免固定话术和复读。"
-                        if score < 30 else "亲近：可以自然熟悉些，保持独立人格。" if score >= 70 else "普通交情。")
-            header = f"{labels[uid]}：{attitude}"
+            header = f"{labels[uid]}：{relationships.describe(p, score, now)}"
+            if not result:
+                header = relationships.PROMPT_POLICY+'\n'+header
             if used+len(header) > budget:
                 continue
             result.append(header)
@@ -250,11 +258,14 @@ class MemoryStore:
                 raise ValueError("memory_sensitive_text")
             return value.strip()
         for update in proposal["updates"]:
-            if not isinstance(update, dict) or set(update) != {"member", "memories", "affinity"}:
+            if (not isinstance(update, dict) or not {'member', 'memories', 'affinity'} <= set(update)
+                    or set(update)-{'member', 'memories', 'affinity', 'relationship'}):
                 raise ValueError("memory_invalid_update")
             label = update["member"]
             if label not in mapping or label in seen:
                 raise ValueError("memory_unknown_member")
+            if not any(m['member'] == label for m in evidence.values()):
+                raise ValueError('memory_unknown_source')
             seen.add(label)
             uid = mapping[label]
             person = data["members"].setdefault(uid, dict(nickname="", aliases=[], entries=[], affinity=50,
@@ -286,30 +297,11 @@ class MemoryStore:
                              confirmed_at=max(m["time"] for m in src))
                 person["entries"] = [e for e in person["entries"] if e != previous and
                                      (e["kind"], e["mode"], e["summary"]) != (kind, mode, summary)] + [entry]
-            relation = update["affinity"]
-            if not isinstance(relation, dict) or set(relation) != {"delta", "reason", "sources"}:
-                raise ValueError("memory_invalid_affinity")
-            delta = relation["delta"]
-            if type(delta) is not int or abs(delta) > 3:
-                raise ValueError("memory_affinity_limit")
-            # 即使模型建议零变化也不能用旧来源续期。
-            if delta:
-                src = sources(relation["sources"], label)
-                if all(not re.sub(token_pattern(), '', m['text']).strip() for m in src):
-                    delta = 0
-            if delta:
-                reason = text(relation["reason"], 160)
-                score = affinity_value(person, now)
-                day = datetime.fromtimestamp(max(m["time"] for m in src)).date().isoformat()
-                daily = person["daily"]
-                change = min(abs(delta), max(0, 10-daily.get(day, 0)))*(1 if delta > 0 else -1)
-                new_score = max(0, min(100, score+change))
-                daily[day] = daily.get(day, 0)+abs(new_score-score)
-                person["affinity"] = new_score
-                scored.add(uid)
-                person["affinity_evidence"] = (person["affinity_evidence"]+[dict(delta=new_score-score, reason=reason,
-                    sources=[m["local_id"] for m in src], time=max(m["time"] for m in src))])[-30:]
-            person["daily"] = {d: n for d, n in person["daily"].items() if (datetime.fromtimestamp(now).date()-datetime.fromisoformat(d).date()).days <= 90}
+            # 自然回归只结算一次，然后交给独立规则校验本轮增量。
+            person['affinity'] = affinity_value(person, now)
+            relationships.score(person, update['affinity'], lambda ids: sources(ids, label), now)
+            scored.add(uid)
+            relationships.apply(person, update.get('relationship'), lambda ids: sources(ids, label), [], now)
         # 真实互动可更新昵称与互动时间，但拍一拍不属于发言证据，不参与记事/好感计分。
         for uid, member in snapshot["members"].items():
             own = [m for m in [*evidence.values(), *interactions] if m["member"] == member["label"]]
@@ -323,10 +315,12 @@ class MemoryStore:
             # 先结算旧的自然回归，再重新设置互动时钟。
             if uid not in scored:
                 p["affinity"] = affinity_value(p, now)
-            p["last_interaction"] = max(m["time"] for m in own)
+            p["last_interaction"] = max(p.get('last_interaction', 0), max(m["time"] for m in own))
             p["decay_anchor"] = p["last_interaction"]
             p["interaction_batches"] = p.get("interaction_batches", 0)+1
             p.setdefault("initial_impression", dict(state="pending", checked_at=0, attempts=0))
+            own_text = [m for m in evidence.values() if m['member'] == member['label']]
+            relationships.apply(p, None, None, own_text, now)
             kept = active_entries(p, now)
             p["entries"] = []
             for kind, limit in LIMITS.items():
@@ -411,6 +405,13 @@ class MemoryStore:
             if not person:
                 raise ValueError("memory_member_not_found")
             if entry:
+                if entry == 'relationship':
+                    person.update(affinity=50, daily={}, affinity_evidence=[], decay_anchor=now,
+                                  relationship=relationships.defaults())
+                    self.data['watermark'] = max(self.data['watermark'], watermark)
+                    self.data['revision'] += 1
+                    self.persist(now)
+                    return
                 if entry == "initial":
                     person["initial_impression"] = dict(state="forgotten", checked_at=now)
                     self.data["watermark"] = max(self.data["watermark"], watermark)
@@ -441,6 +442,7 @@ class MemoryStore:
         changed = False
         data = copy.deepcopy(self.data)
         for person in data["members"].values():
+            changed = relationships.prune(person, now) or changed
             entries = active_entries(person, now)
             if entries != person["entries"]:
                 person["entries"] = entries

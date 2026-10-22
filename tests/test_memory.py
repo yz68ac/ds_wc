@@ -70,13 +70,19 @@ class MemoryTests(unittest.TestCase):
 
     def test_score_daily_absolute_cap_sources_dedupe_and_decay(self):
         for i, delta in enumerate([3, -3, 3, 3, 3], 1):
-            self.memory.apply(suggestion(source=f"m{i}", delta=delta), self.snap(i), NOW)
+            when = NOW+i*601
+            value = self.snap(i, when=when)
+            value['messages'][0]['text'] = f'第{i}次独立交流'
+            proposal = suggestion(source=f'm{i}', delta=delta)
+            proposal['updates'][0]['affinity']['reason'] = f'第{i}个不同事件'
+            self.memory.apply(proposal, value, when)
         p = self.memory.data["members"]["wxid_a"]
         self.assertEqual(p["affinity"], 54)
         self.assertEqual(sum(p["daily"].values()), 10)
-        self.assertEqual(affinity_value(p, NOW+20*DAY), 54)
-        self.assertEqual(affinity_value(p, NOW+21*DAY), 53)
-        self.assertEqual(affinity_value(p, NOW+100*DAY), 50)
+        anchor = p['last_interaction']
+        self.assertEqual(affinity_value(p, anchor+20*DAY), 54)
+        self.assertEqual(affinity_value(p, anchor+21*DAY), 53)
+        self.assertEqual(affinity_value(p, anchor+100*DAY), 50)
         old = self.snap(5)
         self.assertEqual(old["messages"], [])
         with self.assertRaises(ValueError):
