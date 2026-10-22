@@ -74,6 +74,8 @@ python3 -m wxbridge queue-status
 
 记忆维护命令见 [人物记忆](MEMORY.md) 和 [语境学习](LEARNING.md)。修改类维护先停止监听并取得同一锁。
 
+SSH交互状态面板使用 `python3 -m wxbridge status`；root可在源码目录执行 `runuser -u wxbridge -- python3 -m wxbridge status`。支持五个页面、滚动、暂停和手动刷新；退出只结束查看。非交互会话用 `status --once`。完整按键和状态含义见[状态面板](STATUS.md)。
+
 ## 更新与恢复
 
 先跑离线检查、备份旧代码，再停止 `wxbridge-bot.service` 并记录接收游标、账号、群及未决发送状态。成套更新源码、默认 JSON、脚本和测试；保留服务器实际 `config.json`、`.env`、人格、记忆、运行队列及接收游标。不要用全目录清空或覆盖部署破坏这些数据。

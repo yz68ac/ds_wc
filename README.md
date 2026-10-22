@@ -74,7 +74,7 @@ docs/                     配置、架构和部署说明
 
 初次配置按 [部署说明](docs/DEPLOYMENT.md) 准备专用用户、原生微信、私有 `tmpfs,noswap`、会话与账号绑定。完整运行不能仅靠 `pip install`。配置项变更通常需重启监听；同一路径的人格文件修改从下一次生成生效。
 
-`python -m wxbridge run --dry-run` 关闭发送，仍可能调用 API；纯离线检查使用上面的测试脚本。`run --send` 显式启用发送。不要同时启动两个监听器或绕过草稿、目标群和发送确认校验。常规状态检查使用 `queue-status`，不输出正文。
+`python -m wxbridge run --dry-run` 关闭发送，仍可能调用 API；纯离线检查使用上面的测试脚本。`run --send` 显式启用发送。不要同时启动两个监听器或绕过草稿、目标群和发送确认校验。SSH交互查看使用 `python3 -m wxbridge status`，无终端用 `status --once`；原 `queue-status` JSON接口保留。[面板操作说明](docs/STATUS.md)。
 
 ## 文档
 

@@ -15,6 +15,8 @@ wxbridge/
 │   ├── conversation.py    确认后的会话变化纯函数
 │   ├── task_policy.py     生成错误分类，不依赖具体传输
 │   ├── metrics.py         有界耗时和API用量统计
+│   ├── monitor.py         只读状态/服务/安全事件采集及文本页面
+│   ├── terminal.py        SSH curses交互、切页、滚动和刷新
 │   ├── build_info.py      运行提交号和有效配置哈希
 │   ├── proactive.py       主动接话判断、前台优先和发送前复核
 │   ├── learning.py        活跃闲聊学习、任务登记和去重

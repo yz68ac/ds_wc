@@ -26,6 +26,9 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--out", default="")
     scan.add_argument("--pid", type=int, default=None)
     sub.add_parser("queue-status", help="只读队列元数据，不显示正文")
+    status = sub.add_parser('status', help='SSH 只读交互面板：概览、队列、模型、记忆和事件')
+    status.add_argument('--once', action='store_true', help='输出一次文本快照，无需交互终端')
+    status.add_argument('--interval', type=float, default=1, help='面板刷新秒数，范围0.5–30，默认1')
     memory = sub.add_parser("memory", help="人物记忆维护；修改前须停止监听")
     memory.add_argument("action", choices=["status", "show", "correct", "forget", "clear"])
     memory.add_argument("--member", help="稳定 wxid；show 不填则显示全部")
@@ -49,6 +52,11 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         cfg = load_config(args.config)
+        if args.command == 'status':
+            if not 0.5 <= args.interval <= 30:
+                raise ValueError('status --interval 必须在0.5–30秒之间')
+            from wxbridge.app.terminal import run_status
+            return run_status(cfg, once=args.once, interval=args.interval)
         if args.command == "memory":
             return memory_command(cfg, args)
         if args.command == "queue-status":
