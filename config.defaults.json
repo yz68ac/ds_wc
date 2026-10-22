@@ -15,6 +15,9 @@
   "queue": {
     "debounce_seconds": 0,
     "generation_concurrency": 2,
+    "generation_retries": 2,
+    "generation_retry_delay_seconds": 3,
+    "completed_retention": 200,
     "file": "/run/wxbridge-trial/queue.sqlite3"
   },
   "proactive": {
@@ -70,6 +73,12 @@
     "timeout_seconds": 60,
     "max_tokens": 1200,
     "system_prompt_file": "prompts/system.md"
+  },
+  "models": {
+    "reply": {},
+    "participation": {},
+    "memory": {},
+    "avatar": {}
   },
   "search": {
     "enabled": true,

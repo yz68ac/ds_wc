@@ -27,7 +27,7 @@
 | `poll_interval_seconds` | `2.0` | 接收调度等待上限；为了及时封批，实际最多等待 0.5 秒；API/UI 在子进程，不阻塞接收 |
 | `target.cooldown_seconds` | `8` | 上一个分片在数据库确认发出后的最短间隔；冷却中的任务等待，设 `0` 取消等待 |
 | `target.max_message_age_seconds` | `90` | 仅首次接收时过滤过旧触发，已接纳任务不因排队过期；未来/无效时间仍拒绝 |
-| `target.context_max_chars` | `24000` | 格式化用户提示词的字符预算，包含上下文和触发等；超出则取消回复，非截断历史；正值启用预算 |
+| `target.context_max_chars` | `24000` | 格式化用户提示词的字符预算；超出返回失败说明，不截断历史；正值启用预算 |
 | `target.max_reply_chars` | `1800` | 每条发送分片的字符上限，超过会分多条；不是整次答案的总长度限制，使用正整数 |
 
 提示词要求常规闲聊、日常问答约 10 字、尽量不超过 30 字；专业问题按需要展开。它是模型表达偏好，不强行截字。确需分两条时由模型用一个空行分成两段，发送层保持顺序、逐条确认与原冷却；代码块中的空行保留，超长内容仍按传输上限分片。`max_tokens` 是生成 token 上限，`max_reply_chars` 是微信发送分片上限，都不限制人格提示词文件长度。
@@ -47,7 +47,7 @@
 | `base_url` | `https://api.deepseek.com` | API 基础地址，程序会附加 `/chat/completions` |
 | `api_key_env` | `DEEPSEEK_API_KEY` | 保存 API Key 的环境变量名；密钥放源码根目录的 `.env` 或进程环境，不在 JSON 中直接填写 |
 
-每次模型请求最多尝试三次、重试间隔 1.5/3 秒目前写在 `ai/client.py`，没有配置项；开启搜索后还受整体时限约束。日志级别、日志 2 MiB 轮换及备份数量同样不是 JSON 配置项。
+生成重试改由持久队列调度，可配置次数和等待时间，见下方“生成重试与记录保留”；开启搜索后，每次尝试还受整体搜索时限约束。日志级别、日志 2 MiB 轮换及备份数量不是 JSON 配置项。
 
 根目录 `.env` 的格式如下，等号后填实际密钥：
 
@@ -65,7 +65,7 @@ DEEPSEEK_API_KEY=
 "system_prompt_file": "prompts/system.md"
 ```
 
-路径相对 `config.json` 所在目录；文件支持 UTF-8 BOM。程序完整读取文件，不做长度截断，也不计入 `context_max_chars` 的用户提示词预算；总输入仍受模型上下文容量约束。文件不存在、编码错误或内容全为空白时取消该次回复，不静默换回其他人设。JSON 配置、模型和文件路径的变更仍需重启。
+路径相对 `config.json` 所在目录；文件支持 UTF-8 BOM。程序完整读取文件，不做长度截断，也不计入 `context_max_chars` 的用户提示词预算；总输入仍受模型上下文容量约束。文件不存在、编码错误或内容全为空白时返回失败说明，不静默换回其他人设。JSON 配置、模型和文件路径的变更仍需重启。
 
 ## 发送与界面
 
@@ -156,3 +156,37 @@ dry-run 使用独立的 `.dry-run` 队列及 `dry-run/live-status.json`，不消
 ## 环境变量覆盖
 
 `WX_GROUP` 覆盖目标群，`WX_DB_DIR` 覆盖数据库目录，`DEEPSEEK_MODEL` 覆盖模型，`DEEPSEEK_BASE_URL` 覆盖 API 地址。API Key 的变量名由 `api_key_env` 指定。
+
+## 独立模型角色
+
+`models` 下有 `reply`、`participation`、`memory`、`avatar` 四个覆盖对象，默认均为空，因此原配置继续生效。主回复继承 `deepseek`；记忆继承 `deepseek` 的接口和 `memory` 的模型/思考/预算；头像默认继承旧记忆模型且关闭思考；参与判断继承 `deepseek` 的接口与模型、关闭思考、256 tokens，超时继承 `proactive.timeout_seconds`。每个角色最后再应用自己的覆盖值，不会修改其他角色；`models.reply` 也不会覆盖其他角色的设置。
+
+可覆盖字段：`provider`、`base_url`、`api_key_env`、`model`、`thinking`、`reasoning_effort`、`temperature`、`timeout_seconds`、`max_tokens`。角色覆盖优先于前面的旧配置和环境覆盖，修改后重启监听。示例：
+
+```json
+{
+  "models": {
+    "participation": {
+      "provider": "deepseek",
+      "model": "你的判断模型",
+      "api_key_env": "PARTICIPATION_API_KEY",
+      "thinking": "disabled",
+      "timeout_seconds": 10
+    }
+  }
+}
+```
+
+对应密钥只写项目根目录 `.env`。`provider=deepseek` 使用现有 DeepSeek 参数；`provider=openai` 表示 Chat Completions 兼容协议，不发送 DeepSeek 专有 `thinking` 字段。具体服务仍须支持所选模型及参数；这里没有实现 Anthropic Messages 接口。`base_url` 填 `/chat/completions` 之前的地址，例如服务要求 `/v1/chat/completions` 时填到 `/v1`。
+
+参与角色目前仍一次请求同时判断是否参与、生成短句；只是可以独立选模型，并未额外增加一次判断请求。真实 @ 不经过这个判断。搜索工具仍单独使用 `search.base_url` 和旧 `deepseek.api_key_env` 指定的 DeepSeek Key，不会自动拿新回复服务的 Key 调用搜索。
+
+## 生成重试与记录保留
+
+| 配置项 | 默认值 | 行为 |
+| --- | --- | --- |
+| `queue.generation_retries` | `2` | 每个问题版本最多额外重试两次；0表示不重试 |
+| `queue.generation_retry_delay_seconds` | `3` | 瞬时故障重试前等待；主进程继续接收 |
+| `queue.completed_retention` | `200` | 每分钟裁剪已完成记录；0表示不保留，仍保护未退出的UI工作进程关联行 |
+
+重试预算和下次尝试时间随队列恢复。永久错误直接走简短失败说明，说明也必须经过发送意图与发出记录确认；它不会触发记忆整理。发送结果不明的暂停仍保留，生成重试配置不会绕过它。更多状态与诊断字段见 [架构说明](ARCHITECTURE.md)。

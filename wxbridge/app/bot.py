@@ -22,6 +22,11 @@ from wxbridge.wechat.pats import is_pat
 from wxbridge.app.workers import ProcessJob
 from wxbridge.app.proactive import ProactiveController
 from wxbridge.app.learning import enqueue_if_active, eligible_messages
+from wxbridge.app.task_policy import GenerationFailure
+from wxbridge.app.delivery import DeliveryController
+from wxbridge.app.metrics import Metrics
+from wxbridge.app.build_info import runtime_identity
+from wxbridge.ai.roles import model_settings
 
 log = logging.getLogger("wxbridge")
 
@@ -64,6 +69,7 @@ class WeChatDeepSeekBot:
         self.journal = Journal(cfg["queue"]["file"],
                                {"account": self.store.self_wxid, "chat": self.chat_id}, int(baseline))
         self.journal.recover(time.time())
+        self.delivery = DeliveryController(cfg, self.journal, self.store, self.chat_id, self.chat_title)
         self.generators = {}
         self.ui_job = None
         self.memory, self.memory_job, self.memory_error = None, None, ""
@@ -91,6 +97,9 @@ class WeChatDeepSeekBot:
         self.job_factory = ProcessJob
         self.status_path = Path(cfg["state_file"]).parent / "live-status.json"
         self.proactive = ProactiveController(self) if 'proactive' in cfg else None
+        self.maintenance_at = 0
+        self.metrics, self.build = Metrics(), runtime_identity(cfg)
+        self.status_signature, self.status_written_at = None, 0
 
     _chunk = staticmethod(chunk_text)
 
@@ -167,6 +176,7 @@ class WeChatDeepSeekBot:
             result = job.poll()
             if result is None:
                 continue
+            self.metrics.record_models(result.get('model_metrics'))
             if result.get("event") == "search_started":
                 settings = self.cfg.get("search", {})
                 if settings.get("feedback_enabled", True):
@@ -178,19 +188,26 @@ class WeChatDeepSeekBot:
             job.close()
             del self.generators[task_id]
             reply = result.get("reply") or ""
-            error = "generation:" + result.get("error", "EmptyReply") if not result["ok"] or not reply else ""
+            error = "generation:" + GenerationFailure.from_result(result).code if not result["ok"] or not reply else ""
             chunks = reply_chunks(reply, int(self.cfg["target"].get("max_reply_chars", 1800))) if not error else []
-            if self.journal.generated(task_id, version, chunks, error, vision=result.get("vision"), search=result.get("search")):
+            if error:
+                self._generation_failed(task_id, version, result)
+            elif self.journal.generated(task_id, version, chunks, vision=result.get("vision"), search=result.get("search")):
                 log.info("生成结束 task=%s version=%s chunks=%s images=%s error=%s", task_id, version,
                          len(chunks), (result.get("vision") or {}).get("images", 0), error or "none")
         for task in sorted(self.journal.tasks(), key=lambda t: (t["deadline"], t["id"])):
             if len(self.generators) >= int(self.cfg["queue"]["generation_concurrency"]):
                 break
-            if task["generation"] != "pending":
+            if task["generation"] != "pending" or time.time() < task.get('generation_retry_at', 0):
+                continue
+            if task.get('generation_attempts', 0) > self.cfg['queue']['generation_retries']:
+                self._generation_failed(task['id'], task['version'], dict(error='WorkerExited', retryable=False))
                 continue
             if self.memory_job and len(self.generators)+1 >= min(2, int(self.cfg["queue"]["generation_concurrency"])):
                 self._pause_memory()
             task_id, version = task["id"], task["version"]
+            self.journal.start_generation(task_id, version, time.time())
+            task = self.journal.task(task_id)
             try:
                 trigger = task["triggers"][-1]
                 start, end = context_bounds(self.cfg, trigger)
@@ -209,7 +226,7 @@ class WeChatDeepSeekBot:
                         log.warning("跳过记忆背景 category=%s", self.memory_error)
                 prompt = build_prompt(self.cfg, context, trigger, self.chat_title, task["triggers"], memory=memory)
                 echo = "[echo] " + "\n".join(m["text"] for m in task["triggers"]) if self.echo else None
-                timeout = 3 * float(self.cfg["deepseek"].get("timeout_seconds", 60)) + 15
+                timeout = float(model_settings(self.cfg)['timeout_seconds']) + 15
                 if self.cfg.get("search", {}).get("enabled", True) and not self.echo:
                     timeout = float(self.cfg.get("search", {}).get("total_timeout_seconds", 120)) + 15
                 images = []
@@ -235,110 +252,35 @@ class WeChatDeepSeekBot:
                 log.info("开始生成 task=%s version=%s questions=%s references=%s", task_id, version,
                          len(task["triggers"]), sum(isinstance(m.get("reference"), dict) for m in task["triggers"]))
             except Exception as exc:
-                self.journal.generated(task_id, version, [], "generation:" + type(exc).__name__)
+                self._generation_failed(task_id, version, dict(error=type(exc).__name__))
                 log.error("生成未启动 task=%s category=%s", task_id, type(exc).__name__)
 
+    def _generation_failed(self, task_id, version, result):
+        failure = GenerationFailure.from_result(result)
+        settings = self.cfg['queue']
+        self.journal.generation_failure(task_id, version, failure.code, time.time(),
+            retryable=failure.retryable, retries=settings['generation_retries'],
+            delay=settings['generation_retry_delay_seconds'],
+            fallback=format_reply('刚才没接上，等会儿再问我一下。', self.cfg))
+        log.warning('生成失败 task=%s version=%s category=%s retryable=%s',
+                    task_id, version, failure.code, failure.retryable)
+
+    @property
+    def ui_job(self):
+        return self.delivery.job
+
+    @ui_job.setter
+    def ui_job(self, job):
+        self.delivery.job = job
+
     def _ui_result_step(self):
-        if self.ui_job is None:
-            return
-        task_id, part, job = self.ui_job
-        result = job.poll()
-        if result is None:
-            return
-        job.close()
-        self.ui_job = None
-        task = self.journal.task(task_id)
-        metadata = result.get("ui") or {"error": result.get("error", "UIError")}
-        # 发出记录可能比 UI 读回先到达；即使已确认，也保留动作核验元数据。
-        with self.journal.db:
-            task["last_ui"] = metadata
-            self.journal.put(task)
-        log.info("发送操作 task=%s part=%s metadata=%s", task_id, part,
-                 json.dumps(metadata, ensure_ascii=False))
-        if not task["intent"] or task["intent"]["part"] != part:
-            return
-        operation = metadata.get("operation") or {}
-        retryable = {"command_timeout", "command_failed", "activation_failed", "pointer_mismatch", "pointer_unknown", "button_obstructed"}
-        if (not result["ok"] and operation.get("submitted") is False
-                and metadata.get("error") in retryable and task.get("pre_submit_attempts", 0) < 2):
-            with self.journal.db:
-                task.update(intent=None, blocked_reason="", retry_at=time.time()+2,
-                            pre_submit_attempts=task.get("pre_submit_attempts", 0)+1)
-                self.journal.put(task)
-            log.info("提交前失败，安全等待重试 task=%s part=%s attempt=%s", task_id, part, task["pre_submit_attempts"])
-            return
-        with self.journal.db:
-            task["intent"]["deadline"] = time.time() + float(self.cfg["ui"]["send_confirm_timeout_seconds"])
-            task["intent"]["ui"] = metadata
-            self.journal.put(task)
+        self.delivery.poll_result()
 
     def _confirm_step(self):
-        task = self.journal.head()
-        if not task or not task["intent"]:
-            return
-        intent, cursor = task["intent"], task["intent"]["baseline"]
-        text = self.journal.outgoing_text(task)
-        while True:
-            rows = self.store.messages_after(self.chat_id, cursor, limit=100)
-            for msg in rows:
-                if (msg["local_id"] > intent["baseline"] and msg.get("sender") == self.store.self_wxid
-                        and msg.get("type") == 1 and msg.get("text") == text):
-                    self.journal.acknowledge(task["id"], msg["local_id"], time.time(), memory=self.memory is not None,
-                                             proactive_config=self.cfg.get('proactive'))
-                    log.info("发送确认 task=%s part=%s local_id=%s", task["id"], intent["part"], msg["local_id"])
-                    return
-            if len(rows) < 100:
-                break
-            next_cursor = rows[-1]["local_id"]
-            if next_cursor <= cursor:
-                raise StoreError("发送确认分页未前进")
-            cursor = next_cursor
-        if intent["deadline"] is not None and time.time() >= intent["deadline"]:
-            with self.journal.db:
-                code = (intent.get("ui") or {}).get("error", "no_outbound_record")
-                task["blocked_reason"] = "send_confirmation_timeout:" + code + ": 无匹配发出记录，暂停发送，继续接收"
-                self.journal.put(task)
+        self.delivery.confirm(memory=self.memory is not None)
 
     def _send_step(self):
-        if self.ui_job is not None:
-            return
-        task = self.journal.head()
-        if not task or task["phase"] != "queued" or task["intent"] or task["blocked_reason"]:
-            return
-        notice = (task.get("notice") or {}).get("state") == "pending"
-        if not notice and task["generation"] != "ready":
-            return
-        now = time.time()
-        if now < task.get("retry_at", 0):
-            return
-        if now - self.journal.get("last_success", 0) < float(self.cfg["target"].get("cooldown_seconds", 8)):
-            return
-        if self.proactive and not self.proactive.validate(task, now):
-            return
-        if self.cfg["ui"].get("dry_run"):
-            with self.journal.db:
-                if notice:
-                    task["notice"].update(state="confirmed", text="")
-                else:
-                    task.update(phase="done", triggers=[], chunks=[])
-                self.journal.put(task)
-            log.info("模拟完成 task=%s version=%s", task["id"], task["version"])
-            return
-        baseline = self.store.last_local_id(self.chat_id)
-        timeout = float(self.cfg["ui"]["send_confirm_timeout_seconds"])
-        self.journal.intend(task["id"], baseline, now, timeout, kind="notice" if notice else "reply")
-        try:
-            current = self.journal.task(task["id"])
-            job = self.job_factory("send", (self.cfg, self.chat_title, self.journal.outgoing_text(current)), timeout=30)
-            self.ui_job = (task["id"], current["intent"]["part"], job)
-            log.info("发送意图 task=%s version=%s kind=%s part=%s baseline=%s", task["id"], task["version"],
-                     current["intent"]["kind"], current["intent"]["part"], baseline)
-        except Exception as exc:
-            with self.journal.db:
-                current = self.journal.task(task["id"])
-                current["intent"]["deadline"] = now + timeout
-                current["intent"]["ui"] = {"error": type(exc).__name__}
-                self.journal.put(current)
+        self.delivery.send(self.job_factory, self.proactive.validate if self.proactive else None)
 
     def _pause_memory(self):
         if self.memory_job:
@@ -362,6 +304,7 @@ class WeChatDeepSeekBot:
                     return
                 worker.close()
                 self.memory_job = None
+                self.metrics.record_models(result.get('model_metrics'))
                 if not result.get("ok"):
                     raise ValueError("memory_worker_failed")
                 self.memory.apply(result["proposal"], value, now)
@@ -427,7 +370,7 @@ class WeChatDeepSeekBot:
                     if len(value["avatars"]) >= avatars["max_per_batch"]:
                         break
             worker = self.job_factory("memory", (self.cfg, value),
-                                      timeout=self.cfg["memory"]["timeout_seconds"]+2)
+                                      timeout=model_settings(self.cfg, 'memory')['timeout_seconds']+2)
             with self.journal.db:
                 record["state"] = "running"
                 self.journal.put_memory(record)
@@ -449,23 +392,36 @@ class WeChatDeepSeekBot:
             log.warning("记忆延后 category=%s", code)
 
     def tick(self):
-        self._poll_once()
+        with self.metrics.measure('intake'):
+            self._poll_once()
         if self.proactive:
             self.proactive.priority(time.time())
         self.journal.seal(time.time())
-        self._generation_step()
-        self._ui_result_step()
-        self._confirm_step()
+        with self.metrics.measure('generation'):
+            self._generation_step()
+        with self.metrics.measure('ui_result'):
+            self._ui_result_step()
+        with self.metrics.measure('confirmation'):
+            self._confirm_step()
         # 工作进程/数据库操作期间有新消息时，发送前必须再补读并校验版本。
-        self._poll_once()
+        with self.metrics.measure('intake'):
+            self._poll_once()
         if self.proactive:
             self.proactive.priority(time.time())
         self.journal.seal(time.time())
-        self._generation_step()
+        with self.metrics.measure('generation'):
+            self._generation_step()
         if self.proactive:
-            self.proactive.step(time.time())
-        self._send_step()
-        self._memory_step()
+            with self.metrics.measure('participation'):
+                self.proactive.step(time.time())
+        with self.metrics.measure('delivery'):
+            self._send_step()
+        with self.metrics.measure('memory'):
+            self._memory_step()
+        if time.time()-self.maintenance_at >= 60:
+            protected = [*self.generators, *([self.ui_job[0]] if self.ui_job else [])]
+            self.journal.prune_completed(self.cfg['queue']['completed_retention'], protected)
+            self.maintenance_at = time.time()
         self.save_status()
 
     def save_status(self, *, stopped=False):
@@ -475,6 +431,8 @@ class WeChatDeepSeekBot:
                 status["phase"] = "search_notice_pending"
             elif head["phase"] == "open":
                 status["phase"] = "debouncing"
+            elif head.get('generation_retry_at', 0) > time.time():
+                status['phase'] = 'generation_retry_wait'
             elif head["generation"] != "ready":
                 status["phase"] = "generating"
             elif time.time() - status["last_success"] < float(self.cfg["target"].get("cooldown_seconds", 8)):
@@ -486,18 +444,24 @@ class WeChatDeepSeekBot:
                       generation_workers=len(self.generators), context_window_seconds=self.cfg["target"]["context_window_seconds"],
                       require_mention_metadata=True,
                       pat_enabled=self.cfg["target"]["trigger"].get("pat_enabled", True))
+        status.update(build=self.build, metrics=self.metrics.snapshot())
         status["memory"] = dict(enabled=self.memory is not None, running=self.memory_job is not None,
                                 error=self.memory_error, **(self.memory.status(time.time()) if self.memory else {}))
         status['reply_style'] = {key:self.cfg.get('reply_style', {}).get(key, default)
             for key, default in (('wechat_emoticons_enabled', False), ('omit_trailing_period', True))}
         if stopped:
             status["phase"] = "stopped"
+        signature = json.dumps({k: v for k, v in status.items() if k not in ('updated_at', 'metrics')}, sort_keys=True)
+        clock = time.monotonic()
+        if not stopped and signature == self.status_signature and clock-self.status_written_at < 2:
+            return
         self.status_path.parent.mkdir(parents=True, exist_ok=True)
         temp = self.status_path.with_suffix(".tmp")
         with open(temp, "w", encoding="utf-8") as stream:
             os.chmod(temp, 0o600)
             json.dump(status, stream, ensure_ascii=False)
         os.replace(temp, self.status_path)
+        self.status_signature, self.status_written_at = signature, clock
 
     def close(self):
         if self.proactive:

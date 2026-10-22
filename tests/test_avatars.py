@@ -93,7 +93,9 @@ class AvatarTests(unittest.TestCase):
             self.assertIn("data:image/png;base64,", json.dumps(second.args))
             self.assertNotIn("你好", json.dumps(second.args, ensure_ascii=False))
             self.assertEqual(result["avatar_updates"], [update()])
-            self.assertEqual(client.call_args.args[0]["deepseek"]["thinking"], "disabled")
+            self.assertEqual(client.call_args.kwargs['role'], 'avatar')
+            from wxbridge.ai.roles import model_settings
+            self.assertEqual(model_settings(client.call_args.args[0], 'avatar')['thinking'], 'disabled')
 
     def test_visual_api_failure_keeps_text_proposal(self):
         with patch("wxbridge.ai.client.DeepSeekClient") as client:

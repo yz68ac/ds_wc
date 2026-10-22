@@ -1,7 +1,6 @@
 """无数据库/文件副作用的记忆整理输入与结构化模型请求。"""
 from __future__ import annotations
 
-import copy
 import json
 import time
 from pathlib import Path
@@ -82,10 +81,7 @@ def snapshot(cfg, context, triggers, identity, memory, now, *, window=None):
 def extract(cfg, value):
     from wxbridge.ai.client import DeepSeekClient
     settings = cfg["memory"]
-    cfg = copy.deepcopy(cfg)
-    cfg["deepseek"].update(model=settings["model"], thinking=settings["thinking"],
-                           reasoning_effort=settings["reasoning_effort"] if settings["thinking"] == "enabled" else None,
-                           max_tokens=settings["max_tokens"], timeout_seconds=settings["timeout_seconds"])
+    from wxbridge.ai.roles import model_settings
     public = {k: value[k] for k in ("revision", "watermark", "messages", "existing")}
     new_labels = {m["member"] for m in value["messages"]}
     public["members"] = {v["label"]: v["nickname"] for v in value["members"].values()}
@@ -93,7 +89,7 @@ def extract(cfg, value):
     for key in ('dialogue', 'learning_enabled', 'learning_existing', 'learning_source_ids'):
         public[key] = value.get(key, [] if key != 'learning_enabled' else False)
     public['bot_persona'] = system_prompt(cfg)
-    deadline = time.monotonic()+settings["timeout_seconds"]
+    deadline = time.monotonic()+model_settings(cfg, 'memory')['timeout_seconds']
     proposal = {"updates": []}
     if value["messages"]:
         path = Path(settings['system_prompt_file'])
@@ -102,7 +98,7 @@ def extract(cfg, value):
         instructions = path.read_text(encoding='utf-8-sig')
         if not instructions.strip():
             raise ValueError('memory_prompt_empty')
-        answer = DeepSeekClient(cfg).complete([{"role": "system", "content": INSTRUCTIONS+LEARNING_PROTOCOL+'\n'+instructions+semantics_prompt()},
+        answer = DeepSeekClient(cfg, role='memory').complete([{"role": "system", "content": INSTRUCTIONS+LEARNING_PROTOCOL+'\n'+instructions+semantics_prompt()},
             {"role": "user", "content": json.dumps(public, ensure_ascii=False)}],
             deadline=deadline)
         content = answer.get("content") or ""

@@ -437,6 +437,134 @@ class PipelineTests(unittest.TestCase):
             self.assertNotIn(secret, output)
         self.assertTrue(self.bot.journal.head()["intent"])
 
+    def test_failed_generation_fallback_is_confirmed_then_later_answer_continues(self):
+        self.cfg['queue'].update(debounce_seconds=0, generation_retries=0)
+        self.add(1)
+        self.add(2)
+        self.bot.tick()
+        generators = [j for j in self.jobs if j.kind == 'generate']
+        generators[0].result = dict(ok=False, error='WorkerTimeout')
+        generators[1].result = dict(ok=True, reply='后续正常答案')
+        self.bot.tick()
+        task = self.bot.journal.task(1)
+        self.assertTrue(task['generation_failed'])
+        self.assertFalse(task['blocked_reason'])
+        fallback = self.sends()[0].payload[2]
+        self.assertNotEqual(fallback, '后续正常答案')
+        self.sends()[0].result = dict(ok=True, ui=dict(submitted=True))
+        self.add(3, sender='wxid_self', text=fallback, mention=False)
+        self.bot.tick()
+        self.assertEqual(self.bot.journal.task(1)['phase'], 'done')
+        self.assertEqual(self.sends()[1].payload[2], '后续正常答案')
+        self.assertFalse(self.bot.journal.memory_jobs())
+        self.assertIsNone(self.bot.journal.get('proactive_session'))
+
+    def test_generation_retry_deadline_and_budget_survive_restart(self):
+        self.cfg['queue'].update(debounce_seconds=0, generation_retries=1)
+        self.add(1)
+        self.bot.tick()
+        self.jobs[-1].result = dict(ok=False, error='WorkerTimeout')
+        self.bot.tick()
+        self.assertEqual(self.bot.journal.head()['generation'], 'pending')
+        self.assertEqual(self.bot.journal.head()['generation_attempts'], 1)
+        self.now += 2
+        self.restart()
+        self.bot.tick()
+        self.assertFalse(self.bot.generators)
+        self.assertFalse(self.sends())
+        self.now += 1
+        self.bot.tick()
+        self.assertEqual(self.bot.journal.head()['generation_attempts'], 2)
+        self.jobs[-1].result = dict(ok=False, error='WorkerTimeout')
+        self.bot.tick()
+        self.assertTrue(self.bot.journal.head()['generation_failed'])
+        self.assertEqual(len(self.sends()), 1)
+
+    def test_permanent_generation_error_does_not_retry_or_expose_message(self):
+        self.cfg['queue']['debounce_seconds'] = 0
+        self.add(1)
+        self.bot.tick()
+        self.jobs[-1].result = dict(ok=False, error='http_401', retryable=False)
+        self.bot.tick()
+        self.assertEqual(self.bot.journal.head()['generation_attempts'], 1)
+        self.assertEqual(self.bot.journal.head()['last_generation_error'], 'http_401')
+        self.assertEqual(len(self.sends()), 1)
+        self.assertNotIn('401', self.sends()[0].payload[2])
+
+    def test_legacy_failed_generation_recovers_without_losing_later_ready_task(self):
+        self.cfg['queue']['debounce_seconds'] = 0
+        self.add(1)
+        self.add(2)
+        self.bot.tick()
+        self.bot.journal.generated(1, 1, [], 'generation:WorkerTimeout')
+        self.bot.journal.generated(2, 1, ['后续答案'])
+        self.restart()
+        self.bot.tick()
+        self.assertEqual(self.bot.journal.head()['id'], 1)
+        self.assertEqual(self.bot.journal.head()['generation_attempts'], 2)
+        self.assertEqual(self.bot.journal.task(2)['generation'], 'ready')
+        self.generated('重新生成的答案')
+        self.assertEqual(self.sends()[0].payload[2], '重新生成的答案')
+
+    def test_fallback_after_submit_restart_is_only_confirmed(self):
+        self.cfg['queue'].update(debounce_seconds=0, generation_retries=0)
+        self.add(1)
+        self.bot.tick()
+        self.jobs[-1].result = dict(ok=False, error='WorkerTimeout')
+        self.bot.tick()
+        text = self.sends()[0].payload[2]
+        self.restart()
+        self.bot.tick()
+        self.assertEqual(len(self.sends()), 1)
+        self.add(2, sender='wxid_self', text=text, mention=False)
+        self.bot.tick()
+        self.assertEqual(self.bot.journal.status()['queue_length'], 0)
+        self.assertEqual(len(self.sends()), 1)
+
+    def test_new_merged_version_has_its_own_retry_budget(self):
+        self.add(1)
+        self.bot.tick()
+        self.now += 1
+        self.jobs[-1].result = dict(ok=False, error='WorkerTimeout')
+        self.bot.tick()
+        self.assertGreater(self.bot.journal.head()['generation_retry_at'], self.now)
+        self.now += 1
+        self.add(2)
+        self.bot.tick()
+        task = self.bot.journal.head()
+        self.assertEqual(task['version'], 2)
+        self.assertEqual(task['generation_attempts'], 1)
+        self.assertEqual(task['last_generation_error'], '')
+
+    def test_retention_zero_does_not_remove_task_awaiting_ui_result(self):
+        self.cfg['queue'].update(debounce_seconds=0, completed_retention=0)
+        self.add(1)
+        self.bot.tick()
+        self.generated()
+        self.add(2, sender='wxid_self', text='合成回复', mention=False)
+        self.now += 61
+        self.bot.tick()
+        self.assertEqual(self.bot.journal.task(1)['phase'], 'done')
+        self.sends()[0].result = dict(ok=True, ui=dict(submitted=True))
+        self.bot.tick()
+        self.now += 61
+        self.bot.tick()
+        self.assertIsNone(self.bot.journal.task(1))
+
+    def test_status_heartbeat_is_limited_but_new_intake_is_published(self):
+        from os import replace
+        with patch('wxbridge.app.bot.time.monotonic', return_value=100) as clock, \
+                patch('wxbridge.app.bot.os.replace', wraps=replace) as publish:
+            self.bot.tick()
+            self.bot.tick()
+            self.assertEqual(publish.call_count, 1)
+            self.add(1, mention=False)
+            self.bot.tick()
+            self.assertEqual(publish.call_count, 2)
+            clock.return_value = 102
+            self.bot.tick()
+            self.assertEqual(publish.call_count, 3)
+
     def test_reasoning_is_not_sent_as_answer(self):
         client = DeepSeekClient.__new__(DeepSeekClient)
         client.cfg = {**self.cfg["deepseek"], "thinking": "disabled"}

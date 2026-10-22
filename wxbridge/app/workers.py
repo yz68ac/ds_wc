@@ -5,6 +5,7 @@ import logging
 import multiprocessing as mp
 import os
 import time
+from wxbridge.ai.client import capture_metrics, DeepSeekError
 
 
 def _work(connection, kind, payload):
@@ -12,7 +13,7 @@ def _work(connection, kind, payload):
     logging.disable(logging.CRITICAL)
     with open(os.devnull, "w") as sink:
         import contextlib
-        with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
+        with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink), capture_metrics() as metrics:
             try:
                 if kind == "generate":
                     from wxbridge.ai.client import DeepSeekClient
@@ -51,10 +52,16 @@ def _work(connection, kind, payload):
                     result = {"ui": Sender(cfg).send(chat, text)}
                 else:
                     raise ValueError("unknown_worker_kind")
+                if metrics:
+                    result['model_metrics'] = metrics
                 connection.send({"ok": True, **result})
             except Exception as exc:
                 # 只返回类别，异常消息可能包含输入参数。
                 result = {"ok": False, "error": type(exc).__name__}
+                if isinstance(exc, DeepSeekError):
+                    result.update(error=exc.code, retryable=exc.retryable)
+                if metrics:
+                    result['model_metrics'] = metrics
                 if kind == "send":
                     result["ui"] = {"error": getattr(exc, "code", "ui_unknown"),
                                     "operation": getattr(exc, "metadata", None)}

@@ -1,7 +1,6 @@
 """主动接话的单次判断和短句生成；不查询数据库、不搜索、不写记忆。"""
 from __future__ import annotations
 
-import copy
 import json
 import re
 import time
@@ -109,8 +108,7 @@ def parse_decision(content, max_chars=30, cfg=None):
 def evaluate(cfg, prompt):
     from wxbridge.ai.client import DeepSeekClient
     settings = cfg['proactive']
-    cfg = copy.deepcopy(cfg)
-    cfg['deepseek'].update(thinking='disabled', reasoning_effort=None, max_tokens=256,
-                           timeout_seconds=settings['timeout_seconds'])
-    result = DeepSeekClient(cfg).complete(prompt, deadline=time.monotonic()+settings['timeout_seconds'])
+    from wxbridge.ai.roles import model_settings
+    result = DeepSeekClient(cfg, role='participation').complete(prompt,
+        deadline=time.monotonic()+model_settings(cfg, 'participation')['timeout_seconds'])
     return parse_decision(result.get('content'), settings['max_reply_chars'], cfg)

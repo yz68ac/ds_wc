@@ -81,7 +81,7 @@ docs/                     配置、架构和部署说明
 | 内容 | 入口 |
 | --- | --- |
 | 配置与启动 | [配置项](docs/CONFIG.md)、[Linux 部署](docs/DEPLOYMENT.md)、[开机恢复](docs/BOOT_RECOVERY.md) |
-| 代码与排障 | [完整流程](docs/CODE_GUIDE.md)、[常见问题](docs/TROUBLESHOOTING.md) |
+| 代码与排障 | [完整流程](docs/CODE_GUIDE.md)、[架构与故障边界](docs/ARCHITECTURE.md)、[常见问题](docs/TROUBLESHOOTING.md) |
 | 模型功能 | [引用](docs/REFERENCES.md)、[图片](docs/VISION.md)、[搜索](docs/SEARCH.md)、[表情](docs/EMOTICONS.md) |
 | 记忆与主动接话 | [人物记忆](docs/MEMORY.md)、[语境学习](docs/LEARNING.md)、[主动接话](docs/PROACTIVE.md) |
 | 参与开发 | [贡献流程](CONTRIBUTING.md)、[安全与隐私](SECURITY.md) |

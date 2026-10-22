@@ -1,94 +1,116 @@
-"""DeepSeek OpenAI 兼容接口客户端（纯标准库）。"""
+"""按角色调用 Chat Completions；重试交给持久队列，错误不携带请求正文。"""
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
 import json
 import time
 import urllib.error
 import urllib.request
-from typing import Any
 
 from wxbridge.config import deepseek_api_key
+from wxbridge.ai.roles import model_settings
 
 MAX_REQUEST_BYTES = 48 * 1024 * 1024
 
 
 class DeepSeekError(RuntimeError):
-    pass
+    def __init__(self, code, *, retryable=False, status=None):
+        super().__init__(code)
+        self.code, self.retryable, self.status = code, retryable, status
+
+
+@dataclass(frozen=True)
+class ModelResult:
+    message: dict
+    finish_reason: str | None
+    usage: dict
+
+
+_metrics = ContextVar('model_metrics', default=None)
+
+
+@contextmanager
+def capture_metrics():
+    values = []
+    token = _metrics.set(values)
+    try:
+        yield values
+    finally:
+        _metrics.reset(token)
 
 
 class DeepSeekClient:
-    def __init__(self, cfg: dict[str, Any]):
-        self.cfg = cfg["deepseek"]
-        self.api_key = deepseek_api_key(cfg)
+    def __init__(self, cfg, *, role='reply'):
+        self.cfg = model_settings(cfg, role)
+        self.role = role
+        self.api_key = deepseek_api_key({'deepseek': self.cfg})
         if not self.api_key:
-            env_name = self.cfg.get("api_key_env") or "DEEPSEEK_API_KEY"
-            raise DeepSeekError(
-                f"没有找到 DeepSeek API key。请设置环境变量 {env_name}，"
-                "或写进项目根目录的 .env 文件："
-                f"\n  {env_name}=sk-xxxxxxxx"
-            )
-        self.base_url = self.cfg["base_url"].rstrip("/")
+            raise DeepSeekError('missing_api_key')
+        self.base_url = self.cfg['base_url'].rstrip('/')
 
-    def _post(self, payload: dict[str, Any], timeout: int) -> dict[str, Any]:
-        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    def _post(self, payload, timeout):
+        body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
         if len(body) > MAX_REQUEST_BYTES:
-            raise DeepSeekError("DeepSeek 请求超过 48 MiB 限制")
-        req = urllib.request.Request(
-            f"{self.base_url}/chat/completions",
-            data=body,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.api_key}",
-            },
-            method="POST",
-        )
+            raise DeepSeekError('request_too_large')
+        req = urllib.request.Request(self.base_url+'/chat/completions', data=body,
+            headers={'Content-Type': 'application/json', 'Authorization': 'Bearer '+self.api_key}, method='POST')
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return json.loads(resp.read().decode("utf-8"))
+                body = resp.read(8*1024*1024+1)
+            if len(body) > 8*1024*1024:
+                raise DeepSeekError('response_too_large')
+            return json.loads(body.decode('utf-8'))
         except urllib.error.HTTPError as exc:
-            # 服务端错误正文可能回显聊天内容，不写入日志。
-            raise DeepSeekError(f"DeepSeek HTTP {exc.code}") from exc
-        except urllib.error.URLError as exc:
-            raise DeepSeekError(f"DeepSeek 连接失败: {exc.reason}") from exc
-        except TimeoutError as exc:
-            raise DeepSeekError("DeepSeek 请求超时") from exc
+            raise DeepSeekError('http_'+str(exc.code), retryable=exc.code in (408, 429) or exc.code >= 500,
+                                status=exc.code) from None
+        except (urllib.error.URLError, TimeoutError, OSError):
+            raise DeepSeekError('connection_failed', retryable=True) from None
+        except (ValueError, UnicodeError):
+            raise DeepSeekError('invalid_response') from None
 
-    def complete(self, messages: list[dict[str, Any]], *, tools=None, tool_choice=None, deadline=None) -> dict:
-        payload = {
-            "model": self.cfg["model"],
-            "messages": messages,
-            "temperature": self.cfg.get("temperature", 1.0),
-            "max_tokens": self.cfg.get("max_tokens", 1200),
-            "stream": False,
-        }
-        if self.cfg.get("thinking") in ("enabled", "disabled"):
-            payload["thinking"] = {"type": self.cfg["thinking"]}
-        if self.cfg.get("thinking") != "disabled" and self.cfg.get("reasoning_effort") in ("low", "high", "max"):
-            payload["reasoning_effort"] = self.cfg["reasoning_effort"]
+    def request(self, messages, *, tools=None, tool_choice=None, deadline=None) -> ModelResult:
+        payload = dict(model=self.cfg['model'], messages=messages, temperature=self.cfg.get('temperature', 1.0),
+                       max_tokens=self.cfg.get('max_tokens', 1200), stream=False)
+        if self.cfg.get('provider', 'deepseek') == 'deepseek' and self.cfg.get('thinking') in ('enabled', 'disabled'):
+            payload['thinking'] = {'type': self.cfg['thinking']}
+        if self.cfg.get('thinking') != 'disabled' and self.cfg.get('reasoning_effort') in ('low', 'high', 'max'):
+            payload['reasoning_effort'] = self.cfg['reasoning_effort']
         if tools:
-            payload["tools"] = tools
-            payload["tool_choice"] = tool_choice or "auto"
-        timeout = float(self.cfg.get("timeout_seconds", 60))
-        last_exc: Exception | None = None
-        for attempt in range(3):
-            try:
-                remaining = deadline-time.monotonic() if deadline is not None else timeout
-                if remaining <= 0:
-                    raise DeepSeekError("生成超时")
-                data = self._post(payload, min(timeout, remaining))
-                choices = data.get("choices") or []
-                if not choices:
-                    raise DeepSeekError("DeepSeek 返回异常：没有 choices")
-                message = choices[0].get("message") or {}
-                return message
-            except DeepSeekError as exc:
-                last_exc = exc
-                if attempt < 2:
-                    pause = 1.5 * (attempt + 1)
-                    if deadline is not None:
-                        pause = min(pause, max(0, deadline-time.monotonic()))
-                    time.sleep(pause)
-        raise last_exc or DeepSeekError("DeepSeek 调用失败")
+            payload.update(tools=tools, tool_choice=tool_choice or 'auto')
+        started, usage, finish, error = time.monotonic(), {}, None, ''
+        try:
+            timeout = float(self.cfg.get('timeout_seconds', 60))
+            remaining = deadline-time.monotonic() if deadline is not None else timeout
+            if remaining <= 0:
+                raise DeepSeekError('deadline_exceeded', retryable=True)
+            data = self._post(payload, min(timeout, remaining))
+            choices = data.get('choices') if isinstance(data, dict) else None
+            if (not isinstance(choices, list) or not choices or not isinstance(choices[0], dict)
+                    or not isinstance(choices[0].get('message'), dict)):
+                raise DeepSeekError('invalid_response')
+            raw_usage = data.get('usage')
+            if isinstance(raw_usage, dict):
+                usage = {k: v for k, v in raw_usage.items() if k in
+                         ('prompt_tokens', 'completion_tokens', 'total_tokens') and type(v) is int and v >= 0}
+            finish = choices[0].get('finish_reason')
+            finish = finish if finish in ('stop', 'length', 'tool_calls', 'content_filter') else None
+            return ModelResult(choices[0]['message'], finish, usage)
+        except DeepSeekError as exc:
+            error = exc.code
+            raise
+        finally:
+            if _metrics.get() is not None:
+                _metrics.get().append(dict(role=getattr(self, 'role', 'reply'),
+                    provider=self.cfg.get('provider', 'deepseek'), elapsed_ms=round((time.monotonic()-started)*1000, 2),
+                    finish_reason=finish, usage=usage, error=error))
 
-    def chat(self, messages: list[dict[str, Any]]) -> str:
-        return (self.complete(messages).get("content") or "").strip()
+    def complete(self, messages, **kwargs) -> dict:
+        return self.request(messages, **kwargs).message
+
+    def chat(self, messages):
+        return (self.complete(messages).get('content') or '').strip()
+
+
+ModelClient = DeepSeekClient  # 保留已有导入入口；业务调用按 role 隔离配置。

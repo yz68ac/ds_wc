@@ -21,6 +21,9 @@
   "queue": {
     "debounce_seconds": 0, // 0 不合并；正数为同一人连续 @ 的合并静默窗口（秒）。
     "generation_concurrency": 2, // 有效 API 任务上限，只能为 1 或 2。
+    "generation_retries": 2, // 瞬时生成故障最多再试2次；永久错误直接给失败说明。
+    "generation_retry_delay_seconds": 3, // 重试等待期间继续接收消息，不阻塞主进程。
+    "completed_retention": 200, // 最多保留200条完成记录；未完成/未决发送不会清理。
     "file": "/run/wxbridge-trial/queue.sqlite3"
   },
   // 主动接话：达到门槛后仍可选择沉默；真实 @ 优先。
@@ -76,7 +79,17 @@
     "max_tokens": 1200, // 输出 token 预算，不是中文字数。
     "system_prompt_file": "prompts/system.md" // 每次生成重读，同一路径下改人格无需重启。
   },
-  // 按需联网；搜索提示先发，随后给最终回答。
+  // 模型角色覆盖。空对象沿用原配置；可独立指定 model/base_url/api_key_env/thinking 等。
+  // provider: deepseek 发送 DeepSeek thinking 参数；openai 仅为 Chat Completions 兼容协议。
+  // 例如 participation: {"model":"你的判断模型", "thinking":"disabled", "timeout_seconds":10}。
+  // 主动接话仍由一次请求判断并给出短句；真实 @ 不经过参与判断。
+  "models": {
+    "reply": {},
+    "participation": {},
+    "memory": {},
+    "avatar": {}
+  },
+  // 按需联网；搜索提示先发，随后给最终回答。搜索仍使用独立的 DeepSeek Search/Fetch 服务。
   "search": {
     "enabled": true,
     "base_url": "https://api.deepseek.com",

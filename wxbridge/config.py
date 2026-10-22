@@ -188,6 +188,15 @@ def load_config(path: str | Path = "config.json") -> dict[str, Any]:
     phrases = search["feedback_phrases"]
     if not isinstance(phrases, list) or not phrases or any(not isinstance(p, str) or not 1 <= len(p.strip()) <= 80 for p in phrases):
         raise ValueError("search.feedback_phrases 须为非空短句列表，每句 1–80 字")
+    queue = cfg['queue']
+    for key, low, high in (('generation_retries', 0, 3), ('completed_retention', 0, 10000)):
+        if type(queue[key]) is not int or not low <= queue[key] <= high:
+            raise ValueError('queue.'+key+' 超出范围')
+    delay = queue['generation_retry_delay_seconds']
+    if type(delay) not in (int, float) or not 1 <= delay <= 60:
+        raise ValueError('queue.generation_retry_delay_seconds 必须为 1–60 秒')
+    from wxbridge.ai.roles import validate_models
+    validate_models(cfg)
     return cfg
 
 

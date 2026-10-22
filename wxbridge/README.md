@@ -10,13 +10,19 @@ wxbridge/
 ├── config.py              加载上层 JSON、根目录 .env、路径解析与校验
 ├── app/                   应用调度
 │   ├── runtime.py         启动规则、单实例锁、退出清理
-│   ├── bot.py             接收、生成调度、冷却、发送确认、状态
+│   ├── bot.py             接收、生成与后台调度、状态
+│   ├── delivery.py        发送提交、冷却、UI结果和发出记录确认
+│   ├── conversation.py    确认后的会话变化纯函数
+│   ├── task_policy.py     生成错误分类，不依赖具体传输
+│   ├── metrics.py         有界耗时和API用量统计
+│   ├── build_info.py      运行提交号和有效配置哈希
 │   ├── proactive.py       主动接话判断、前台优先和发送前复核
 │   ├── learning.py        活跃闲聊学习、任务登记和去重
 │   ├── workers.py         可终止的 API/UI 工作进程
 │   └── diagnostics.py     环境、数据库和界面诊断
 ├── ai/                    生成回答
-│   ├── client.py          DeepSeek HTTP 请求、重试、最终答案提取
+│   ├── client.py          按角色调用HTTP、结构化结果、安全错误
+│   ├── roles.py           独立模型角色与旧配置兼容解析
 │   ├── prompts.py         人格读取与文本提示词构造
 │   ├── context.py         可配置历史窗口与去重，默认五分钟
 │   ├── memory.py          成员标签、带来源快照和后台结构化整理请求

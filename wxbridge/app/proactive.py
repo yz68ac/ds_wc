@@ -209,6 +209,7 @@ class ProactiveController:
                     return
                 worker.close()
                 self.job = None
+                self.bot.metrics.record_models(result.get('model_metrics'))
                 pending, self.pending = self.pending, None
                 if not result.get('ok'):
                     raise ValueError('proactive_worker_failed')
@@ -264,7 +265,9 @@ class ProactiveController:
             self.update(last_evaluated_id=through, last_evaluated_at=now,
                         evaluations=state['evaluations']+1, outcome='evaluating', mode=candidate['mode'],
                         opportunity=candidate['reason'], error='')
-            worker = self.bot.job_factory('proactive', (self.bot.cfg, prompt), timeout=self.cfg['timeout_seconds']+2)
+            from wxbridge.ai.roles import model_settings
+            worker = self.bot.job_factory('proactive', (self.bot.cfg, prompt),
+                timeout=model_settings(self.bot.cfg, 'participation')['timeout_seconds']+2)
             self.pending = candidate
             self.job = (worker, through, candidate['expires_at'])
             log.info('主动接话判断 mode=%s reason=%s messages=%s', candidate['mode'], candidate['reason'], len(rows))

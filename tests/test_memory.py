@@ -163,8 +163,11 @@ class MemoryTests(unittest.TestCase):
             client.return_value.complete.return_value = dict(content='{"updates":[]}', reasoning_content="PRIVATE_REASONING")
             self.assertEqual(extract(self.cfg, self.snap()), dict(updates=[]))
             config = client.call_args.args[0]
-            self.assertEqual(config["deepseek"]["thinking"], "enabled")
-            self.assertEqual(config["deepseek"]["reasoning_effort"], "max")
+            self.assertEqual(client.call_args.kwargs['role'], 'memory')
+            from wxbridge.ai.roles import model_settings
+            settings = model_settings(config, 'memory')
+            self.assertEqual(settings['thinking'], 'enabled')
+            self.assertEqual(settings['reasoning_effort'], 'max')
             self.assertEqual(self.cfg["deepseek"]["reasoning_effort"], "high")
             self.assertEqual(self.cfg, before)
             self.assertNotIn("tools", client.return_value.complete.call_args.kwargs)

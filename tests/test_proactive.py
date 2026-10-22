@@ -53,8 +53,10 @@ class DecisionTests(unittest.TestCase):
         with patch('wxbridge.ai.client.DeepSeekClient',return_value=client) as factory:
             self.assertFalse(evaluate(cfg,[])['speak'])
         request_cfg=factory.call_args.args[0]
-        self.assertEqual(request_cfg['deepseek']['thinking'],'disabled')
-        self.assertEqual(request_cfg['deepseek']['max_tokens'],256)
+        self.assertEqual(factory.call_args.kwargs['role'], 'participation')
+        from wxbridge.ai.roles import model_settings
+        self.assertEqual(model_settings(request_cfg, 'participation')['thinking'],'disabled')
+        self.assertEqual(model_settings(request_cfg, 'participation')['max_tokens'],256)
         self.assertEqual(cfg,original)
         self.assertIsNotNone(client.complete.call_args.kwargs['deadline'])
 

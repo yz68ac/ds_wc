@@ -81,3 +81,22 @@ python3 -m wxbridge queue-status
 只重启监听可以保留微信登录和内存队列；整机重启会丢失内存中的未完成问题/回复，持久检查点只保留身份和游标，不存正文。账号或群不匹配时停止排查，不能直接删除检查点绕过。详细服务状态与恢复步骤见 [开机恢复](BOOT_RECOVERY.md)。
 
 上线后先核对监听、队列和安全错误码，再由群成员发一个新真实 @ 验证手机显示与数据库确认。遇到结果不明不要盲目补发。已知限制与排障见 [常见问题](TROUBLESHOOTING.md)。
+
+## 可核对的发布包
+
+先完成离线测试、仓库检查和提交，再构建包；输出放仓库外：
+
+```bash
+python3 scripts/test-offline.py
+python3 scripts/check-repository.py --history
+python3 scripts/release.py build ../wxbridge-release.zip
+python3 scripts/release.py verify ../wxbridge-release.zip
+```
+
+构建只取干净 Git 工作区中的 HEAD 已提交文件，不读取服务器、不包含忽略的运行数据。清单保存完整提交号、每个文件的 SHA-256 与 Git 权限；拒绝私密路径、凭据特征、路径穿越和已有输出文件。`verify` 是传输完整性检查，不是发行签名，包仍应来自自己的受信渠道。
+
+部署顺序固定为：服务器暂存并验证包 → 用服务器解释器在暂存目录跑离线测试 → 停止监听（保留微信会话和内存挂载）→ 记录只读队列状态 → 备份当前代码 → 更新清单中的代码及默认 JSON → 启动监听并核对状态。不要把整个包直接解压覆盖运行目录。
+
+更新时保留服务器 `config.json`、`.env`、`memory/`、`prompts/system.md`、`prompts/memory.md` 和全部 `/run/wxbridge-trial` 数据。包中的提示词是参考版本；明确要更新人格或整理规则时才单独合并。携带 `release-manifest.json`，`live-status.json` 就能报告运行提交号；有效配置另有哈希便于核对。没有清单的开发目录回退读取 Git 提交号。
+
+本次队列迁移使用 SQLite 生成列与索引，旧版二列写入仍兼容。回滚时停止监听、恢复备份代码和相匹配的默认 JSON，保留当前队列；不要用旧队列快照覆盖已确认的新发送记录。内存队列的备份也必须留在同一私有内存挂载中，不能复制聊天任务到普通磁盘。发布工具负责构建与验证，不自动停止服务、覆盖生产文件或推送 GitHub。
