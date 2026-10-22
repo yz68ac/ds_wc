@@ -40,7 +40,7 @@ def build_prompt(
     trigger: dict[str, Any],
     chat_title: str,
     triggers: list[dict[str, Any]] | None = None,
-    *, system_text: str | None = None, memory: dict | None = None,
+    *, system_text: str | None = None, memory: dict | None = None, account: str = '',
 ) -> list[dict[str, str]]:
     target = cfg["target"]
     system = system_prompt(cfg) if system_text is None else system_text
@@ -49,11 +49,15 @@ def build_prompt(
     triggers = triggers or [trigger]
     labels = (memory or {}).get("labels", {})
     def name(message):
+        if account and message.get('sender') == account:
+            return 'BOT（你）'
         display = message.get("sender_name") or message.get("sender") or "群友"
-        return f"{labels[message['sender']]}（{display}）" if message.get("sender") in labels else display
+        if message.get('sender') in labels:
+            return f"{labels[message['sender']]}（{display}）"
+        return f'群友（{display}）' if account else display
     def reference_data(ref):
         data = prompt_reference(ref)
-        if ref.get("sender") in labels:
+        if ref.get("sender") in labels or (account and ref.get('sender') == account):
             data["sender_name"] = name(ref)
         if isinstance(ref.get("reference"), dict):
             data["reference"] = reference_data(ref["reference"])
@@ -91,11 +95,12 @@ def build_prompt(
     sender = name(trigger)
     user = (
         f"群聊：{chat_title}\n"
-        "最近的群聊记录（从旧到新）：\n"
+        + ("BOT（你）表示当前账号已实际发出的原话，用于接续对话和避免复读；群友昵称不决定身份。\n" if account else '')
+        + "最近的群聊记录（从旧到新）：\n"
         + ("\n".join(lines) if lines else "（暂无）")
         + (f"\n\n请回应这次拍一拍（发起人是 {sender}）：\n" if is_pat(trigger) else
-           f"\n\n请回答这条提问（@你的人是 {sender}）：\n" if len(triggers) == 1 else
-           f"\n\n请合并回复本批提问（@你的人是 {sender}，每条仅列一次）：\n")
+           f"\n\n请回应这条新消息（@你的人是 {sender}）：\n" if len(triggers) == 1 else
+           f"\n\n请合并回应本批新消息（@你的人是 {sender}，每条仅列一次）：\n")
         + trigger_text
     )
     max_chars = int(target.get("context_max_chars", 24000))

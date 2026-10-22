@@ -124,6 +124,7 @@ class PipelineTests(unittest.TestCase):
         self.bot.tick()
         self.store.image_binding.assert_called_once_with("synthetic@chatroom", item["reference"])
         self.assertEqual(len(self.jobs[0].payload), 4)
+        self.assertEqual(self.jobs[0].payload[3]['account'], 'wxid_self')
         self.assertEqual(self.jobs[0].payload[3]["images"][0]["trigger_index"], 0)
         self.jobs[0].result = dict(ok=True, reply="合成看图回答", vision=dict(images=1, references=1, items=[dict(available=True, quality="thumbnail")]))
         self.bot.tick()
@@ -132,6 +133,16 @@ class PipelineTests(unittest.TestCase):
         self.assertNotIn("base64", json.dumps(self.bot.journal.tasks()))
         self.restart()
         self.assertEqual(self.bot.journal.status()["last_vision"]["images"], 1)
+
+    def test_real_generation_context_identifies_own_actual_messages(self):
+        self.add(1, sender='wxid_self', text='之前已发出的答案', mention=False)
+        self.add(2, text='@DeepSeek 那下一步呢')
+        self.bot.tick()
+        generated = [job for job in self.jobs if job.kind == 'generate']
+        self.assertEqual(len(generated), 1)
+        text = generated[0].payload[1][1]['content']
+        self.assertIn('[BOT（你）]: 之前已发出的答案', text)
+        self.assertEqual(text.count('之前已发出的答案'), 1)
 
     def test_vision_disabled_does_not_resolve_images(self):
         self.cfg["vision"]["enabled"] = False

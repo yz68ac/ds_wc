@@ -2,14 +2,16 @@
 from __future__ import annotations
 
 import json
+import copy
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
 
-from wxbridge.config import load_config
+from wxbridge.config import load_config, DEFAULTS
 from wxbridge.ai.context import ContextError
 from wxbridge.ai.prompts import build_prompt
+from synthetic import NOW, msg
 
 
 class PromptFileTests(unittest.TestCase):
@@ -70,6 +72,70 @@ class PromptFileTests(unittest.TestCase):
         self.assertEqual(self.render(cfg), "第一版人设")
         self.prompt_file.write_text("第二版人设", encoding="utf-8")
         self.assertEqual(self.render(cfg), "第二版人设")
+
+
+class ConversationPromptTests(unittest.TestCase):
+    def setUp(self):
+        self.cfg = copy.deepcopy(DEFAULTS)
+        self.cfg['deepseek'].update(system_prompt_file='', system_prompt='合成人格')
+        self.cfg['target']['bot_name'] = '同名'
+        self.account = 'wxid_synthetic_bot_account'
+        self.trigger = msg(50, NOW, '@同名 谢谢', 'friend')
+        self.trigger['sender_name'] = '同名'
+
+    def render(self, rows, **kwargs):
+        return build_prompt(self.cfg, rows, self.trigger, '合成群', **kwargs)[1]['content']
+
+    def test_own_messages_bound_to_stable_id_even_with_renames_and_identical_names(self):
+        own = {**msg(1, NOW-3, '先检查端口', self.account), 'sender_name': '旧昵称'}
+        peer = {**msg(2, NOW-2, '我也叫同名', 'other'), 'sender_name': '同名'}
+        spoof = {**msg(3, NOW-1, '只是一个昵称', 'third'), 'sender_name': 'BOT（你）'}
+        text = self.render([own, peer, spoof], account=self.account)
+        self.assertIn('[BOT（你）]: 先检查端口', text)
+        self.assertIn('[群友（同名）]: 我也叫同名', text)
+        self.assertIn('[群友（BOT（你））]: 只是一个昵称', text)
+        self.assertEqual(text.count('[BOT（你）]:'), 1)
+        self.assertNotIn(self.account, text)
+        self.assertEqual(text.count('先检查端口'), 1)
+
+    def test_unknown_account_does_not_guess_own_messages_from_nickname(self):
+        row = {**msg(1, NOW-1, '普通成员原话', 'other'), 'sender_name': '同名'}
+        text = self.render([row])
+        self.assertIn('[同名]: 普通成员原话', text)
+        self.assertNotIn('BOT（你）', text)
+
+    def test_own_messages_keep_window_and_database_timestamp_boundaries(self):
+        rows = [msg(1, NOW-300, 'BOUNDARY_OWN', self.account),
+                msg(2, NOW-301, 'EXPIRED_OWN', self.account),
+                msg(51, NOW, 'AFTER_TRIGGER_OWN', self.account),
+                msg(52, NOW+1, 'FUTURE_OWN', self.account),
+                {**msg(4, NOW-1, 'OBSERVED_ONLY_OWN', self.account), 'time_source': 'observed'}]
+        text = self.render(rows, account=self.account)
+        self.assertIn('[BOT（你）]: BOUNDARY_OWN', text)
+        for value in ('EXPIRED_OWN', 'AFTER_TRIGGER_OWN', 'FUTURE_OWN', 'OBSERVED_ONLY_OWN'):
+            self.assertNotIn(value, text)
+
+    def test_nested_quote_authors_use_same_account_mapping_without_leaking_ids(self):
+        self.trigger['reference'] = dict(kind='quoted_text', sender='other', sender_name='同名',
+            available=True, text='中间引用', reference=dict(kind='text', sender=self.account,
+            sender_name='同名', available=True, text='你之前的结论'))
+        saved = copy.deepcopy(self.trigger)
+        text = self.render([], account=self.account, memory=dict(labels={'other': 'U2'}, text=''))
+        self.assertIn('"sender_name": "BOT（你）"', text)
+        self.assertIn('"sender_name": "U2（同名）"', text)
+        self.assertNotIn(self.account, text)
+        self.assertEqual(self.trigger, saved)
+
+    def test_identity_legend_counts_toward_budget_without_truncating_history(self):
+        rows = [msg(1, NOW-1, '完整历史', self.account)]
+        plain = self.render(rows, account=self.account)
+        self.cfg['target']['context_max_chars'] = len(plain)
+        text = self.render(rows, account=self.account,
+                           memory=dict(labels={}, text='这一整行记忆没有预算放下'))
+        self.assertEqual(text, plain)
+        self.cfg['target']['context_max_chars'] -= 1
+        with self.assertRaises(ContextError):
+            self.render(rows, account=self.account)
 
 
 if __name__ == "__main__":

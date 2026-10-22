@@ -167,6 +167,21 @@ class LocalImageTests(unittest.TestCase):
         self.assertNotIn("account_root", json.dumps(metadata))
         self.assertFalse(generation["triggers"][0]["reference"]["available"])
 
+    def test_image_rebuild_keeps_own_identity_with_and_without_actual_pixels(self):
+        for available in (False, True):
+            with self.subTest(available=available):
+                if available:
+                    self.path.write_bytes(png())
+                generation = self.generation()
+                generation['account'] = 'wxid_synthetic_bot_account'
+                generation['context'].append(msg(8, NOW-1, '已发出的看图说明', generation['account']))
+                prompt, metadata = self.prepare(generation)
+                body = prompt[1]['content']
+                text = body[0]['text'] if isinstance(body, list) else body
+                self.assertIn('[BOT（你）]: 已发出的看图说明', text)
+                self.assertNotIn(generation['account'], text)
+                self.assertEqual(metadata['images'], int(available))
+
     def test_missing_pixels_explicitly_unavailable_without_fake_image_block(self):
         prompt, metadata = self.prepare(self.generation())
         self.assertIsInstance(prompt[1]["content"], str)

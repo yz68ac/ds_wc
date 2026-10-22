@@ -224,7 +224,8 @@ class WeChatDeepSeekBot:
                     except Exception as exc:
                         self.memory_error = type(exc).__name__
                         log.warning("跳过记忆背景 category=%s", self.memory_error)
-                prompt = build_prompt(self.cfg, context, trigger, self.chat_title, task["triggers"], memory=memory)
+                prompt = build_prompt(self.cfg, context, trigger, self.chat_title, task["triggers"],
+                                      memory=memory, account=self.store.self_wxid)
                 echo = "[echo] " + "\n".join(m["text"] for m in task["triggers"]) if self.echo else None
                 timeout = float(model_settings(self.cfg)['timeout_seconds']) + 15
                 if self.cfg.get("search", {}).get("enabled", True) and not self.echo:
@@ -241,7 +242,7 @@ class WeChatDeepSeekBot:
                 payload = (self.cfg, prompt, echo)
                 if images:
                     payload += (dict(context=context, triggers=task["triggers"], chat_title=self.chat_title, images=images,
-                                     memory=memory),)
+                                     memory=memory, account=self.store.self_wxid),)
                 job = self.job_factory("generate", payload, timeout=timeout)
                 with self.journal.db:
                     task["generation"] = "running"

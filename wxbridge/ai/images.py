@@ -272,7 +272,8 @@ def prepare_multimodal(cfg, base_prompt, generation):
             reference.update(available=False, text="", reason=f"本地图片不可读（{exc}），请说明未看到图片并请用户重新发送或打开原图后再引用。")
             metadata.append(dict(label=label, available=False, error=str(exc)))
     prompt = build_prompt(cfg, generation["context"], triggers[-1], generation["chat_title"], triggers,
-                          system_text=base_prompt[0]["content"], memory=generation.get("memory"))
+                          system_text=base_prompt[0]["content"], memory=generation.get("memory"),
+                          account=generation.get('account', ''))
     if blocks:
         text = prompt[1]["content"]
         prompt[1]["content"] = [{"type": "text", "text": text}, *blocks]
