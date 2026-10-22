@@ -52,6 +52,6 @@ wxbridge/
 
 主进程负责所有微信数据库查询；工作进程只调用模型或操作界面。`ai/images.py` 接收主进程给出的本地文件描述，不创建 `WeChatStore`，不保存图片明文。队列、冷却、真实 @、图片引用及确认策略保持原行为。
 
-需要联网时，API 工作进程发送一个进度事件；主进程把一次性口语提示纳入同一确认流程，搜索继续运行。提示确认后保留最终回答的位置，重启不会重复提示。搜索详情见 [SEARCH.md](../docs/SEARCH.md)。
+需要联网时，API 工作进程发送内部进度事件，默认只向群里发送最终回答。显式开启 `search.feedback_enabled` 才把一次性等待提示纳入同一确认流程；关闭后不补发未提交提示，已有意图仍核对发出记录。搜索详情见 [SEARCH.md](../docs/SEARCH.md)。
 
 全部默认值已从 `config.py` 提取到上一级 `config.defaults.json`，自定义 `config.json` 覆盖默认值。`.env`、`config.json`、`prompts/system.md` 仍在项目根目录对应位置。启动命令仍为 `python3 -m wxbridge`，服务入口仍为 `scripts/run-live.py`。后台整理提示词为 `prompts/memory.md`；更新时成套携带默认 JSON 和提示词，不覆盖服务器实际配置与私密数据。

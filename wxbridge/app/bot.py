@@ -179,7 +179,7 @@ class WeChatDeepSeekBot:
             self.metrics.record_models(result.get('model_metrics'))
             if result.get("event") == "search_started":
                 settings = self.cfg.get("search", {})
-                if settings.get("feedback_enabled", True):
+                if settings.get("feedback_enabled", False):
                     phrases = settings.get("feedback_phrases") or ["我上网搜搜，核实一下。"]
                     notice = format_reply(phrases[(task_id-1) % len(phrases)], self.cfg)
                     if self.journal.request_notice(task_id, version, notice):

@@ -321,6 +321,7 @@ class MemoryPipelineTests(PipelineTests):
         self.assertEqual(self.bot.journal.status()["memory_pending"], 1)
 
     def test_notice_and_dry_run_do_not_enqueue_memory(self):
+        self.cfg['search']['feedback_enabled'] = True
         self.enable()
         self.add(1)
         self.bot.tick()

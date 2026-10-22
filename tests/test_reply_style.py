@@ -170,6 +170,7 @@ class EmoticonQueueTests(unittest.TestCase):
     restart=pipeline.PipelineTests.restart
 
     def test_search_notice_is_formatted_before_persisting_send_intent(self):
+        self.cfg['search']['feedback_enabled'] = True
         self.cfg['queue']['debounce_seconds']=0
         self.cfg['search']['feedback_phrases']=['我去看看。']
         self.add(1)

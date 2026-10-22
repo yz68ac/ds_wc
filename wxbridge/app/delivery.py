@@ -84,6 +84,12 @@ class DeliveryController:
         if not task or task["phase"] != "queued" or task["intent"] or task["blocked_reason"]:
             return
         notice = (task.get("notice") or {}).get("state") == "pending"
+        if notice and not self.cfg.get('search', {}).get('feedback_enabled', False):
+            # 关闭提示后不补发旧的未提交提示；已有意图在上面的分支等待数据库确认。
+            with self.journal.db:
+                task.pop('notice', None)
+                self.journal.put(task)
+            notice = False
         if not notice and task["generation"] != "ready":
             return
         now = time.time()

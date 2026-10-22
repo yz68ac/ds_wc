@@ -89,7 +89,7 @@
     "memory": {},
     "avatar": {}
   },
-  // 按需联网；搜索提示先发，随后给最终回答。搜索仍使用独立的 DeepSeek Search/Fetch 服务。
+  // 按需联网，默认只发最终回答。搜索仍使用独立的 DeepSeek Search/Fetch 服务。
   "search": {
     "enabled": true,
     "base_url": "https://api.deepseek.com",
@@ -98,7 +98,7 @@
     "max_tool_rounds": 2,
     "max_requests": 3,
     "max_results": 5,
-    "feedback_enabled": true,
+    "feedback_enabled": false, // 默认不发“我去看看”等等待提示；需要时可重新开启。
     "feedback_phrases": ["我去查查，等我一下。", "我上网搜搜，核实一下。", "这事我去看看。"]
   },
   // 仅处理明确引用的图片，读取当前账号本地缓存，不自动解读所有群图片。

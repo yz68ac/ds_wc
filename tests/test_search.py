@@ -39,6 +39,19 @@ class SearchTests(unittest.TestCase):
         self.notice.assert_not_called()
         self.backend.search.assert_not_called()
 
+    def test_feedback_off_discards_tool_waiting_draft_and_preserves_search_metadata(self):
+        self.assertFalse(self.cfg['search']['feedback_enabled'])
+        self.client.complete.side_effect = [dict(content='我去看看，等我一下', tool_calls=[call(query='合成更新')]),
+                                           dict(content='这次主要改了速度')]
+        text, meta = self.answer()
+        self.assertNotIn('我去看看', text)
+        self.assertIn('这次主要改了速度', text)
+        self.assertIn('https://example.com/release', text)
+        self.assertTrue(meta['attempted'])
+        self.assertEqual(meta['calls'], 1)
+        # 此回调是内部事件，主进程开关控制是否加入群发送队列。
+        self.notice.assert_called_once()
+
     def test_tool_result_then_final_with_real_sources_and_feedback_first(self):
         self.client.complete.side_effect = [dict(content="不要直接发送的草稿", tool_calls=[call(query="最新合成信息")], reasoning_content="合成思考"), dict(content="核实后的回答")]
         self.backend.search.side_effect = lambda *args: (self.notice.assert_called_once(), result())[1]

@@ -592,6 +592,7 @@ class PipelineTests(unittest.TestCase):
         return generator
 
     def test_search_notice_then_final_reply_both_confirmed_and_cooldown(self):
+        self.cfg['search']['feedback_enabled'] = True
         self.cfg["queue"]["debounce_seconds"] = 0
         self.cfg["target"]["cooldown_seconds"] = 8
         self.add(1)
@@ -621,6 +622,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(task["notice"]["text"], "")
 
     def test_search_notice_is_not_repeated_for_repeated_events_or_after_restart(self):
+        self.cfg['search']['feedback_enabled'] = True
         self.cfg["queue"]["debounce_seconds"] = 0
         self.add(1)
         self.bot.tick()
@@ -637,6 +639,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(len(self.sends()), 1)  # 只保留首次旧发送对象，没有新增提示发送。
 
     def test_search_notice_confirmation_timeout_blocks_sends_but_keeps_receiving(self):
+        self.cfg['search']['feedback_enabled'] = True
         self.cfg["queue"]["debounce_seconds"] = 0
         self.add(1)
         self.bot.tick()
@@ -652,6 +655,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(len(self.bot.journal.tasks()), 2)
 
     def test_old_merged_version_unsent_notice_is_discarded(self):
+        self.cfg['search']['feedback_enabled'] = True
         self.add(1)
         self.bot.tick()
         old = self.search_started()
@@ -667,7 +671,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual([job.payload[2] for job in self.sends()], ["新版本直接回答"])
 
     def test_search_feedback_can_be_disabled(self):
-        self.cfg["search"]["feedback_enabled"] = False
+        self.assertFalse(self.cfg['search']['feedback_enabled'])
         self.cfg["queue"]["debounce_seconds"] = 0
         self.add(1)
         self.bot.tick()
@@ -675,6 +679,37 @@ class PipelineTests(unittest.TestCase):
         self.assertFalse(self.sends())
         self.generated("直接最终回复")
         self.assertEqual(len(self.sends()), 1)
+
+    def test_disabling_feedback_discards_pending_notice_but_sends_final_reply(self):
+        self.cfg['search']['feedback_enabled'] = True
+        self.add(1)
+        self.bot.tick()
+        self.search_started()
+        self.assertEqual(self.bot.journal.head()['notice']['state'], 'pending')
+        self.cfg['search']['feedback_enabled'] = False
+        self.now += 3
+        self.bot.tick()
+        self.assertIsNone(self.bot.journal.head().get('notice'))
+        self.assertFalse(self.sends())
+        self.generated('只发最终回答')
+        self.assertEqual([j.payload[2] for j in self.sends()], ['只发最终回答'])
+
+    def test_disabling_feedback_does_not_cancel_uncertain_submitted_notice(self):
+        self.cfg['search']['feedback_enabled'] = True
+        self.cfg['queue']['debounce_seconds'] = 0
+        self.add(1)
+        self.bot.tick()
+        self.search_started()
+        notice = self.sends()[0].payload[2]
+        self.cfg['search']['feedback_enabled'] = False
+        self.restart()
+        self.bot.tick()
+        self.assertEqual(len(self.sends()), 1)
+        self.assertEqual(self.bot.journal.head()['intent']['kind'], 'notice')
+        self.add(2, sender='wxid_self', text=notice, mention=False)
+        self.bot.tick()
+        self.assertIsNone(self.bot.journal.head()['intent'])
+        self.assertEqual(self.bot.journal.head()['notice']['state'], 'confirmed')
 
 
 class WorkerTests(unittest.TestCase):

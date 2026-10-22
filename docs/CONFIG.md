@@ -153,7 +153,7 @@ dry-run 使用独立的 `.dry-run` 队列及 `dry-run/live-status.json`，不消
 
 ## 按需联网搜索
 
-`search.enabled=true` 默认开启，继续使用当前模型和同一 DeepSeek Key。默认 `max_tool_rounds=2`、`max_requests=3`、`max_results=5`、单工具请求超时 15 秒、整体生成预算 120 秒。普通聊天不搜索；搜索时单独发送一次 `feedback_phrases` 中的短句，可用 `feedback_enabled=false` 关闭提示。提示仍遵守当前冷却、队列及发送确认，不会消耗最终回答分片。完整范围、错误行为和费用说明见 [搜索说明](SEARCH.md)。
+`search.enabled=true` 默认开启，继续使用当前模型和同一 DeepSeek Key。默认 `max_tool_rounds=2`、`max_requests=3`、`max_results=5`、单工具请求超时 15 秒、整体生成预算 120 秒。普通聊天、接梗不为了查出处自动搜索；明确问出处或含义且需要核实时可查。`feedback_enabled=false` 默认关闭“我去看看”等等待提示，只发送最终回答及必要来源。需要恢复提示时显式开启，它仍遵守冷却、队列及发送确认，不会消耗最终回答分片。完整范围、错误行为和费用说明见 [搜索说明](SEARCH.md)。
 
 ## 环境变量覆盖
 
