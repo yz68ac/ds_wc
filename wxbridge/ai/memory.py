@@ -98,6 +98,8 @@ def extract(cfg, value):
     for key in ('dialogue', 'learning_enabled', 'learning_existing', 'learning_source_ids'):
         public[key] = value.get(key, [] if key != 'learning_enabled' else False)
     public['bot_persona'] = system_prompt(cfg)
+    if value.get('recovery'):
+        public['recovery'] = value['recovery']
     deadline = time.monotonic()+model_settings(cfg, 'memory')['timeout_seconds']
     proposal = {"updates": []}
     if value["messages"]:
@@ -107,7 +109,9 @@ def extract(cfg, value):
         instructions = path.read_text(encoding='utf-8-sig')
         if not instructions.strip():
             raise ValueError('memory_prompt_empty')
-        answer = DeepSeekClient(cfg, role='memory').complete([{"role": "system", "content": INSTRUCTIONS+LEARNING_PROTOCOL+'\n'+instructions+semantics_prompt()},
+        recovery = ('\n本批表达学习曾反复不满足来源校验，这次只整理人物事实、偏好、印象和关系；'
+                    '必须返回learning=[]，不要输出任何表达学习条目。下一批新任务可恢复表达学习。') if value.get('recovery') else ''
+        answer = DeepSeekClient(cfg, role='memory').complete([{"role": "system", "content": INSTRUCTIONS+LEARNING_PROTOCOL+'\n'+instructions+semantics_prompt()+recovery},
             {"role": "user", "content": json.dumps(public, ensure_ascii=False)}],
             deadline=deadline, require_complete=True)
         content = answer.get("content") or ""

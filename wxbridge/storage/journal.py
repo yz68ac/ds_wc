@@ -371,6 +371,7 @@ class Journal:
                                       followups_sent=session.get('followups', 0),
                                       activity_at=session.get('last_activity_at'), origin=session.get('origin')),
                     memory_pending=len(self.memory_jobs()), memory_error=self.get("memory_error", ""),
+                    memory_recovery=self.get('memory_recovery'),
                     passive_learning=self.get('passive_learning'),
                     tasks=[dict(id=t["id"], version=t["version"], phase=t["phase"], trigger_kind=t.get('trigger_kind', 'mention'),
                                 generation=t["generation"], questions=len(t["triggers"]),

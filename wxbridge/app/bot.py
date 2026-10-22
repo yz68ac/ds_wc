@@ -313,6 +313,10 @@ class WeChatDeepSeekBot:
                     raise ValueError(memory_failure_code(result))
                 self.memory.apply(result["proposal"], value, now)
                 self.journal.finish_memory(record["id"], now)
+                if record.get('learning_suppressed'):
+                    with self.journal.db:
+                        self.journal.set('memory_recovery', dict(task_id=record['id'], section='expression_learning',
+                            reason=record['recovery_reason'], stage='completed'))
                 log.info("记忆更新 task=%s revision=%s", record["id"], self.memory.data["revision"])
             enqueue_if_active(self, now)
             jobs = self.journal.memory_jobs()
@@ -326,6 +330,15 @@ class WeChatDeepSeekBot:
             if max(m["local_id"] for m in record["triggers"]) <= self.memory.data["watermark"]:
                 self.journal.finish_memory(record["id"], self.journal.get("memory_last_update", 0))
                 return
+            previous_error = record.get('last_error', self.journal.get('memory_error', ''))
+            if (record['attempts'] >= 3 and isinstance(previous_error, str) and previous_error.startswith('memory_learning_')
+                    and not record.get('learning_suppressed')):
+                # 新请求明确收窄能力；旧失败结果不写入，来源校验保持不变。
+                record.update(learning_suppressed=True, recovery_reason=previous_error, retry_at=now)
+                with self.journal.db:
+                    self.journal.put_memory(record)
+                    self.journal.set('memory_recovery', dict(task_id=record['id'], section='expression_learning',
+                        reason=previous_error, stage='pending'))
             if now < record["retry_at"] or now-self.journal.get("memory_last_update", 0) < self.cfg["memory"]["min_interval_seconds"]:
                 return
             if any(t["generation"] == "pending" for t in self.journal.tasks()):
@@ -352,6 +365,9 @@ class WeChatDeepSeekBot:
                 # 遗忘水位或已处理的重叠窗口，不额外调用模型。
                 self.journal.finish_memory(record["id"], self.journal.get("memory_last_update", 0))
                 return
+            if record.get('learning_suppressed'):
+                value.update(learning_enabled=False, learning_source_ids=[], learning_existing=[],
+                             recovery=dict(section='expression_learning', reason=record['recovery_reason']))
             avatars = self.cfg["memory"].get("avatar", {})
             if avatars.get("enabled"):
                 value["avatars"] = {}
@@ -378,6 +394,9 @@ class WeChatDeepSeekBot:
             with self.journal.db:
                 record["state"] = "running"
                 self.journal.put_memory(record)
+                if record.get('learning_suppressed'):
+                    self.journal.set('memory_recovery', dict(task_id=record['id'], section='expression_learning',
+                        reason=record['recovery_reason'], stage='running'))
             self.memory_job = (record, value, worker)
         except Exception as exc:
             # 永不输出异常消息、模型输出或记忆正文。
@@ -385,13 +404,13 @@ class WeChatDeepSeekBot:
                 self.memory_job[2].close()
                 self.memory_job = None
             with self.journal.db:
+                import re
+                code = str(exc) if re.fullmatch(r"memory_[a-z0-9_]{1,64}", str(exc)) else type(exc).__name__
                 if record:
-                    record.update(state="pending", attempts=record["attempts"]+1,
+                    record.update(state="pending", attempts=record["attempts"]+1, last_error=code,
                                   retry_at=now+max(self.cfg['memory']['learning']['min_interval_seconds'] if record.get('origin') == 'activity' else 0,
                                                    min(300, 60*(record["attempts"]+1))))
                     self.journal.put_memory(record)
-                import re
-                code = str(exc) if re.fullmatch(r"memory_[a-z0-9_]{1,64}", str(exc)) else type(exc).__name__
                 self.journal.set("memory_error", code)
             log.warning("记忆延后 category=%s", code)
 

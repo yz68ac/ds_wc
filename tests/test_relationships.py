@@ -252,6 +252,19 @@ class RelationshipTests(unittest.TestCase):
         self.assertEqual(public['messages'][0]['id'], 'm2')
         self.assertNotIn('avatars', public)
 
+    def test_recovery_request_explicitly_disables_expression_learning_without_extra_call(self):
+        m = msg(1, NOW, '实际发言', 'wxid_a')
+        value = snapshot(self.cfg, [], [m], IDENTITY, self.memory, NOW)
+        value.update(learning_enabled=False, learning_source_ids=[], learning_existing=[],
+                     recovery=dict(section='expression_learning', reason='memory_learning_expression_not_observed'))
+        with patch('wxbridge.ai.client.DeepSeekClient') as client:
+            client.return_value.complete.return_value = dict(content='{"updates":[],"learning":[]}')
+            extract(self.cfg, value)
+        self.assertEqual(client.return_value.complete.call_count, 1)
+        prompt = client.return_value.complete.call_args.args[0]
+        self.assertIn('必须返回learning=[]', prompt[0]['content'])
+        self.assertFalse(json.loads(prompt[1]['content'])['learning_enabled'])
+
 
 class RelationshipPipelineTests(unittest.TestCase):
     setUp = memory_tests.PipelineTests.setUp
@@ -261,6 +274,43 @@ class RelationshipPipelineTests(unittest.TestCase):
     generated = memory_tests.PipelineTests.generated
     enable = memory_tests.MemoryPipelineTests.enable
     confirmed = memory_tests.MemoryPipelineTests.confirmed
+
+    def test_repeated_learning_validation_failure_retries_narrowed_batch_then_next_batch_learns(self):
+        import test_learning as learning_tests
+        self.enable()
+        self.confirmed()
+        invalid = dict(updates=[], learning=[learning_tests.observation()])
+        for attempt in range(1, 4):
+            self.bot.memory_job[2].result = dict(ok=True, proposal=invalid)
+            self.bot.tick()
+            record = self.bot.journal.memory_jobs()[0]
+            self.assertEqual(record['attempts'], attempt)
+            self.assertEqual(record['last_error'], 'memory_learning_expression_not_observed')
+            self.assertEqual(self.bot.memory.data['watermark'], 0)
+            if attempt < 3:
+                self.now = record['retry_at']
+                self.bot.tick()
+                self.assertIsNotNone(self.bot.memory_job)
+        self.bot.tick()  # 新能力范围的请求可立即启动，未篡改原失败建议。
+        record, value, job = self.bot.memory_job
+        self.assertTrue(record['learning_suppressed'])
+        self.assertFalse(value['learning_enabled'])
+        self.assertEqual(value['learning_existing'], [])
+        self.assertTrue(self.cfg['memory']['learning']['enabled'])
+        job.result = dict(ok=True, proposal=proposal(delta=1, trust=1))
+        self.bot.tick()
+        self.assertFalse(self.bot.journal.memory_jobs())
+        self.assertEqual(self.bot.journal.get('memory_error'), '')
+        self.assertEqual(self.bot.journal.get('memory_recovery')['stage'], 'completed')
+        self.assertEqual(self.bot.memory.data['members']['wxid_friend']['relationship']['trust'], 51)
+        self.add(3, mention=False, text='下一批的新话题')
+        self.bot.tick()
+        with self.bot.journal.db:
+            self.bot.journal.enqueue_memory('reply', 'synthetic-next', [dict(local_id=3,time=int(self.now))])
+        self.now += 60
+        self.bot.tick()
+        self.assertTrue(self.bot.memory_job[1]['learning_enabled'])
+        self.assertFalse(self.bot.memory_job[0].get('learning_suppressed'))
 
     def test_output_limit_is_reported_and_requeued_without_writing_partial_memory(self):
         self.enable()
