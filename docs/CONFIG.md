@@ -12,7 +12,7 @@
 
 `reply_style.wechat_emoticons_enabled` 默认false，可在实际配置中按需开启；允许少量微信内置文本表情和适当的单发表情。`reply_style.omit_trailing_period` 默认true，普通短句省略尾部中文句号，保留技术内容与其他标点。两项均须布尔值，改后重启监听；20项梗义、来源及处理范围见 [微信表情与标点](EMOTICONS.md)。
 
-主动接话使用 `proactive` 配置段，默认关闭，可在实际配置中按需开启。保留近300秒十条文字、自然称呼/引用与低频多人聊天候选；默认取消小时入场与接话轮数上限（对应字段0）。真实@接纳时或自主首句确认发出后进入120秒参与窗口；成员新消息续期，机器人发言不续期，连续安静两分钟退出。沉默一次或换了聊天对象不退出，不增加旧版无人回应后的十分钟退让。独立重新入场保留五分钟冷却，真实@与参与期内接话不受该冷却限制；八秒发送间隔、真实@优先与30字短句上限继续生效。没有新的成员文字不请求判断模型。全部参数、重启与失效规则见 [主动接话说明](PROACTIVE.md)。
+主动接话使用 `proactive` 配置段，默认关闭，可在实际配置中按需开启。保留近300秒十条文字、自然称呼/引用与低频多人聊天候选；默认取消小时入场与接话轮数上限（对应字段0）。新正文句中出现独立的ds/DS等称呼也可按上下文唤起，绕过随机入场的五分钟冷却、小时预算和六十秒判断间隔，仍遵守十秒检查节流和八秒发送间隔。真实@接纳时或自主首句确认发出后进入120秒参与窗口；成员新消息续期，机器人发言不续期，连续安静两分钟退出。沉默一次或换了聊天对象不退出，不增加旧版无人回应后的十分钟退让。未点名的独立重新入场保留五分钟冷却；真实@优先与30字短句上限继续生效。没有新的成员文字不请求判断模型。全部参数、重启与失效规则见 [主动接话说明](PROACTIVE.md)。
 
 人物记忆使用 `memory` 配置段：enabled（默认 true）、directory（源码根目录下 memory）、model（deepseek-flash）、thinking（enabled）、reasoning_effort（max）、min_interval_seconds（60）、prompt_max_chars（1200）、max_tokens（2400）、timeout_seconds（30）。thinking 可选 enabled/disabled，reasoning_effort 可选 low/high/max，关闭思考时不发送深度参数；记忆整理与主回答的思考配置各自独立，当前默认均为 max。规则、期限和维护命令见 [MEMORY.md](MEMORY.md)。
 
@@ -161,7 +161,7 @@ dry-run 使用独立的 `.dry-run` 队列及 `dry-run/live-status.json`，不消
 
 ## 独立模型角色
 
-`models` 下有 `reply`、`participation`、`memory`、`avatar` 四个覆盖对象。主回复继承 `deepseek`；记忆继承 `deepseek` 的接口和 `memory` 的模型/思考/预算；头像默认继承旧记忆模型且关闭思考；参与判断继承 `deepseek` 的接口与模型，默认 JSON 中的 participation 显式开启思考、深度 high、1200 tokens，超时继承 `proactive.timeout_seconds`（默认30秒）。每个角色最后再应用自己的覆盖值，不会修改其他角色；`models.reply` 也不会覆盖其他角色的设置。旧代码中参与角色的关闭思考/256 tokens 是兼容回退值，正常加载默认 JSON 时以 JSON 中的设置为准。
+`models` 下有 `reply`、`participation`、`memory`、`avatar` 四个覆盖对象。主回复继承 `deepseek`；记忆继承 `deepseek` 的接口和 `memory` 的模型/思考/预算；头像默认继承旧记忆模型且关闭思考；参与判断继承 `deepseek` 的接口与模型，默认 JSON 中的 participation 显式关闭思考、256 tokens，超时继承 `proactive.timeout_seconds`（默认30秒）。参与角色保留的 high 仅供重新开启思考时使用，当前不发送深度参数。每个角色最后再应用自己的覆盖值，不会修改其他角色；`models.reply` 也不会覆盖其他角色的设置。
 
 可覆盖字段：`provider`、`base_url`、`api_key_env`、`model`、`thinking`、`reasoning_effort`、`temperature`、`timeout_seconds`、`max_tokens`。角色覆盖优先于前面的旧配置和环境覆盖，修改后重启监听。示例：
 
@@ -172,9 +172,9 @@ dry-run 使用独立的 `.dry-run` 队列及 `dry-run/live-status.json`，不消
       "provider": "deepseek",
       "model": "你的判断模型",
       "api_key_env": "PARTICIPATION_API_KEY",
-      "thinking": "enabled",
+      "thinking": "disabled",
       "reasoning_effort": "high",
-      "max_tokens": 1200,
+      "max_tokens": 256,
       "timeout_seconds": 30
     }
   }

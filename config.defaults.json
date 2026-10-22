@@ -77,9 +77,9 @@
   "models": {
     "reply": {},
     "participation": {
-      "thinking": "enabled",
+      "thinking": "disabled",
       "reasoning_effort": "high",
-      "max_tokens": 1200
+      "max_tokens": 256
     },
     "memory": {},
     "avatar": {}

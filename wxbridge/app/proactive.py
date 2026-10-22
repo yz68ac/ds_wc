@@ -113,6 +113,9 @@ class ProactiveController:
             self.update(outcome='waiting_new_messages')
             return None
         account = self.bot.store.self_wxid
+        available = [m for m in fresh if not (m.get('mentioned_users') and account not in m['mentioned_users'])]
+        opportunities = self.cfg['opportunities']
+        named = [m for m in available if addresses_bot(m, self.bot.cfg, account)] if opportunities['enabled'] else []
         if session:
             if self.latest_own_id > max(session['anchor_id'], self.bot.journal.get('last_confirmed_outbound_id', 0)):
                 self.close_session('manual_own_message', now)
@@ -120,13 +123,19 @@ class ProactiveController:
                 return None
             replies = [m for m in fresh if m['local_id'] > session['anchor_id']
                        and not (m.get('mentioned_users') and account not in m['mentioned_users'])
-                       and (not (m.get('reference') or {}).get('sender') or m['reference']['sender'] == account)]
+                       and (not (m.get('reference') or {}).get('sender') or m['reference']['sender'] == account
+                            or m in named)]
             if replies:
-                return dict(mode='followup', reason='conversation', source_ids=[m['local_id'] for m in replies],
+                return dict(mode='followup', reason='addressed' if named else 'conversation',
+                            source_ids=[m['local_id'] for m in named or replies],
                             anchor_id=session['anchor_id'], session_id=session['session_id'],
                             expires_at=min(session['expires_at'], now+self.cfg['reply_ttl_seconds']))
             self.update(outcome='waiting_conversation_reply')
             return None
+        if named:
+            # 新消息点名/引用机器人是受邀接话，不受无人邀请入场的五分钟/六十秒限制。
+            return dict(mode='entry', reason='addressed', source_ids=[m['local_id'] for m in named],
+                        expires_at=now+self.cfg['reply_ttl_seconds'])
         blocked = self.entry_block_reason(now)
         if blocked:
             self.update(outcome=blocked)
@@ -134,14 +143,11 @@ class ProactiveController:
         if now-state['last_evaluated_at'] < self.cfg['evaluation_interval_seconds']:
             self.update(outcome='evaluation_cooldown')
             return None
-        available = [m for m in fresh if not (m.get('mentioned_users') and account not in m['mentioned_users'])]
         if not available:
             self.update(outcome='addressed_to_others')
             return None
-        opportunities = self.cfg['opportunities']
-        named = [m for m in available if addresses_bot(m, self.bot.cfg, account)] if opportunities['enabled'] else []
         enough_new = len(fresh) >= (self.cfg['min_new_messages'] if state['evaluations'] else 1)
-        reason = 'addressed' if named else 'activity' if enough_new and self.eligible(rows, now) else ''
+        reason = 'activity' if enough_new and self.eligible(rows, now) else ''
         if (not reason and opportunities['enabled'] and len(fresh) >= self.cfg['min_new_messages']
                 and len(rows) >= opportunities['min_messages']
                 and len({m['sender'] for m in rows}) >= opportunities['min_senders']):
@@ -149,7 +155,7 @@ class ProactiveController:
         if not reason:
             self.update(outcome='below_threshold')
             return None
-        return dict(mode='entry', reason=reason, source_ids=[m['local_id'] for m in named or available],
+        return dict(mode='entry', reason=reason, source_ids=[m['local_id'] for m in available],
                     expires_at=now+self.cfg['reply_ttl_seconds'])
 
     def _validate(self, task, now):
@@ -180,6 +186,11 @@ class ProactiveController:
                     reason = 'activity_changed'
                 elif len(newer) >= self.cfg['min_new_messages']:
                     reason = 'context_changed'
+                elif data.get('reason') == 'addressed':
+                    if (not self.cfg['opportunities']['enabled'] or not any(
+                            m['local_id'] in data['source_ids'] and addresses_bot(m, self.bot.cfg, self.bot.store.self_wxid)
+                            for m in rows)):
+                        reason = 'source_unavailable'
                 else:
                     reason = self.entry_block_reason(now)
             elif not self.eligible(rows, now):

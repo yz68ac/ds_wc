@@ -135,7 +135,7 @@ class ConversationTests(unittest.TestCase):
             self.bot.journal.set('proactive_entries', [self.now-400, self.now-800, self.now-1200])
         self.answer_mention()
         self.now += 10
-        self.ordinary('ds再来一句', sender='wxid_other')
+        self.ordinary('换个话题来聊', sender='wxid_other')
         self.assertIsNone(self.bot.proactive.job)
         self.assertEqual(self.bot.proactive.state()['outcome'], 'entry_budget')
         self.assertEqual(len(self.sends()), 1)
@@ -289,10 +289,11 @@ class ConversationTests(unittest.TestCase):
         self.cfg['proactive']['max_entries_per_hour'] = 3
         with self.bot.journal.db:
             self.bot.journal.set('proactive_entries', [self.now-100, self.now-200, self.now-300])
-        self.ordinary('ds你怎么看')
+        self.ordinary('无人点名的新消息')
         self.assertFalse(self.jobs)
         self.assertEqual(self.bot.proactive.state()['outcome'], 'entry_budget')
         self.now += 3601
+        self.assertEqual(self.bot.proactive.entry_block_reason(self.now), '')
         self.ordinary('ds现在呢')
         self.assertIsNotNone(self.bot.proactive.job)
 

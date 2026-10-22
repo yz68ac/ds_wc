@@ -43,7 +43,7 @@
       "enabled": true, // 提到助手/引用她，或低频多人聊天时也可请求判断；不保证会发言。
       "min_messages": 3, // 低频聊天候选门槛，原十条活跃门槛仍保留。
       "min_senders": 2,
-      "address_names": ["ds"] // 附加自然称呼，同时读取bot_name及mentions中的别名。
+      "address_names": ["ds"] // 不区分大小写，句首/中/末均可点名；绕过随机入场冷却，ads/dss不匹配。
     },
     "conversation": {
       "enabled": true, // 总开关proactive.enabled也必须开启。
@@ -86,9 +86,9 @@
   "models": {
     "reply": {},
     "participation": {
-      "thinking": "enabled", // 主动入场和后续接话都使用此角色，改后重启监听。
-      "reasoning_effort": "high", // 关闭思考时不发送深度参数；不影响普通 @ 的 max。
-      "max_tokens": 1200 // 为思考和JSON决策留出预算；实际发出的短句仍最多30字。
+      "thinking": "disabled", // 主动入场、关键词唤起和后续接话均关闭思考，改后重启监听。
+      "reasoning_effort": "high", // 当前不发送此参数；将来开启思考时才使用，不影响普通 @ 的 max。
+      "max_tokens": 256 // 非思考JSON短答预算；实际发出的短句仍最多30字。
     },
     "memory": {},
     "avatar": {}
