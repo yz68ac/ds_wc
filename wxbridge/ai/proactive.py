@@ -20,7 +20,7 @@ def timeline(rows, now, seconds):
 
 
 def activity(rows, account, now, seconds):
-    """去重并按实际发送时间过滤；文字计数，任何本人发出消息均抑制入场。"""
+    """去重、按实际时间过滤并统计成员文字；本人发言标志不代表入场冷却。"""
     current = timeline(rows, now, seconds)
     own = any(m.get('sender') == account and not is_pat(m) for m in current)
     texts = [m for m in current if m.get('sender') and m['sender'] != account

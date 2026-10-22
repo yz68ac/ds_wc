@@ -23,7 +23,7 @@ class DecisionTests(unittest.TestCase):
             with self.subTest(data=data), self.assertRaises(ValueError):
                 parse_decision(json.dumps(data,ensure_ascii=False))
 
-    def test_window_text_count_deduplicates_and_own_image_suppresses(self):
+    def test_window_text_count_deduplicates_and_detects_own_image(self):
         rows=[msg(1,NOW-300,'边界'),msg(2,NOW-301,'旧消息'),msg(3,NOW+1,'未来消息'),
               msg(4,NOW,'图片'),msg(5,NOW,'',sender=''),msg(6,NOW,'本人发图','self')]
         rows[3]['type']=3; rows[-1]['type']=3
@@ -144,10 +144,10 @@ class ProactivePipelineTests(unittest.TestCase):
         self.chat(1,13)
         self.assertEqual(len(self.jobs),2)
 
-    def test_bot_spoke_within_window_prevents_evaluation(self):
+    def test_previous_bot_reply_does_not_block_a_new_entry_evaluation(self):
         self.add(1,sender='wxid_self',text='自己发的消息',mention=False)
         self.chat(10,2)
-        self.assertFalse(self.jobs)
+        self.assertEqual([job.kind for job in self.jobs], ['proactive'])
 
     def test_stale_future_images_and_empty_messages_cannot_meet_threshold(self):
         for i in range(1,11):

@@ -6,6 +6,7 @@ import logging
 
 from wxbridge.ai.proactive import activity, addresses_bot, build_prompt, parse_decision, timeline
 from wxbridge.ai.memory import member_labels
+from wxbridge.wechat.pats import is_pat
 
 log = logging.getLogger('wxbridge')
 
@@ -14,6 +15,7 @@ class ProactiveController:
     def __init__(self, bot):
         self.bot, self.cfg, self.job = bot, bot.cfg['proactive'], None
         self.pending, self.dialogue = None, []
+        self.latest_own_id = 0
         if bot.journal.get('proactive') is None:
             with bot.journal.db:
                 bot.journal.set('proactive', dict(last_evaluated_id=bot.last_local_id,
@@ -62,25 +64,42 @@ class ProactiveController:
     def context(self, now):
         raw = self.bot.store.messages_in_window(self.bot.chat_id, int(now-self.cfg['window_seconds']), int(now))
         raw = [m for m in raw if m['local_id'] <= self.bot.last_local_id]
-        self.dialogue = [m for m in timeline(raw, now, self.cfg['window_seconds'])
+        ordered = timeline(raw, now, self.cfg['window_seconds'])
+        self.latest_own_id = max((m['local_id'] for m in ordered
+            if m.get('sender') == self.bot.store.self_wxid and not is_pat(m)), default=0)
+        self.dialogue = [m for m in ordered
                          if m.get('sender') and m.get('type') == 1 and (m.get('text') or '').strip()]
         return activity(raw, self.bot.store.self_wxid, now, self.cfg['window_seconds'])
 
-    def eligible(self, rows, own, now):
-        return (not own and len(rows) >= self.cfg['min_messages']
+    def eligible(self, rows, now):
+        return (len(rows) >= self.cfg['min_messages']
                 and now-rows[-1]['time'] <= self.cfg['reply_ttl_seconds'])
 
-    def candidate(self, rows, own, now):
+    def entry_block_reason(self, now):
+        entries = self.bot.journal.get('proactive_entries', [])
+        if len([t for t in entries if 0 <= now-t < 3600]) >= self.cfg['max_entries_per_hour']:
+            return 'entry_budget'
+        if entries and now-max(entries) < self.cfg['entry_cooldown_seconds']:
+            return 'entry_cooldown'
+        if now < self.bot.journal.get('proactive_entry_not_before', 0):
+            return 'entry_backoff'
+        return ''
+
+    def candidate(self, rows, now):
         state = self.state()
-        fresh = [m for m in rows if m['local_id'] > state['last_evaluated_id']
+        # 已发言前的旧提问仍用于理解语境，不重新作为主动回复目标。
+        floor = max(state['last_evaluated_id'], self.latest_own_id)
+        fresh = [m for m in rows if m['local_id'] > floor
                  and now-m['time'] <= self.cfg['reply_ttl_seconds']]
         if not fresh:
+            self.update(outcome='waiting_new_messages')
             return None
         account = self.bot.store.self_wxid
         session = self.session(now)
         if session:
-            if any(m['sender'] == account and m['local_id'] > session['anchor_id'] for m in self.dialogue):
+            if self.latest_own_id > session['anchor_id']:
                 self.close_session('manual_own_message', now)
+                self.update(outcome='manual_own_message')
                 return None
             replies = [m for m in fresh if m['local_id'] > session['anchor_id']
                        and not (m.get('mentioned_users') and account not in m['mentioned_users'])
@@ -91,27 +110,30 @@ class ProactiveController:
                             anchor_id=session['anchor_id'], expires_at=min(session['expires_at'], now+self.cfg['reply_ttl_seconds']))
             if len(fresh) >= self.cfg['min_new_messages']:
                 self.close_session('conversation_moved_on', now)
+            else:
+                self.update(outcome='waiting_conversation_reply')
+                return None
+        blocked = self.entry_block_reason(now)
+        if blocked:
+            self.update(outcome=blocked)
             return None
-        if (own or now-self.bot.journal.get('last_success', 0) < self.cfg['entry_cooldown_seconds']
-                or now < self.bot.journal.get('proactive_entry_not_before', 0)
-                or now-state['last_evaluated_at'] < self.cfg['evaluation_interval_seconds']):
-            return None
-        entries = [t for t in self.bot.journal.get('proactive_entries', []) if 0 <= now-t < 3600]
-        if len(entries) >= self.cfg['max_entries_per_hour']:
-            self.update(outcome='entry_budget')
+        if now-state['last_evaluated_at'] < self.cfg['evaluation_interval_seconds']:
+            self.update(outcome='evaluation_cooldown')
             return None
         available = [m for m in fresh if not (m.get('mentioned_users') and account not in m['mentioned_users'])]
         if not available:
+            self.update(outcome='addressed_to_others')
             return None
         opportunities = self.cfg['opportunities']
         named = [m for m in available if addresses_bot(m, self.bot.cfg, account)] if opportunities['enabled'] else []
         enough_new = len(fresh) >= (self.cfg['min_new_messages'] if state['evaluations'] else 1)
-        reason = 'addressed' if named else 'activity' if enough_new and self.eligible(rows, own, now) else ''
+        reason = 'addressed' if named else 'activity' if enough_new and self.eligible(rows, now) else ''
         if (not reason and opportunities['enabled'] and len(fresh) >= self.cfg['min_new_messages']
                 and len(rows) >= opportunities['min_messages']
                 and len({m['sender'] for m in rows}) >= opportunities['min_senders']):
             reason = 'small_conversation'
         if not reason:
+            self.update(outcome='below_threshold')
             return None
         return dict(mode='entry', reason=reason, source_ids=[m['local_id'] for m in named or available],
                     expires_at=now+self.cfg['reply_ttl_seconds'])
@@ -127,25 +149,25 @@ class ProactiveController:
         elif now > data['expires_at']:
             reason = 'expired'
         else:
-            rows, own = self.context(now)
+            rows, _ = self.context(now)
             newer = [m for m in rows if m['local_id'] > data['snapshot_id']]
-            if data.get('mode') == 'followup':
+            if self.latest_own_id > data['snapshot_id']:
+                self.close_session('manual_own_message', now)
+                reason = 'activity_changed'
+            elif data.get('mode') == 'followup':
                 session = self.session(now)
                 if not session or session['anchor_id'] != data['anchor_id']:
                     reason = 'conversation_finished'
-                elif any(m['sender'] == self.bot.store.self_wxid and m['local_id'] > session['anchor_id'] for m in self.dialogue):
-                    self.close_session('manual_own_message', now)
-                    reason = 'activity_changed'
                 elif newer:
                     reason = 'context_changed'
             elif data.get('mode') == 'entry':
-                if own or not rows:
+                if not rows:
                     reason = 'activity_changed'
                 elif len(newer) >= self.cfg['min_new_messages']:
                     reason = 'context_changed'
-                elif len([t for t in self.bot.journal.get('proactive_entries', []) if 0 <= now-t < 3600]) >= self.cfg['max_entries_per_hour']:
-                    reason = 'entry_budget'
-            elif not self.eligible(rows, own, now):
+                else:
+                    reason = self.entry_block_reason(now)
+            elif not self.eligible(rows, now):
                 reason = 'activity_changed'  # 旧版已入队短句仍使用原门槛。
             elif len(newer) >= self.cfg['min_new_messages']:
                 reason = 'context_changed'
@@ -224,12 +246,10 @@ class ProactiveController:
             if (self.bot.last_local_id <= state['last_checked_id']
                     or now-state['last_checked_at'] < self.cfg['check_interval_seconds']):
                 return
-            rows, own = self.context(now)
+            rows, _ = self.context(now)
             self.update(last_checked_at=now, last_checked_id=self.bot.last_local_id, message_count=len(rows))
-            candidate = self.candidate(rows, own, now)
+            candidate = self.candidate(rows, now)
             if not candidate:
-                if self.state().get('outcome') != 'entry_budget':
-                    self.update(outcome='below_threshold_or_bot_spoke')
                 return
             memory = None
             if self.bot.memory:

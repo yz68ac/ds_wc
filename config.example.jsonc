@@ -34,7 +34,7 @@
     "reply_ttl_seconds": 60, // 主动结果有效期；不得小于下面的请求时限。
     "timeout_seconds": 20, // 判断关闭思考，不影响普通 @ 回复的 high。
     "max_reply_chars": 30, // 主动短句硬上限，过长则放弃。
-    "entry_cooldown_seconds": 300, // 两次主动入场至少间隔5分钟；普通发送冷却仍生效。
+    "entry_cooldown_seconds": 300, // 从上次主动入场确认算起5分钟；@回复和接话不重置，八秒发送间隔仍生效。
     "max_entries_per_hour": 3, // 滚动一小时最多3次主动入场，真实@不计入。
     "opportunities": {
       "enabled": true, // 提到助手/引用她，或低频多人聊天时也可请求判断；不保证会发言。

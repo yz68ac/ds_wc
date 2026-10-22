@@ -48,6 +48,101 @@ class ConversationTests(unittest.TestCase):
         self.decision(target=row['local_id'])
         self.confirm()
 
+    def answer_mention(self, sender='wxid_friend'):
+        identifier = max([m['local_id'] for m in self.rows], default=0)+1
+        self.add(identifier, sender=sender)
+        self.bot.tick()
+        worker = next(job for job in reversed(self.jobs) if job.kind == 'generate' and not job.closed)
+        worker.result = dict(ok=True, reply='正常回复真实提问')
+        self.bot.tick()
+        self.confirm()
+
+    def test_recent_mention_reply_does_not_reset_entry_cooldown_but_eight_seconds_still_waits(self):
+        self.cfg['proactive']['conversation']['enabled'] = False
+        self.cfg['proactive']['check_interval_seconds'] = 1  # 独立验证八秒发送冷却。
+        self.cfg['target']['cooldown_seconds'] = 8
+        self.answer_mention()
+        self.assertFalse(self.bot.journal.get('proactive_entries'))
+        self.now += 1
+        row = self.ordinary('ds你来接个话', sender='wxid_other')
+        self.assertEqual(self.bot.proactive.pending['mode'], 'entry')
+        self.decision(target=row['local_id'])
+        self.assertEqual(len(self.sends()), 1)
+        self.assertIsNone(self.bot.journal.head()['intent'])
+        self.now += 7
+        self.bot.tick()
+        self.assertEqual(len(self.sends()), 2)
+        self.confirm()
+        self.assertEqual(self.bot.journal.get('proactive_entries'), [self.now])
+
+    def test_entry_clock_uses_confirmed_entry_despite_later_mention_and_restart(self):
+        self.cfg['proactive']['conversation']['enabled'] = False
+        self.enter()
+        first_entry = self.now
+        self.now += 120
+        self.answer_mention()
+        self.restart()
+        self.assertEqual(self.bot.journal.get('proactive_entries'), [first_entry])
+        self.assertEqual(self.bot.proactive.entry_block_reason(first_entry+299.9), 'entry_cooldown')
+        self.assertEqual(self.bot.proactive.entry_block_reason(first_entry+300), '')
+        self.now = first_entry+300
+        self.ordinary('ds这个也能聊两句吧')
+        self.assertEqual(self.bot.proactive.pending['mode'], 'entry')
+
+    def test_followups_do_not_count_as_entries_or_extend_entry_cooldown(self):
+        self.enter()
+        first_entry = self.now
+        for _ in range(2):
+            self.now += 10
+            self.ordinary('你说得有点意思')
+            self.decision()
+            self.confirm()
+        self.assertFalse(self.bot.journal.get('proactive_session'))
+        self.assertEqual(self.bot.journal.get('proactive_entries'), [first_entry])
+        self.now = first_entry+300
+        self.ordinary('ds又有个事能接话')
+        self.assertEqual(self.bot.proactive.pending['mode'], 'entry')
+
+    def test_recently_answered_questions_are_not_reused_as_new_entry_sources(self):
+        self.cfg['proactive']['conversation']['enabled'] = False
+        for sender in ('wxid_first', 'wxid_second', 'wxid_third'):
+            self.answer_mention(sender)
+        self.assertFalse(self.bot.journal.get('proactive_entries'))
+        self.now += 10
+        row = self.ordinary('ds现在聊点别的', sender='wxid_other')
+        self.assertEqual(self.bot.proactive.pending['source_ids'], [row['local_id']])
+        self.assertEqual(self.bot.proactive.pending['mode'], 'entry')
+
+    def test_changed_group_conversation_can_enter_after_recent_mention_reply(self):
+        self.answer_mention()
+        self.now += 10
+        self.ordinary('我们今天又输了几把', sender='wxid_other')
+        self.ordinary('我也差不多', sender='wxid_third')
+        self.now += 10
+        row = self.ordinary('看来得换个打法了', sender='wxid_other')
+        self.assertFalse(self.bot.journal.get('proactive_session'))
+        self.assertEqual(self.bot.proactive.pending['reason'], 'small_conversation')
+        self.assertNotIn(1, self.bot.proactive.pending['source_ids'])
+        self.assertIn(row['local_id'], self.bot.proactive.pending['source_ids'])
+
+    def test_hourly_entry_budget_still_blocks_after_normal_mention_reply(self):
+        self.cfg['proactive']['conversation']['enabled'] = False
+        with self.bot.journal.db:
+            self.bot.journal.set('proactive_entries', [self.now-400, self.now-800, self.now-1200])
+        self.answer_mention()
+        self.now += 10
+        self.ordinary('ds再来一句', sender='wxid_other')
+        self.assertIsNone(self.bot.proactive.job)
+        self.assertEqual(self.bot.proactive.state()['outcome'], 'entry_budget')
+        self.assertEqual(len(self.sends()), 1)
+
+    def test_manual_own_image_after_generation_still_cancels_entry(self):
+        self.ordinary('ds来聊一句')
+        self.ordinary('手机人工发图', sender='wxid_self', type=3)
+        self.decision()
+        self.assertFalse(self.sends())
+        self.assertEqual(self.bot.proactive.state()['outcome'], 'activity_changed')
+
     def test_name_is_only_a_candidate_and_confirmed_send_opens_session(self):
         row = self.ordinary('ds你怎么看')
         self.assertEqual(self.bot.proactive.pending['reason'], 'addressed')
