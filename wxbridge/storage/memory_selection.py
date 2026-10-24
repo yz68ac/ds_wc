@@ -9,10 +9,12 @@ STOP = set('喜欢 觉得 认为 表示 提到 今天 昨天 之前 之后 时�
 
 
 def words(text):
+    text = re.sub(r'\[[^\[\]\s]{1,20}\]', '', text)
     return {s.casefold() for s in re.findall(r'[A-Za-z][A-Za-z0-9_+-]{2,}', text)}-GENERAL_WORDS
 
 
 def grams(text):
+    text = re.sub(r'\[[^\[\]\s]{1,20}\]', '', text)
     result = set()
     for run in re.findall(r'[\u3400-\u9fff]+', text):
         for size in (2, 3, 4):

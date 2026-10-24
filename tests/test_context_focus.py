@@ -57,6 +57,13 @@ class RetrievalTests(unittest.TestCase):
         self.assertNotIn('Warframe', topic)
         self.assertNotIn('Warframe', self.prompt(topic))
 
+    def test_shared_emoticon_cannot_make_an_old_game_a_topic_match(self):
+        self.seed(1, '提出开个Warframe账号，并跟[Sly]表情招呼一起玩', 'scene')
+        self.seed(2, '吐槽前两部剧情，觉得JOJO第三部更好')
+        text = self.prompt('JOJO前两部怎么样[Sly][Sly]')
+        self.assertIn('JOJO', text)
+        self.assertNotIn('Warframe', text)
+
     def test_chinese_topic_match_and_generic_overlap_are_distinct(self):
         self.seed(1, '上次骑行修好了自行车车链')
         self.seed(2, '喜欢这个游戏，觉得挺有意思')
