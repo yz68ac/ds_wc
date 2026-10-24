@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 from pathlib import Path
 import sqlite3
@@ -9,6 +10,7 @@ from typing import Any, Callable
 
 from wxbridge.storage.memoryfs import require_memory_directory
 from wxbridge.wechat.pats import is_pat
+from wxbridge.native.protocol import NativeError, task_status
 
 
 def checked_path(value: str, *, existing: bool = False) -> Path:
@@ -38,6 +40,10 @@ class Journal:
             CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS tasks (id INTEGER PRIMARY KEY, data TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS memory_jobs (id INTEGER PRIMARY KEY, data TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS native_requests (
+                request_id TEXT PRIMARY KEY, request_hash TEXT NOT NULL,
+                task_id INTEGER UNIQUE NOT NULL, result TEXT
+            );
         """)
         saved = self.get("identity")
         if saved is not None and saved != identity:
@@ -111,6 +117,50 @@ class Journal:
     def put(self, task):
         self.db.execute("INSERT OR REPLACE INTO tasks (id,data) VALUES (?,?)",
                         (task['id'], json.dumps(task, ensure_ascii=False)))
+        if task.get('external_request_id') and task['phase'] == 'done':
+            self.db.execute('UPDATE native_requests SET result=? WHERE request_id=? AND task_id=?',
+                (json.dumps(task_status(task)), task['external_request_id'], task['id']))
+
+    @staticmethod
+    def _external_hash(value):
+        body=json.dumps([value['chat_id'],value['text']],ensure_ascii=True,separators=(',',':'))
+        return hashlib.sha256(body.encode()).hexdigest()
+
+    def external_status(self, identifier):
+        row=self.db.execute('SELECT task_id,result FROM native_requests WHERE request_id=?',(identifier,)).fetchone()
+        if row is None:raise NativeError('request_not_found')
+        if row[1] is not None:return json.loads(row[1])
+        task=self.task(row[0])
+        if task is None:raise NativeError('request_state_unavailable')
+        return task_status(task)
+
+    def external_duplicate(self, value):
+        row=self.db.execute('SELECT request_hash FROM native_requests WHERE request_id=?',
+                            (value['request_id'],)).fetchone()
+        if row is None:return None
+        if row[0] != self._external_hash(value):raise NativeError('request_id_conflict')
+        return dict(self.external_status(value['request_id']),duplicate=True)
+
+    def enqueue_external(self, value, title, now, *, max_pending, max_requests):
+        with self.db:
+            duplicate=self.external_duplicate(value)
+            if duplicate is not None:return duplicate
+            if len(self.tasks()) >= max_pending:raise NativeError('queue_full')
+            count=self.db.execute('SELECT COUNT(*) FROM native_requests').fetchone()[0]
+            if count>=max_requests:raise NativeError('request_history_full')
+            task_id=self._next_task_id()
+            self.db.execute('INSERT INTO native_requests VALUES (?,?,?,NULL)',
+                            (value['request_id'],self._external_hash(value),task_id))
+            # The distinct phase prevents older delivery code from accidentally falling
+            # back to desktop submission after a rollback.
+            task=dict(id=task_id,phase='external',version=1,trigger_kind='external',
+                      sender='external',triggers=[],trigger_ids=[],generation='ready',
+                      chunks=[value['text']],next_chunk=0,intent=None,blocked_reason='',
+                      deadline=now,closed_at=now,accepted_at=now,
+                      external_request_id=value['request_id'],external_ack_ids=[],
+                      delivery_chat_id=value['chat_id'],delivery_chat_title=title)
+            self.put(task)
+        return dict(task_status(task),duplicate=False)
 
     def recover(self, now: float):
         with self.db:
@@ -296,7 +346,8 @@ class Journal:
             if not task["intent"]:
                 return
             task['last_confirmation_seconds'] = max(0, now-task['intent'].get('created_at', now))
-            self.set('last_confirmed_outbound_id', max(local_id, self.get('last_confirmed_outbound_id', 0)))
+            if not task.get('external_request_id'):
+                self.set('last_confirmed_outbound_id', max(local_id, self.get('last_confirmed_outbound_id', 0)))
             if task["intent"].get("kind") == "notice":
                 task["notice"].update(state="confirmed", text="", ack_id=local_id)
                 reason = task["blocked_reason"] if task["generation"] == "failed" else ""
@@ -308,6 +359,8 @@ class Journal:
                 self.put(task)
                 return
             task["next_chunk"] += 1
+            if task.get('external_request_id'):
+                task.setdefault('external_ack_ids',[]).append(local_id)
             task.update(intent=None, blocked_reason="", last_ack_id=local_id)
             task.update(pre_submit_attempts=0, retry_at=0)
             self.set("last_success", now)
@@ -315,19 +368,19 @@ class Journal:
                 self.set('proactive', {**self.get('proactive', {}), 'outcome': 'sent',
                     'last_sent_at': now, 'last_ack_id': local_id, 'error': ''})
             if task["next_chunk"] == len(task["chunks"]):
-                if on_confirm and not task.get('generation_failed'):
+                if on_confirm and not task.get('generation_failed') and not task.get('external_request_id'):
                     changes = on_confirm(task, local_id, now, self.get('proactive_session'),
                                          self.get('proactive_entries', []))
                     if set(changes)-{'proactive_session', 'proactive_entries'}:
                         raise ValueError('invalid_confirmation_updates')
                     for key, value in changes.items():
                         self.set(key, value)
-                if memory and task.get('trigger_kind') != 'proactive' and not task.get('generation_failed'):
+                if memory and task.get('trigger_kind') not in ('proactive','external') and not task.get('generation_failed'):
                     # 与最终分片确认同事务；只留触发指针，主进程随后重读原窗口。
                     self.enqueue_memory('reply', 'reply:'+str(task_id),
                         [dict(local_id=m['local_id'], time=m['time']) for m in task['triggers']])
                 # 不长期保留已完成的群聊正文。
-                task.update(phase="done", triggers=[], chunks=[])
+                task.update(phase="done", triggers=[], chunks=[], completed_at=now)
             self.put(task)
 
     def memory_jobs(self):

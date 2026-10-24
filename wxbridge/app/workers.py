@@ -56,6 +56,9 @@ def _work(connection, kind, payload):
                     from wxbridge.wechat.ui import Sender
                     cfg, chat, text = payload
                     result = {"ui": Sender(cfg).send(chat, text)}
+                elif kind == 'native_send':
+                    from wxbridge.native.sender import submit
+                    result = {'ui': submit(*payload)}
                 else:
                     raise ValueError("unknown_worker_kind")
                 if metrics:
@@ -74,7 +77,7 @@ def _work(connection, kind, payload):
                     result.update(error=exc.code, retryable=exc.retryable)
                 if metrics:
                     result['model_metrics'] = metrics
-                if kind == "send":
+                if kind in ("send", "native_send"):
                     result["ui"] = {"error": getattr(exc, "code", "ui_unknown"),
                                     "operation": getattr(exc, "metadata", None)}
                     import traceback

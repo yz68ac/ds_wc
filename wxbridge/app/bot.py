@@ -52,6 +52,8 @@ def setup_logging(cfg, verbose=True):
 
 class WeChatDeepSeekBot:
     def __init__(self, cfg, echo=False):
+        from wxbridge.native.protocol import settings as native_settings
+        native_options = native_settings(cfg)
         self.cfg, self.echo = cfg, echo
         self.store = WeChatStore(cfg["db_dir"], cfg["keys_file"], cfg["decrypted_dir"])
         self.chat_id, self.chat_title = self.store.resolve_chat(cfg["target"]["chat"])
@@ -101,6 +103,10 @@ class WeChatDeepSeekBot:
         self.metrics, self.build = Metrics(), runtime_identity(cfg)
         self.status_signature, self.status_written_at = None, 0
         self.next_poll_at = 0
+        self.native_api = None
+        if native_options['enabled'] and not cfg['ui'].get('dry_run'):
+            from wxbridge.native.api import NativeAPI
+            self.native_api = NativeAPI(self)
 
     _chunk = staticmethod(chunk_text)
 
@@ -437,6 +443,8 @@ class WeChatDeepSeekBot:
 
     def tick(self):
         self._poll_messages()
+        if self.native_api:
+            self.native_api.tick()
         if self.proactive:
             self.proactive.priority(time.time())
         with self.metrics.measure('generation'):
@@ -498,6 +506,8 @@ class WeChatDeepSeekBot:
         self.status_signature, self.status_written_at = signature, clock
 
     def close(self):
+        if self.native_api:
+            self.native_api.close()
         if self.proactive:
             self.proactive.cancel('stopped')
         self._pause_memory()

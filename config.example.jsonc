@@ -2,6 +2,16 @@
 // 只需将要覆盖的字段写入 config.json；未填写项继承 config.defaults.json。
 // API Key 放同目录的 .env，人格正文放 prompts/system.md。
 {
+  // 原生发送外部入口：默认关闭；需要另行部署私有helper，普通机器人回复仍走桌面。
+  "native_api": {
+    "enabled": false,
+    "socket": "/run/wxbridge-trial/native-api.sock", // 由现有监听主进程收请求并入队。
+    "helper_socket": "/run/wxbridge-trial/native-helper.sock", // 独立权限隔离的Frida helper。
+    "allowed_chat_ids": ["filehelper"], // 只能填真实内部ID，测试群需显式加入。
+    "max_text_bytes": 4096, // UTF-8字节数，原样发送，不额外调用模型或应用人格格式化。
+    "max_pending": 16,
+    "max_requests": 1024 // 本次内存队列生命周期内保留去重记录；满后拒绝新请求，不淘汰旧ID。
+  },
   // Linux 原生微信数据目录；空值表示自动发现当前账号。
   "db_dir": "",
   // 密钥、解密副本和队列须位于私有 tmpfs,noswap，不能随意改到普通磁盘。

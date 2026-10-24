@@ -36,6 +36,12 @@ class DeliveryController:
         if not task["intent"] or task["intent"]["part"] != part:
             return
         operation = metadata.get("operation") or {}
+        if task.get('external_request_id') and not result['ok'] and operation.get('submitted') is False:
+            with self.journal.db:
+                task.update(phase='done',intent=None,chunks=[],triggers=[],blocked_reason='',
+                            external_error=metadata.get('error','native_rejected'),completed_at=time.time())
+                self.journal.put(task)
+            return
         retryable = {"command_timeout", "command_failed", "activation_failed", "pointer_mismatch", "pointer_unknown", "button_obstructed"}
         if (not result["ok"] and operation.get("submitted") is False
                 and metadata.get("error") in retryable and task.get("pre_submit_attempts", 0) < 2):
@@ -57,7 +63,7 @@ class DeliveryController:
         intent, cursor = task["intent"], task["intent"]["baseline"]
         text = self.journal.outgoing_text(task)
         while True:
-            rows = self.store.messages_after(self.chat_id, cursor, limit=100)
+            rows = self.store.messages_after(task.get('delivery_chat_id',self.chat_id), cursor, limit=100)
             for msg in rows:
                 if (msg["local_id"] > intent["baseline"] and msg.get("sender") == self.store.self_wxid
                         and msg.get("type") == 1 and msg.get("text") == text):
@@ -79,7 +85,7 @@ class DeliveryController:
 
     def _candidate(self, now):
         task = self.journal.head()
-        if not task or task["phase"] != "queued" or task["intent"] or task["blocked_reason"]:
+        if not task or task["phase"] not in ("queued", "external") or task["intent"] or task["blocked_reason"]:
             return
         notice = (task.get("notice") or {}).get("state") == "pending"
         if notice and not self.cfg.get('search', {}).get('feedback_enabled', False):
@@ -124,12 +130,17 @@ class DeliveryController:
                 self.journal.put(task)
             log.info("模拟完成 task=%s version=%s", task["id"], task["version"])
             return
-        baseline = self.store.last_local_id(self.chat_id)
+        baseline = self.store.last_local_id(task.get('delivery_chat_id',self.chat_id))
         timeout = float(self.cfg["ui"]["send_confirm_timeout_seconds"])
         self.journal.intend(task["id"], baseline, now, timeout, kind="notice" if notice else "reply")
         try:
             current = self.journal.task(task["id"])
-            job = job_factory("send", (self.cfg, self.chat_title, self.journal.outgoing_text(current)), timeout=30)
+            if current.get('external_request_id'):
+                job = job_factory('native_send', (self.cfg, current['delivery_chat_title'],
+                    self.journal.outgoing_text(current), current['delivery_chat_id'],
+                    current['external_request_id']), timeout=30)
+            else:
+                job = job_factory("send", (self.cfg, self.chat_title, self.journal.outgoing_text(current)), timeout=30)
             self.job = (task["id"], current["intent"]["part"], job)
             log.info("发送意图 task=%s version=%s kind=%s part=%s baseline=%s", task["id"], task["version"],
                      current["intent"]["kind"], current["intent"]["part"], baseline)
