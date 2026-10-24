@@ -12,6 +12,13 @@ from wxbridge.wechat.pats import is_pat
 from wxbridge.wechat.references import prompt_reference
 
 
+class ProactiveError(ValueError):
+    """只携带固定错误码和长度，不携带正文、模型推理或原始异常。"""
+    def __init__(self, code, *, reply_chars=None):
+        super().__init__(code)
+        self.code, self.reply_chars = code, reply_chars
+
+
 def timeline(rows, now, seconds):
     current = {m['local_id']: m for m in rows if m.get('local_id') and
                message_time(m) is not None and now-seconds <= m['time'] <= now}
@@ -103,41 +110,47 @@ def build_reply_prompt(cfg, prompt, reply_to):
 
 def parse_judgment(content):
     if not isinstance(content, str) or len(content) > 1024:
-        raise ValueError('proactive_invalid_judgment')
-    value = json.loads(content)
+        raise ProactiveError('proactive_invalid_judgment')
+    try:
+        value = json.loads(content)
+    except ValueError:
+        raise ProactiveError('proactive_invalid_judgment') from None
     if (not isinstance(value, dict) or set(value) != {'speak', 'reply_to'}
             or type(value['speak']) is not bool
             or (value['speak'] and (type(value['reply_to']) is not int or value['reply_to'] < 1))
             or (not value['speak'] and value['reply_to'] is not None)):
-        raise ValueError('proactive_invalid_judgment')
+        raise ProactiveError('proactive_invalid_judgment')
     return value
 
 
 def parse_decision(content, max_chars=30, cfg=None):
     if not isinstance(content, str) or len(content) > 2048:
-        raise ValueError('proactive_invalid_response')
-    value = json.loads(content)
+        raise ProactiveError('proactive_invalid_response')
+    try:
+        value = json.loads(content)
+    except ValueError:
+        raise ProactiveError('proactive_invalid_response') from None
     if (not isinstance(value, dict) or set(value) not in ({'speak', 'text'}, {'speak', 'text', 'reply_to'})
             or type(value['speak']) is not bool or not isinstance(value['text'], str)):
-        raise ValueError('proactive_invalid_response')
+        raise ProactiveError('proactive_invalid_response')
     text = ' '.join(format_reply(value['text'], cfg).split())
     if value['speak']:
         if not 1 <= len(text) <= max_chars or any(ord(c) < 32 for c in text):
-            raise ValueError('proactive_invalid_reply_length')
+            raise ProactiveError('proactive_invalid_reply_length', reply_chars=len(text))
     elif text:
-        raise ValueError('proactive_silent_with_text')
+        raise ProactiveError('proactive_silent_with_text')
     result = dict(speak=value['speak'], text=text)
     if 'reply_to' in value:
         identifier = value['reply_to']
         if ((value['speak'] and (type(identifier) is not int or identifier < 1))
                 or (not value['speak'] and identifier is not None)):
-            raise ValueError('proactive_invalid_reply_target')
+            raise ProactiveError('proactive_invalid_reply_target')
         result['reply_to'] = identifier
     return result
 
 
 def evaluate(cfg, prompt, *, source_ids=None, timeout_seconds=None, on_reply=None):
-    from wxbridge.ai.client import DeepSeekClient
+    from wxbridge.ai.client import DeepSeekClient, DeepSeekError
     settings = cfg['proactive']
     from wxbridge.ai.roles import model_settings
     deadline = time.monotonic()+min(settings['reply_ttl_seconds'],
@@ -148,12 +161,27 @@ def evaluate(cfg, prompt, *, source_ids=None, timeout_seconds=None, on_reply=Non
     if not decision['speak']:
         return dict(speak=False, text='', reply_to=None)
     if decision['reply_to'] not in (source_ids or []):
-        raise ValueError('proactive_invalid_reply_target')
+        raise ProactiveError('proactive_invalid_reply_target')
     if time.monotonic() >= deadline:
-        raise ValueError('proactive_expired_before_reply')
+        raise ProactiveError('proactive_expired_before_reply')
     reply_prompt = build_reply_prompt(cfg, prompt, decision['reply_to'])
     if on_reply:
         on_reply(decision['reply_to'])
-    reply = DeepSeekClient(cfg, role='reply').complete(reply_prompt, deadline=deadline)
-    return parse_decision(json.dumps(dict(speak=True, text=reply.get('content') or '',
-        reply_to=decision['reply_to']), ensure_ascii=False), settings['max_reply_chars'], cfg)
+    # 长度是模型软约束；一次不合格不能直接吞掉已决定要回的短句。
+    # 最多重写一次，共用原截止时间/并发位置，不截断正文、不重发微信操作。
+    for attempt in range(2):
+        if time.monotonic() >= deadline:
+            raise ProactiveError('proactive_expired_before_reply')
+        try:
+            reply = DeepSeekClient(cfg, role='reply').complete(reply_prompt, deadline=deadline,
+                                                             require_complete=True)
+            return parse_decision(json.dumps(dict(speak=True, text=reply.get('content') or '',
+                reply_to=decision['reply_to']), ensure_ascii=False), settings['max_reply_chars'], cfg)
+        except ProactiveError as exc:
+            if exc.code != 'proactive_invalid_reply_length' or attempt:
+                raise
+        except DeepSeekError as exc:
+            if exc.code != 'output_limit' or attempt:
+                raise
+        reply_prompt[0]['content'] += (f'\n【重新生成短答】上一条未满足输出要求。只保留最关键的一句，'
+            f'最多{settings["max_reply_chars"]}字；省去扩展解释，不输出JSON或改写说明，直接给出完整短句。')

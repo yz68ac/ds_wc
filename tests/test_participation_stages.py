@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from wxbridge.ai.client import DeepSeekClient, DeepSeekError
-from wxbridge.ai.proactive import build_prompt, evaluate, parse_judgment
+from wxbridge.ai.proactive import build_prompt, evaluate, parse_judgment, ProactiveError
 from wxbridge.config import DEFAULTS
 import test_conversation as conversation
 
@@ -95,6 +95,98 @@ class StageTests(unittest.TestCase):
             self.assertEqual(post.call_count, 1)
         callback.assert_not_called()
 
+    def test_overlength_reply_rewrites_once_with_original_deadline_and_max_thinking(self):
+        clock, timeouts = [100.], []
+        private = 'PRIVATE_OVERSIZE_ANSWER'*3
+        outputs = ['{"speak":true,"reply_to":7}', private, '这局你确实拿下了']
+        def post(payload, timeout):
+            timeouts.append(timeout)
+            clock[0] += 2
+            return response(outputs[len(timeouts)-1])
+        callback = Mock()
+        original = copy.deepcopy(self.cfg)
+        with patch('wxbridge.ai.client.deepseek_api_key', return_value='synthetic-key'), \
+                patch('wxbridge.ai.proactive.time.monotonic', side_effect=lambda: clock[0]), \
+                patch.object(DeepSeekClient, '_post', side_effect=post) as transport:
+            result = evaluate(self.cfg, self.prompt, source_ids=[7], timeout_seconds=20, on_reply=callback)
+        self.assertEqual(result, dict(speak=True, text='这局你确实拿下了', reply_to=7))
+        self.assertEqual(timeouts, [20, 18, 16])
+        callback.assert_called_once_with(7)
+        calls = [c.args[0] for c in transport.call_args_list]
+        self.assertEqual(calls[2]['reasoning_effort'], 'max')
+        self.assertEqual(calls[1]['max_tokens'], calls[2]['max_tokens'])
+        self.assertEqual(calls[1]['messages'][1], calls[2]['messages'][1])
+        self.assertIn('重新生成短答', calls[2]['messages'][0]['content'])
+        self.assertNotIn(private, json.dumps(calls, ensure_ascii=False))
+        self.assertEqual(original, self.cfg)
+
+    def test_two_bad_lengths_report_length_and_never_make_a_third_body_request(self):
+        with patch('wxbridge.ai.client.deepseek_api_key', return_value='synthetic-key'), \
+                patch.object(DeepSeekClient, '_post', side_effect=[
+                    response('{"speak":true,"reply_to":7}'), response('字'*41), response('字'*42)]) as post:
+            with self.assertRaises(ProactiveError) as failure:
+                evaluate(self.cfg, self.prompt, source_ids=[7])
+        self.assertEqual(post.call_count, 3)
+        self.assertEqual(failure.exception.code, 'proactive_invalid_reply_length')
+        self.assertEqual(failure.exception.reply_chars, 42)
+
+    def test_empty_reply_can_rewrite_but_no_placeholder_is_sent(self):
+        with patch('wxbridge.ai.client.deepseek_api_key', return_value='synthetic-key'), \
+                patch.object(DeepSeekClient, '_post', side_effect=[
+                    response('{"speak":true,"reply_to":7}'), response(''), response('我在这呢')]) as post:
+            answer = evaluate(self.cfg, self.prompt, source_ids=[7])
+        self.assertEqual(answer['text'], '我在这呢')
+        self.assertEqual(post.call_count, 3)
+
+    def test_token_truncation_is_detected_and_rewrites_under_same_budget(self):
+        from wxbridge.ai.client import capture_metrics
+        cut = response('')
+        cut['choices'][0]['finish_reason'] = 'length'
+        with patch('wxbridge.ai.client.deepseek_api_key', return_value='synthetic-key'), \
+                patch.object(DeepSeekClient, '_post', side_effect=[
+                    response('{"speak":true,"reply_to":7}'), cut, response('这次接上了')]), capture_metrics() as metrics:
+            answer = evaluate(self.cfg, self.prompt, source_ids=[7])
+        self.assertEqual(answer['text'], '这次接上了')
+        self.assertEqual([v['role'] for v in metrics], ['participation', 'reply', 'reply'])
+        self.assertEqual(metrics[1]['error'], 'output_limit')
+
+    def test_expired_rewrite_has_no_request_after_original_deadline(self):
+        clock, calls = [100.], []
+        def post(payload, timeout):
+            calls.append(payload)
+            if len(calls) == 1:
+                return response('{"speak":true,"reply_to":7}')
+            clock[0] += 21
+            return response('字'*41)
+        with patch('wxbridge.ai.client.deepseek_api_key', return_value='synthetic-key'), \
+                patch('wxbridge.ai.proactive.time.monotonic', side_effect=lambda: clock[0]), \
+                patch.object(DeepSeekClient, '_post', side_effect=post):
+            with self.assertRaisesRegex(ProactiveError, 'proactive_expired_before_reply'):
+                evaluate(self.cfg, self.prompt, source_ids=[7], timeout_seconds=20)
+        self.assertEqual(len(calls), 2)
+
+    def test_http_body_failure_does_not_enter_length_rewrite(self):
+        with patch('wxbridge.ai.client.deepseek_api_key', return_value='synthetic-key'), \
+                patch.object(DeepSeekClient, '_post', side_effect=[
+                    response('{"speak":true,"reply_to":7}'), DeepSeekError('http_401')]) as post:
+            with self.assertRaisesRegex(DeepSeekError, 'http_401'):
+                evaluate(self.cfg, self.prompt, source_ids=[7])
+        self.assertEqual(post.call_count, 2)
+
+    def test_worker_preserves_only_known_error_code_and_length(self):
+        import logging
+        from wxbridge.app.workers import _work
+        for code, expected in (('proactive_invalid_reply_length', 'proactive_invalid_reply_length'),
+                               ('PRIVATE_MODEL_OUTPUT', 'proactive_worker_failed')):
+            connection = Mock()
+            prior = logging.root.manager.disable
+            try:
+                with patch('wxbridge.ai.proactive.evaluate', side_effect=ProactiveError(code, reply_chars=41)):
+                    _work(connection, 'proactive', ({}, []))
+            finally:
+                logging.disable(prior)
+            self.assertEqual(connection.send.call_args.args[0], dict(ok=False, error=expected, reply_chars=41))
+
 
 class StagePipelineTests(unittest.TestCase):
     setUp = conversation.ConversationTests.setUp
@@ -150,3 +242,21 @@ class StagePipelineTests(unittest.TestCase):
         self.decision()
         self.assertFalse(self.sends())
         self.assertEqual(self.bot.proactive.state()['outcome'], 'expired')
+
+    def test_body_length_failure_reaches_status_without_body_and_without_send(self):
+        self.start_reply().result = dict(ok=False, error='proactive_invalid_reply_length', reply_chars=41,
+                                        body='PRIVATE_MODEL_OUTPUT')
+        self.bot.tick()
+        state = self.bot.proactive.state()
+        self.assertEqual(state['error'], 'proactive_invalid_reply_length')
+        self.assertEqual(state['reply_chars'], 41)
+        self.assertNotIn('PRIVATE_MODEL_OUTPUT', json.dumps(state))
+        self.assertFalse(self.sends())
+
+    def test_unknown_worker_error_and_invalid_metadata_cannot_leak_to_status(self):
+        self.start_reply().result = dict(ok=False, error='PRIVATE_MODEL_OUTPUT', reply_chars='PRIVATE_MODEL_OUTPUT')
+        self.bot.tick()
+        state = self.bot.proactive.state()
+        self.assertEqual(state['error'], 'proactive_worker_failed')
+        self.assertIsNone(state['reply_chars'])
+        self.assertNotIn('PRIVATE_MODEL_OUTPUT', json.dumps(state))

@@ -252,7 +252,7 @@ class ConversationTests(unittest.TestCase):
         self.ordinary('是跟你说的')
         self.decision(target=1)  # 旧的入场消息不能作为新回应。
         self.assertEqual(len(self.sends()), 1)
-        self.assertEqual(self.bot.proactive.state()['error'], 'ValueError')
+        self.assertEqual(self.bot.proactive.state()['error'], 'proactive_invalid_reply_target')
         self.assertEqual(self.bot.journal.get('proactive_session')['followups'], 0)
 
     def test_manual_own_message_cancels_generated_followup(self):

@@ -81,6 +81,10 @@ thinking 可用 enabled/disabled，reasoning_effort 可用 low/high/max，关闭
 
 `queue-status` 和 `live-status.json` 的 proactive 字段显示阶段、机会类型、计数及安全错误；conversation 字段显示是否有窗口、计时基准 activity_at、到期时间、来源类型及已确认接话数，不显示成员 ID、聊天、草稿或内部推理。outcome 区分 entry_cooldown（入场冷却）、entry_budget（仅启用小时限制时）、evaluation_cooldown（判断节流）、waiting_conversation_reply、below_threshold 和 silent，避免把所有未触发都混成“刚发过言”。真实 @ 流程和后台学习规则不变，主动短句确认本身不额外触发记忆整理。
 
+## 接话输出失败
+
+接话正文长度仍限制在 `max_reply_chars`（默认30字）。模型返回空正文、超长正文或token截断时，在同一个工作进程、原有总截止时间内最多重新生成一次短句；不增加并发、不截断原句、不重复判断是否介入，也不补发历史问题。正常合格回复不增加请求。HTTP错误、无效判断和错误目标不走长度重写；重写仍不合格时保持不发送，并记录固定错误码及可用的字数，正文和内部推理不进入日志。`proactive_invalid_reply_length`、`proactive_invalid_judgment`、`output_limit`等会保留到状态，不再全部折叠成ValueError。这里的上限只针对无需真实@的接话，真实@的独立回复队列不变。
+
 ## 轮询性能
 
 数据库和 WAL 未变时复用私有内存盘的解密副本，有变化时刷新；WAL 处理并非只读取最新一条的恒定成本操作。主动策略不按每半秒调用 API，额外检查受新消息和上述节流控制。需要在实际机器分别测空闲及活跃场景，结合客户端、子进程和数据库大小观察峰值。

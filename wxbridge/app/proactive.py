@@ -4,10 +4,11 @@ from __future__ import annotations
 import json
 import logging
 
-from wxbridge.ai.proactive import activity, addresses_bot, build_prompt, parse_decision, timeline
+from wxbridge.ai.proactive import activity, addresses_bot, build_prompt, parse_decision, timeline, ProactiveError
 from wxbridge.ai.memory import member_labels
 from wxbridge.wechat.pats import is_pat
 from wxbridge.app.conversation import SESSION_POLICY, observation_updates
+from wxbridge.app.task_policy import proactive_failure_code
 
 log = logging.getLogger('wxbridge')
 
@@ -45,6 +46,14 @@ class ProactiveController:
             self.job = None
             self.pending = None
             self.update(outcome=reason)
+
+    def fail(self, result):
+        self.cancel('error')
+        code = proactive_failure_code(result)
+        chars = result.get('reply_chars')
+        self.update(outcome='error', error=code,
+                    reply_chars=chars if type(chars) is int and 0 <= chars <= 1000000 else None)
+        log.warning('主动接话跳过 category=%s', code)
 
     def foreground(self):
         return any(t.get('trigger_kind') != 'proactive' for t in self.bot.journal.tasks())
@@ -243,7 +252,8 @@ class ProactiveController:
                 self.bot.metrics.record_models(result.get('model_metrics'))
                 pending, self.pending = self.pending, None
                 if not result.get('ok'):
-                    raise ValueError('proactive_worker_failed')
+                    self.fail(result)
+                    return
                 decision = parse_decision(json.dumps(result['decision'], ensure_ascii=False), self.cfg['max_reply_chars'], self.bot.cfg)
                 if not decision['speak']:
                     self.update(outcome='silent', error='')
@@ -255,7 +265,7 @@ class ProactiveController:
                 if target is None and not (self.cfg['opportunities']['enabled'] or self.cfg['conversation']['enabled']):
                     target = pending['source_ids'][-1]  # 兼容旧协议的受控测试/关闭新功能的运行。
                 if target not in pending['source_ids']:
-                    raise ValueError('proactive_invalid_reply_target')
+                    raise ProactiveError('proactive_invalid_reply_target')
                 rows, _ = self.context(now)
                 source = next((m for m in rows if m['local_id'] == target), None)
                 if source is None:
@@ -293,7 +303,7 @@ class ProactiveController:
             through = max(m['local_id'] for m in self.dialogue)
             self.update(last_evaluated_id=through, last_evaluated_at=now,
                         evaluations=state['evaluations']+1, outcome='evaluating', mode=candidate['mode'],
-                        opportunity=candidate['reason'], model_role='participation', error='')
+                        opportunity=candidate['reason'], model_role='participation', error='', reply_chars=None)
             from wxbridge.ai.roles import model_settings
             remaining = max(0, candidate['expires_at']-now)
             options = dict(source_ids=candidate['source_ids'], timeout_seconds=remaining)
@@ -304,6 +314,5 @@ class ProactiveController:
             self.job = (worker, through, candidate['expires_at'])
             log.info('主动接话判断 mode=%s reason=%s messages=%s', candidate['mode'], candidate['reason'], len(rows))
         except Exception as exc:
-            self.cancel('error')
-            self.update(outcome='error', error=type(exc).__name__)
-            log.warning('主动接话跳过 category=%s', type(exc).__name__)
+            self.fail(dict(error=getattr(exc, 'code', type(exc).__name__),
+                           reply_chars=exc.reply_chars if isinstance(exc, ProactiveError) else None))

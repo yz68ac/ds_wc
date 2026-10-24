@@ -3,6 +3,19 @@ from dataclasses import dataclass
 import re
 
 
+def proactive_failure_code(result):
+    code = result.get('error')
+    known = {'proactive_invalid_judgment', 'proactive_invalid_response',
+             'proactive_invalid_reply_length', 'proactive_silent_with_text',
+             'proactive_invalid_reply_target', 'proactive_expired_before_reply',
+             'output_limit', 'connection_failed', 'deadline_exceeded', 'missing_api_key',
+             'invalid_response', 'request_too_large', 'response_too_large', 'WorkerTimeout', 'WorkerExited',
+             'ValueError', 'JSONDecodeError', 'ContextError'}
+    if isinstance(code, str) and (code in known or re.fullmatch(r'http_[0-9]{3}', code)):
+        return code
+    return 'proactive_worker_failed'
+
+
 def memory_failure_code(result):
     code = result.get('error')
     known = {'output_limit': 'memory_output_limit', 'JSONDecodeError': 'memory_invalid_json',
