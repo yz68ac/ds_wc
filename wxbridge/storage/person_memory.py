@@ -12,6 +12,7 @@ import tempfile
 from wxbridge.ai.avatars import validate_visual, visual_description
 from wxbridge.storage import expression_memory, relationships
 from wxbridge.ai.emoticons import token_pattern
+from wxbridge.storage.memory_selection import MemoryTopic
 
 DAY = 86400
 LIMITS = {"scene": 10, "event": 10, "preference": 5, "impression": 3}
@@ -184,8 +185,9 @@ class MemoryStore:
                                      entries=active_entries(p, now), relationship=relationships.background(p, now))
         return result
 
-    def prompt(self, labels, asker, now, budget=1200, *, use_avatar=True, dialogue='', use_learning=True):
+    def prompt(self, labels, asker, now, budget=1200, *, use_avatar=True, dialogue='', use_learning=True, question=''):
         result, used, visual_hints = [], 0, []
+        topic = MemoryTopic(dialogue, question)
         order = [asker, *[u for u in labels if u != asker and u in self.data["members"]]]
         for uid in order[:5]:
             p = self.data["members"].get(uid)
@@ -209,7 +211,10 @@ class MemoryStore:
                         "不是本人身份、性格或偏好的证据，仅可轻微参考表达；不主动提头像、观察或评价过程，无关就忽略。")
                 if description:
                     visual_hints.append(line)
-            for e in sorted(entries, key=lambda e: (-e["confirmed_at"], -e["confidence"])):
+            selected = [(topic.score(e, personal=uid == asker), e) for e in entries]
+            for rank, e in sorted(selected, key=lambda item: (-item[0], -item[1]['confirmed_at'], -item[1]['confidence'])):
+                if not rank:
+                    continue
                 label = "暂时推测" if e["kind"] == "impression" else e["kind"]
                 line = json.dumps(dict(member=labels[uid], kind=label, mode=e["mode"],
                                        when=fuzzy_time(e["occurred_at"], now), summary=e["summary"]), ensure_ascii=False)

@@ -27,6 +27,7 @@ from wxbridge.app.delivery import DeliveryController
 from wxbridge.app.metrics import Metrics
 from wxbridge.app.build_info import runtime_identity
 from wxbridge.ai.roles import model_settings
+from wxbridge.storage.memory_selection import memory_dialogue
 
 log = logging.getLogger("wxbridge")
 
@@ -243,7 +244,8 @@ class WeChatDeepSeekBot:
                         memory = dict(labels=labels, text=self.memory.prompt(labels, trigger["sender"], time.time(),
                                       int(self.cfg["memory"]["prompt_max_chars"]),
                                       use_avatar=self.cfg["memory"].get("avatar", {}).get("enabled", False),
-                                      dialogue='\n'.join(m.get('text', '') for m in [*context, trigger]),
+                                      dialogue=memory_dialogue(context, task['triggers'], self.store.self_wxid),
+                                      question=trigger.get('text', ''),
                                       use_learning=self.cfg['memory']['learning']['enabled']))
                     except Exception as exc:
                         self.memory_error = type(exc).__name__

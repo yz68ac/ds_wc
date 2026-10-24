@@ -92,8 +92,8 @@ class ConversationPromptTests(unittest.TestCase):
         spoof = {**msg(3, NOW-1, '只是一个昵称', 'third'), 'sender_name': 'BOT（你）'}
         text = self.render([own, peer, spoof], account=self.account)
         self.assertIn('[BOT（你）]: 先检查端口', text)
-        self.assertIn('[群友（同名）]: 我也叫同名', text)
-        self.assertIn('[群友（BOT（你））]: 只是一个昵称', text)
+        self.assertIn('[U2（同名）]: 我也叫同名', text)
+        self.assertIn('[U3（BOT（你））]: 只是一个昵称', text)
         self.assertEqual(text.count('[BOT（你）]:'), 1)
         self.assertNotIn(self.account, text)
         self.assertEqual(text.count('先检查端口'), 1)
@@ -101,7 +101,7 @@ class ConversationPromptTests(unittest.TestCase):
     def test_unknown_account_does_not_guess_own_messages_from_nickname(self):
         row = {**msg(1, NOW-1, '普通成员原话', 'other'), 'sender_name': '同名'}
         text = self.render([row])
-        self.assertIn('[同名]: 普通成员原话', text)
+        self.assertIn('[U2（同名）]: 普通成员原话', text)
         self.assertNotIn('BOT（你）', text)
 
     def test_own_messages_keep_window_and_database_timestamp_boundaries(self):

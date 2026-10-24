@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 from wxbridge.ai.client import DeepSeekClient, DeepSeekError
 from wxbridge.ai.proactive import build_prompt, evaluate, parse_judgment, ProactiveError
 from wxbridge.config import DEFAULTS
+from synthetic import NOW, msg
 import test_conversation as conversation
 
 
@@ -18,7 +19,7 @@ class StageTests(unittest.TestCase):
     def setUp(self):
         self.cfg = copy.deepcopy(DEFAULTS)
         self.cfg['deepseek'].update(system_prompt_file='', system_prompt='合成人格')
-        self.prompt = build_prompt(self.cfg, [], '合成群', opportunity=dict(source_ids=[7]))
+        self.prompt = build_prompt(self.cfg, [msg(7, NOW, '合成接话目标')], '合成群', opportunity=dict(source_ids=[7]))
 
     def test_strict_judgment_does_not_accept_generated_text_or_unusable_target(self):
         for value in (dict(speak=True, text='不许预生成', reply_to=7), dict(speak=1, reply_to=7),
@@ -49,7 +50,10 @@ class StageTests(unittest.TestCase):
         self.assertNotIn('reasoning_effort', judge)
         self.assertEqual(reply['thinking'], {'type': 'enabled'})
         self.assertEqual(reply['reasoning_effort'], 'max')
-        self.assertEqual(judge['messages'][1], reply['messages'][1])
+        before = json.loads(judge['messages'][1]['content'])
+        after = json.loads(reply['messages'][1]['content'])
+        self.assertEqual(before['messages'], after['messages'])
+        self.assertEqual(after['reply_target']['id'], 7)
         self.assertNotIn('合成人格', judge['messages'][0]['content'])
         self.assertTrue(reply['messages'][0]['content'].startswith('合成人格'))
         self.assertIn('消息ID 7', reply['messages'][0]['content'])

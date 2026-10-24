@@ -9,6 +9,7 @@ from wxbridge.ai.memory import member_labels
 from wxbridge.wechat.pats import is_pat
 from wxbridge.app.conversation import SESSION_POLICY, observation_updates
 from wxbridge.app.task_policy import proactive_failure_code
+from wxbridge.storage.memory_selection import memory_dialogue
 
 log = logging.getLogger('wxbridge')
 
@@ -291,22 +292,31 @@ class ProactiveController:
             candidate = self.candidate(rows, now)
             if not candidate:
                 return
-            memory = None
-            if self.bot.memory:
-                labels = member_labels(rows, [rows[-1]], self.bot.store.self_wxid)
-                memory = dict(labels=labels, text=self.bot.memory.prompt(labels, rows[-1]['sender'], now,
-                    self.bot.cfg['memory']['prompt_max_chars'], use_avatar=self.bot.cfg['memory']['avatar']['enabled'],
-                    dialogue='\n'.join(m.get('text', '') for m in self.dialogue),
-                    use_learning=self.bot.cfg['memory']['learning']['enabled']))
-            prompt = build_prompt(self.bot.cfg, self.dialogue, self.bot.chat_title, memory,
+            labels = member_labels(self.dialogue, [], self.bot.store.self_wxid)
+            prompt = build_prompt(self.bot.cfg, self.dialogue, self.bot.chat_title, dict(labels=labels),
                 opportunity={k:v for k,v in candidate.items() if k != 'expires_at'}, account=self.bot.store.self_wxid)
+            reply_memory = {}
+            if self.bot.memory:
+                cached = {}
+                for source in rows:
+                    if source['local_id'] not in candidate['source_ids']:
+                        continue
+                    history = [m for m in self.dialogue if m['local_id'] <= source['local_id']]
+                    topic = memory_dialogue(history, [source], self.bot.store.self_wxid)
+                    key = (source['sender'], topic)
+                    if key not in cached:
+                        cached[key] = self.bot.memory.prompt(labels, source['sender'], now,
+                            self.bot.cfg['memory']['prompt_max_chars'], use_avatar=self.bot.cfg['memory']['avatar']['enabled'],
+                            dialogue=topic, question=source.get('text', ''),
+                            use_learning=self.bot.cfg['memory']['learning']['enabled'])
+                    reply_memory[str(source['local_id'])] = cached[key]
             through = max(m['local_id'] for m in self.dialogue)
             self.update(last_evaluated_id=through, last_evaluated_at=now,
                         evaluations=state['evaluations']+1, outcome='evaluating', mode=candidate['mode'],
                         opportunity=candidate['reason'], model_role='participation', error='', reply_chars=None)
             from wxbridge.ai.roles import model_settings
             remaining = max(0, candidate['expires_at']-now)
-            options = dict(source_ids=candidate['source_ids'], timeout_seconds=remaining)
+            options = dict(source_ids=candidate['source_ids'], timeout_seconds=remaining, reply_memory=reply_memory)
             timeout = min(remaining, model_settings(self.bot.cfg, 'participation')['timeout_seconds']
                           + model_settings(self.bot.cfg, 'reply')['timeout_seconds'])+2
             worker = self.bot.job_factory('proactive', (self.bot.cfg, prompt, options), timeout=timeout)
