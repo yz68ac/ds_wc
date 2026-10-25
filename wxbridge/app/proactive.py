@@ -41,6 +41,19 @@ class ProactiveController:
         with self.bot.journal.db:
             self.bot.journal.set('proactive', {**self.state(), **fields})
 
+    def remember_decision(self, pending, decision, outcome, now):
+        """Persist bounded verdict metadata; polling must not erase it or log content."""
+        state = self.state()
+        record = dict(at=now, mode=pending.get('mode'), opportunity=pending.get('reason'),
+            source_ids=pending.get('source_ids', [])[-20:], speak=decision['speak'],
+            reply_to=decision.get('reply_to'), outcome=outcome)
+        counts = dict(state.get('decision_counts') or {})
+        key = 'speak' if decision['speak'] else 'silent'
+        counts[key] = counts.get(key, 0)+1
+        self.update(last_decision=record,
+                    decision_history=[*(state.get('decision_history') or []), record][-20:],
+                    decision_counts=counts)
+
     def cancel(self, reason):
         if self.job:
             self.job[0].close()
@@ -267,13 +280,16 @@ class ProactiveController:
                     source = next((m for m in rows if m['local_id'] == target), None)
                     if source is None or not addresses_bot(source, self.bot.cfg, self.bot.store.self_wxid):
                         self.update(outcome='source_unavailable')
+                        self.remember_decision(pending, decision, 'source_unavailable', now)
                         return
                     task = self.bot.journal.enqueue_addressed(source, now, observe=self.observe)
                     self.update(outcome='handed_to_reply' if task else 'already_handled', error='')
+                    self.remember_decision(pending, decision, self.state()['outcome'], now)
                     return
                 decision = parse_decision(json.dumps(result['decision'], ensure_ascii=False), self.cfg['max_reply_chars'], self.bot.cfg)
                 if not decision['speak']:
                     self.update(outcome='silent', error='')
+                    self.remember_decision(pending, decision, 'silent', now)
                     return
                 if now > expires:
                     self.update(outcome='expired', error='')
@@ -287,12 +303,14 @@ class ProactiveController:
                 source = next((m for m in rows if m['local_id'] == target), None)
                 if source is None:
                     self.update(outcome='source_unavailable')
+                    self.remember_decision(pending, decision, 'source_unavailable', now)
                     return
                 metadata = {**pending, 'reply_to': target, 'recipient': source['sender']}
                 task = self.bot.journal.enqueue_proactive(decision['text'], through, now, expires, metadata=metadata)
                 if task:
                     self.validate(task, now)
                     self.update(outcome='queued' if self.bot.journal.task(task['id'])['phase'] != 'done' else self.state()['outcome'], error='')
+                    self.remember_decision(pending, decision, self.state()['outcome'], now)
                 return
             if self.bot.journal.tasks() or self.bot.ui_job or self.bot.echo:
                 return
