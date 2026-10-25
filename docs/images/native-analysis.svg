@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1120" viewBox="0 0 1600 1120" role="img" aria-labelledby="title desc">
+<title id="title">微信发送链路：从会话对象到后台服务</title>
+<desc id="desc">两轮实际分析：会话切换复用输入控制器；后台服务为每条消息显式指定收件人，再通过客户端调度及数据库确认。文件助手和群聊已验证，客户端仍保留显示环境。</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#4268a6"/></marker>
+<marker id="orange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#d57936"/></marker></defs>
+<style>text{font-family:'Microsoft YaHei','Noto Sans CJK SC',sans-serif;fill:#18314d} .muted{fill:#5e7185} .small{font-size:17px} .body{font-size:20px} .node{font-size:21px;font-weight:700} .section{font-size:24px;font-weight:700}</style>
+<rect width="1600" height="1120" fill="#f3f6fa"/>
+
+<text x="40" y="65" font-size="38" font-weight="700">微信发送链路：从会话对象到后台服务</text>
+<text x="42" y="103" font-size="19" style="fill:#5e7185">两轮分析与实机验证  ·  Linux x86-64 微信 4.1.13.26  ·  2026-10-24—25</text>
+<rect x="40" y="146" width="450" height="588" rx="16" fill="#fff8ee" stroke="#f0d4b4"/>
+<rect x="520" y="146" width="1040" height="588" rx="16" fill="#edf6ff" stroke="#cbdff2"/>
+<text x="64" y="187" font-size="24" font-weight="700">01  会话模型为何仍依赖界面</text>
+<text x="64" y="219" font-size="19" style="fill:#805f3d">两轮切换中，对象保持复用</text>
+<rect x="64" y="251" width="170" height="60" rx="12" fill="#ffffff" stroke="#edcba3"/>
+<text x="149.0" y="281" font-size="21" font-weight="700" text-anchor="middle">目标群选中</text>
+<rect x="292" y="251" width="170" height="60" rx="12" fill="#ffffff" stroke="#edcba3"/>
+<text x="377.0" y="281" font-size="21" font-weight="700" text-anchor="middle">文件助手选中</text>
+<path d="M 239 280 L 286 280" fill="none" stroke="#d57936" stroke-width="2.5" marker-end="url(#orange)"/>
+<path d="M 287 296 L 240 296" fill="none" stroke="#d57936" stroke-width="2.5" marker-end="url(#orange)"/>
+<rect x="92" y="349" width="344" height="76" rx="12" fill="#ffffff" stroke="#edcba3"/>
+<text x="264.0" y="379" font-size="21" font-weight="700" text-anchor="middle">同一输入视图 O1</text>
+<text x="264.0" y="406" font-size="16" style="fill:#536a83" text-anchor="middle">当前 chat_id 随选择变化</text>
+<rect x="92" y="452" width="344" height="76" rx="12" fill="#ffffff" stroke="#edcba3"/>
+<text x="264.0" y="482" font-size="21" font-weight="700" text-anchor="middle">同一发送控制器 O2</text>
+<text x="264.0" y="509" font-size="16" style="fill:#536a83" text-anchor="middle">发送时回读视图的当前目标</text>
+<path d="M 250 429 L 250 447" fill="none" stroke="#d57936" stroke-width="2.5" marker-end="url(#orange)"/>
+<text x="264" y="560" font-size="18" style="fill:#805f3d" text-anchor="middle">关联消息对象 O3 也未变化</text>
+<rect x="64" y="584" width="398" height="120" rx="12" fill="#ffeddb" stroke="none"/>
+<text x="84" y="616" font-size="21" style="fill:#9b4a12" font-weight="700">缓存控制器指针</text>
+<text x="84" y="646" font-size="21" style="fill:#9b4a12" font-weight="700">不能固定收件人</text>
+<text x="84" y="679" font-size="17" style="fill:#805f3d">正常切换还维护草稿、编辑器和附件</text>
+<text x="546" y="187" font-size="24" font-weight="700">02  后台服务为每条消息指定收件人</text>
+<text x="546" y="219" font-size="19" style="fill:#536a83">发送链路脱离当前聊天窗口，沿用微信原有构造、调度与对象释放</text>
+<rect x="548" y="251" width="270" height="86" rx="12" fill="#ffffff" stroke="#cfdae8"/>
+<text x="683.0" y="281" font-size="21" font-weight="700" text-anchor="middle">现有事务队列</text>
+<text x="683.0" y="308" font-size="16" style="fill:#536a83" text-anchor="middle">正文分片 + 发送意图 + 请求 ID</text>
+<rect x="900" y="251" width="270" height="86" rx="12" fill="#ffffff" stroke="#cfdae8"/>
+<text x="1035.0" y="281" font-size="21" font-weight="700" text-anchor="middle">私有原生 helper</text>
+<text x="1035.0" y="308" font-size="16" style="fill:#536a83" text-anchor="middle">核验 UID、版本指纹和允许群</text>
+<rect x="1250" y="251" width="270" height="86" rx="12" fill="#ffffff" stroke="#cfdae8"/>
+<text x="1385.0" y="281" font-size="21" font-weight="700" text-anchor="middle">全局服务注册表</text>
+<text x="1385.0" y="308" font-size="16" style="fill:#536a83" text-anchor="middle">元数据服务 + 批次任务服务</text>
+<path d="M 824 294 L 892 294" fill="none" stroke="#4268a6" stroke-width="2.5" marker-end="url(#arrow)"/>
+<path d="M 1176 294 L 1242 294" fill="none" stroke="#4268a6" stroke-width="2.5" marker-end="url(#arrow)"/>
+<path d="M 1385 342 L 1385 389" fill="none" stroke="#4268a6" stroke-width="2.5" marker-end="url(#arrow)"/>
+<rect x="1250" y="395" width="270" height="100" rx="12" fill="#ffffff" stroke="#cfdae8"/>
+<text x="1385.0" y="425" font-size="21" font-weight="700" text-anchor="middle">新建文本消息源</text>
+<text x="1385.0" y="452" font-size="16" style="fill:#536a83" text-anchor="middle">chat_id + 正文 + 类型 + UUID</text>
+<text x="1385.0" y="473" font-size="16" style="fill:#536a83" text-anchor="middle">收件人字段独立于聊天视图</text>
+<rect x="900" y="395" width="270" height="100" rx="12" fill="#ffffff" stroke="#cfdae8"/>
+<text x="1035.0" y="425" font-size="21" font-weight="700" text-anchor="middle">创建并订阅批次任务</text>
+<text x="1035.0" y="452" font-size="16" style="fill:#536a83" text-anchor="middle">构造惰性任务，再接入调度</text>
+<text x="1035.0" y="473" font-size="16" style="fill:#536a83" text-anchor="middle">构造成功本身不等于已发送</text>
+<rect x="548" y="395" width="270" height="100" rx="12" fill="#ffffff" stroke="#cfdae8"/>
+<text x="683.0" y="425" font-size="21" font-weight="700" text-anchor="middle">微信自己的工作线程</text>
+<text x="683.0" y="452" font-size="16" style="fill:#536a83" text-anchor="middle">核心消息处理与正常发送流程</text>
+<text x="683.0" y="473" font-size="16" style="fill:#536a83" text-anchor="middle">无需选会话、输入或点击按钮</text>
+<path d="M 1244 445 L 1178 445" fill="none" stroke="#4268a6" stroke-width="2.5" marker-end="url(#arrow)"/>
+<path d="M 894 445 L 826 445" fill="none" stroke="#4268a6" stroke-width="2.5" marker-end="url(#arrow)"/>
+<path d="M 683 501 L 683 540" fill="none" stroke="#4268a6" stroke-width="2.5" marker-end="url(#arrow)"/>
+<rect x="548" y="546" width="270" height="86" rx="12" fill="#ffffff" stroke="#cfdae8"/>
+<text x="683.0" y="576" font-size="21" font-weight="700" text-anchor="middle">主进程核对发出记录</text>
+<text x="683.0" y="603" font-size="16" style="fill:#536a83" text-anchor="middle">本人 + 目标 + 正文 + 新增 ID</text>
+<rect x="900" y="546" width="270" height="86" rx="12" fill="#ffffff" stroke="#cfdae8"/>
+<text x="1035.0" y="576" font-size="21" font-weight="700" text-anchor="middle">确认后推进队列</text>
+<text x="1035.0" y="603" font-size="16" style="fill:#536a83" text-anchor="middle">下一分片、冷却及记忆事务</text>
+<rect x="1250" y="546" width="270" height="86" rx="12" fill="#fff4df" stroke="#e9c482"/>
+<text x="1385.0" y="576" font-size="21" font-weight="700" text-anchor="middle">状态不明：暂停发送</text>
+<text x="1385.0" y="603" font-size="16" style="fill:#536a83" text-anchor="middle">保留意图，继续接收新消息</text>
+<path d="M 824 589 L 892 589" fill="none" stroke="#4268a6" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="862" y="574" font-size="15" style="fill:#4268a6" text-anchor="middle">匹配</text>
+<path d="M 683 638 L 683 681 L 1385 681 L 1385 638" fill="none" stroke="#4268a6" stroke-width="2.5" stroke-dasharray="7 6" marker-end="url(#arrow)"/>
+<rect x="875" y="665" width="274" height="30" rx="0" fill="#edf6ff" stroke="none"/>
+<text x="1012" y="686" font-size="16" style="fill:#6e7185" text-anchor="middle">超时且无匹配记录</text>
+<text x="42" y="786" font-size="25" font-weight="700">验证结果与上线边界</text>
+<rect x="40" y="813" width="350" height="151" rx="14" fill="#edf9f1" stroke="#d7e2ec"/>
+<text x="60" y="847" font-size="23" font-weight="700">文件传输助手</text>
+<text x="60" y="876" font-size="17" style="fill:#237856" font-weight="700">实机已验证</text>
+<text x="60" y="909" font-size="17" style="fill:#536a83">窗口保持在群聊</text>
+<text x="60" y="937" font-size="17" style="fill:#536a83">后台发出一条，数据库确认</text>
+<rect x="430" y="813" width="350" height="151" rx="14" fill="#edf9f1" stroke="#d7e2ec"/>
+<text x="450" y="847" font-size="23" font-weight="700">指定群聊</text>
+<text x="450" y="876" font-size="17" style="fill:#237856" font-weight="700">实机已验证</text>
+<text x="450" y="909" font-size="17" style="fill:#536a83">窗口保持在文件助手</text>
+<text x="450" y="937" font-size="17" style="fill:#536a83">数据库 + 手机确认仅一条</text>
+<rect x="820" y="813" width="350" height="151" rx="14" fill="#edf4ff" stroke="#d7e2ec"/>
+<text x="840" y="847" font-size="23" font-weight="700">正式发送链路</text>
+<text x="840" y="876" font-size="17" style="fill:#315f9b" font-weight="700">本次接入</text>
+<text x="840" y="909" font-size="17" style="fill:#536a83">普通回复 / 主动接话 / 外部请求</text>
+<text x="840" y="937" font-size="17" style="fill:#536a83">统一队列、逐片确认、未知不重发</text>
+<rect x="1210" y="813" width="350" height="151" rx="14" fill="#fff6e8" stroke="#d7e2ec"/>
+<text x="1230" y="847" font-size="23" font-weight="700">完全无显示环境</text>
+<text x="1230" y="876" font-size="17" style="fill:#8a611c" font-weight="700">尚未验证</text>
+<text x="1230" y="909" font-size="17" style="fill:#536a83">继续保留 X11 与微信登录会话</text>
+<text x="1230" y="937" font-size="17" style="fill:#536a83">后台发送成功不代替此项验证</text>
+<rect x="40" y="994" width="1520" height="86" rx="14" fill="#18314d" stroke="none"/>
+<text x="64" y="1028" font-size="23" style="fill:#ffffff" font-weight="700">核心变化：发送目标来自新消息源；发送成功仍由数据库记录确认</text>
+<text x="64" y="1059" font-size="17" style="fill:#ccd9e7">版本升级需重新适配  ·  不承诺降低风控风险  ·  不自动回退桌面重发  ·  主机重启清空 tmpfs 队列</text>
+</svg>

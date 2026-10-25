@@ -42,6 +42,14 @@ class ProtocolTests(unittest.TestCase):
             with self.subTest(text_bytes=len(text.encode())):
                 with self.assertRaisesRegex(NativeError,'text_too_large'):validate_send(payload(text=text))
 
+    def test_byte_splits_preserve_wechat_tokens_and_the_complete_body(self):
+        from wxbridge.native.protocol import text_parts
+        body='x'*4090+'[偷笑]😀\n中文'
+        parts=text_parts(body)
+        self.assertEqual(''.join(parts),body)
+        self.assertTrue(parts[1].startswith('[偷笑]'))
+        for part in parts:validate_send(payload(text=part))
+
     def test_invalid_request_types_ids_and_text(self):
         values=[None,[],{},dict(payload(),extra=1),dict(payload(),op='eval'),
                 dict(payload(),request_id='../escape'),dict(payload(),request_id=''),
@@ -216,6 +224,88 @@ class JournalTests(unittest.TestCase):
         self.assertTrue(api.handle(payload())['duplicate']);api.bot.store.last_local_id.assert_not_called()
         with self.assertRaisesRegex(NativeError,'chat_not_allowed'):api.handle(payload(chat='other@chatroom'))
 
+    def normal_task(self,chunks=None,notice=False):
+        self.cfg['ui']['backend']='native_service'
+        with self.journal.db:
+            identifier=self.journal._next_task_id()
+            task=dict(id=identifier,phase='queued',version=1,sender='other',trigger_kind='mention',
+                deadline=0,accepted_at=0,triggers=[],intent=None,blocked_reason='',generation='ready',
+                next_chunk=0,chunks=chunks or ['合成回复'])
+            if notice:
+                self.cfg['search']['feedback_enabled']=True
+                task['notice']=dict(state='pending',text='合成搜索提示')
+            self.journal.put(task)
+        return identifier
+
+    def test_normal_reply_uses_explicit_group_and_persisted_native_intent(self):
+        identifier=self.normal_task();factory=Mock(return_value=Mock())
+        self.delivery.send(factory)
+        kind,args=factory.call_args.args
+        intent=self.journal.task(identifier)['intent']
+        self.assertEqual(kind,'native_send');self.assertEqual(args[3],'synthetic@chatroom')
+        self.assertEqual(intent['transport'],'native_service');self.assertEqual(args[4],intent['request_id'])
+        self.assertTrue(intent['request_id'].startswith('bot:'))
+        self.journal.close();self.journal=self.open()
+        self.assertEqual(self.journal.task(identifier)['intent']['request_id'],args[4])
+        delivery=DeliveryController(self.cfg,self.journal,self.store,'synthetic@chatroom','合成群')
+        fresh=Mock();delivery.send(fresh);fresh.assert_not_called()
+
+    def test_normal_chunks_are_confirmed_independently_with_distinct_request_ids(self):
+        identifier=self.normal_task(['第一片😀[偷笑]','第二片\n中文'])
+        job=Mock();job.poll.return_value=dict(ok=True,ui={'backend':'native_service','operation':{'submitted':True}})
+        factory=Mock(return_value=job);self.delivery.send(factory)
+        first=factory.call_args.args[1][4];self.delivery.poll_result()
+        self.store.messages_after.return_value=[dict(local_id=3,sender='synthetic',type=1,text='第一片😀[偷笑]')]
+        self.delivery.confirm();self.assertEqual(self.journal.task(identifier)['next_chunk'],1)
+        self.delivery.send(factory)
+        second=factory.call_args.args[1][4]
+        self.assertNotEqual(first,second);self.assertEqual(factory.call_args.args[1][2],'第二片\n中文')
+        self.assertEqual(factory.call_count,2)
+
+    def test_search_notice_uses_same_backend_and_keeps_reply_part(self):
+        identifier=self.normal_task(notice=True);factory=Mock(return_value=Mock())
+        self.delivery.send(factory)
+        kind,args=factory.call_args.args
+        self.assertEqual(kind,'native_send');self.assertEqual(args[2],'合成搜索提示')
+        self.assertEqual(self.journal.task(identifier)['intent']['part'],-1)
+        self.assertEqual(self.journal.task(identifier)['next_chunk'],0)
+
+    def test_normal_uncertain_result_never_falls_back_or_retries(self):
+        identifier=self.normal_task();job=Mock()
+        job.poll.return_value=dict(ok=False,ui={'error':'native_helper_timeout','operation':{'submitted':None}})
+        factory=Mock(return_value=job);self.delivery.send(factory);self.delivery.poll_result()
+        self.store.messages_after.return_value=[]
+        with patch('wxbridge.app.delivery.time.time',return_value=time.time()+60):self.delivery.confirm()
+        self.delivery.send(factory);self.assertEqual(factory.call_count,1)
+        self.assertTrue(self.journal.task(identifier)['blocked_reason'])
+
+    def test_proactive_reply_uses_same_native_queue_path(self):
+        identifier=self.normal_task()
+        with self.journal.db:
+            task=self.journal.task(identifier);task['trigger_kind']='proactive';self.journal.put(task)
+        factory=Mock(return_value=Mock());self.delivery.send(factory)
+        self.assertEqual(factory.call_args.args[0],'native_send')
+
+    def test_native_dry_run_finishes_without_any_send_worker(self):
+        identifier=self.normal_task();self.cfg['ui']['dry_run']=True;factory=Mock()
+        self.delivery.send(factory);factory.assert_not_called()
+        self.assertEqual(self.journal.task(identifier)['phase'],'done')
+
+    def test_long_generated_reply_is_split_by_utf8_bytes_before_any_intent(self):
+        body='中'*1800+'😀[偷笑]\n结束'
+        identifier=self.normal_task([body]);factory=Mock(return_value=Mock())
+        self.delivery.send(factory)
+        chunks=self.journal.task(identifier)['chunks']
+        self.assertEqual(''.join(chunks),body);self.assertGreater(len(chunks),1)
+        self.assertTrue(all(len(p.encode())<=4096 for p in chunks))
+        self.assertEqual(factory.call_args.args[1][2],chunks[0])
+
+    def test_unrepresentable_fragment_is_blocked_before_any_submission(self):
+        identifier=self.normal_task(['😀']);self.cfg['native_api']['max_text_bytes']=1
+        factory=Mock();self.delivery.send(factory);factory.assert_not_called()
+        task=self.journal.task(identifier)
+        self.assertIsNone(task['intent']);self.assertTrue(task['blocked_reason'].startswith('native_text_limit:'))
+
 
 @unittest.skipUnless(os.name=='posix' and hasattr(socket,'SO_PEERCRED'),'Linux Unix socket peer credentials')
 class SocketTests(unittest.TestCase):
@@ -241,24 +331,49 @@ class SenderTests(unittest.TestCase):
     def setUp(self):
         self.cfg=copy.deepcopy(DEFAULTS);self.cfg['native_api']['enabled']=True;self.cfg['ui']['dry_run']=False
 
-    def test_draft_blocks_before_helper_and_no_body_input(self):
+    def test_service_submit_never_constructs_desktop_sender_even_with_a_draft(self):
         from wxbridge.native.sender import submit
-        sender=Mock(dry_run=False);sender.a11y.available=True;sender.a11y.chat_is_selected.return_value=True
-        sender.a11y.composer.return_value=(Mock(),None);sender.a11y.read_text.return_value='合成草稿'
-        with patch('wxbridge.native.sender.Sender',return_value=sender),patch('wxbridge.native.sender.request') as ipc:
-            with self.assertRaisesRegex(Exception,'native preparation rejected'):
-                submit(self.cfg,'File Transfer','合成文字','filehelper','synthetic')
-            ipc.assert_not_called();sender.a11y.prepare_text.assert_not_called();sender.send.assert_not_called()
+        reply=dict(ok=True,ui=dict(backend='native_service',operation={'submitted':True},recipient_verified=True,chars=4,bytes=12))
+        with patch('wxbridge.wechat.ui.Sender',side_effect=AssertionError('desktop_used')) as desktop,patch('wxbridge.native.sender.request',return_value=reply) as ipc:
+            result=submit(self.cfg,'Display title unused','合成文字','filehelper','synthetic')
+            self.assertEqual(result['backend'],'native_service');self.assertTrue(result['recipient_verified'])
+            desktop.assert_not_called();self.assertEqual(ipc.call_args.args[1]['chat_id'],'filehelper')
 
     def test_ipc_failure_is_uncertain_and_does_not_fall_back(self):
         from wxbridge.native.sender import submit
-        sender=Mock(dry_run=False);sender.a11y.available=True;sender.a11y.chat_is_selected.return_value=True
-        sender.a11y.composer.return_value=(Mock(),None);sender.a11y.read_text.return_value=''
-        with patch('wxbridge.native.sender.Sender',return_value=sender),patch('wxbridge.native.sender.request',side_effect=NativeError('native_service_unavailable')):
+        with patch('wxbridge.wechat.ui.Sender',side_effect=AssertionError('desktop_used')) as desktop,patch('wxbridge.native.sender.request',side_effect=NativeError('native_service_unavailable')):
             try:submit(self.cfg,'File Transfer','合成文字','filehelper','synthetic')
             except Exception as exc:self.assertIsNone(exc.metadata['submitted'])
             else:self.fail('should refuse uncertain submission')
-            sender.send.assert_not_called()
+            desktop.assert_not_called()
+
+    def test_disabled_dry_run_or_wrong_target_cannot_reach_helper(self):
+        from wxbridge.native.sender import submit
+        for change,target in [({'enabled':False},'filehelper'),({},'unlisted@chatroom')]:
+            cfg=copy.deepcopy(self.cfg);cfg['native_api'].update(change)
+            with patch('wxbridge.native.sender.request') as ipc:
+                with self.assertRaises(Exception):submit(cfg,'unused','合成',target,'test')
+                ipc.assert_not_called()
+        cfg=copy.deepcopy(self.cfg);cfg['ui']['dry_run']=True
+        with patch('wxbridge.native.sender.request') as ipc:
+            with self.assertRaises(Exception):submit(cfg,'unused','合成','filehelper','test')
+            ipc.assert_not_called()
+
+    def test_old_helper_success_is_uncertain_and_does_not_fall_back(self):
+        from wxbridge.native.sender import submit
+        result=dict(ok=True,ui=dict(backend='native',operation={'submitted':True}))
+        with patch('wxbridge.wechat.ui.Sender',side_effect=AssertionError('desktop_used')) as desktop,patch('wxbridge.native.sender.request',return_value=result):
+            try:submit(self.cfg,'unused','合成','filehelper','test')
+            except Exception as exc:self.assertIsNone(exc.metadata['submitted'])
+            else:self.fail('old helper must be rejected')
+            desktop.assert_not_called()
+
+    def test_legacy_sender_cannot_silently_use_xdotool_in_service_mode(self):
+        from wxbridge.wechat.ui import Sender
+        sender=Sender.__new__(Sender);sender.backend='native_service';sender.dry_run=False
+        sender._send_xdotool=Mock()
+        with self.assertRaises(Exception):sender.send('unused','合成')
+        sender._send_xdotool.assert_not_called()
 
 
 class HelperTests(unittest.TestCase):
@@ -266,13 +381,13 @@ class HelperTests(unittest.TestCase):
         parent=Path(__file__).resolve().parents[1]/'.test-tmp';parent.mkdir(exist_ok=True)
         self.temp=tempfile.TemporaryDirectory(dir=parent);self.addCleanup(self.temp.cleanup)
         self.assets=Path(self.temp.name)
-        (self.assets/'profile.json').write_text(json.dumps({'sha256':'synthetic'}))
+        (self.assets/'profile.json').write_text(json.dumps({'sha256':'synthetic','backend':'service_v1'}))
         (self.assets/'agent.js').write_text('// synthetic, never evaluated')
         self.cfg=dict(uid=995,assets=str(self.assets),allowed_chat_ids=['filehelper'])
         self.exports=Mock()
         self.exports.discover.return_value={'viewFound':True,'scannedMiB':0}
         self.exports.arm.return_value={'accepted':True}
-        self.exports.status.return_value={'stage':'returned_unconfirmed','calls':1}
+        self.exports.status.return_value={'stage':'returned_unconfirmed','calls':1,'recipient_verified':True}
         self.exports.cancel.return_value={'calls':1,'cancelled':True}
         self.script=Mock(exports_sync=self.exports)
         self.session=Mock();self.session.create_script.return_value=self.script
@@ -291,6 +406,7 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(binding['byte_length'],len(text.encode()))
         self.assertTrue(result['ok']);self.assertIs(result['ui']['operation']['submitted'],True)
         self.exports.arm.assert_called_once_with();self.exports.cancel.assert_called_once()
+        self.exports.discover.assert_not_called()
         self.session.detach.assert_called_once()
         self.assertNotIn(text,json.dumps(result,ensure_ascii=False))
 
@@ -300,11 +416,31 @@ class HelperTests(unittest.TestCase):
         self.device.attach.assert_not_called()
         self.assertFalse(result['ui']['operation']['submitted'])
 
-    def test_ambiguous_context_does_not_schedule(self):
-        self.exports.discover.return_value={'viewFound':False}
+    def test_missing_registry_service_is_definitely_not_submitted(self):
+        self.exports.status.return_value={'stage':'error','calls':0,'error':'services_not_found'}
+        self.exports.cancel.return_value={'calls':0}
         result=helper.worker(self.cfg,payload())
-        self.assertEqual(result['ui']['error'],'native_no_unique_context')
-        self.exports.arm.assert_not_called()
+        self.assertEqual(result['ui']['error'],'native_services_unavailable')
+        self.assertIs(result['ui']['operation']['submitted'],False)
+        self.exports.discover.assert_not_called()
+
+    def test_cleanup_fault_after_submit_remains_unknown(self):
+        self.exports.status.return_value={'stage':'returned_unconfirmed','calls':1,'recipient_verified':True,'cleanup_error':True}
+        result=helper.worker(self.cfg,payload())
+        self.assertEqual(result['ui']['error'],'native_cleanup_failed')
+        self.assertIsNone(result['ui']['operation']['submitted'])
+
+    def test_inflight_native_call_is_not_mistaken_for_finished_callback(self):
+        self.exports.status.side_effect=[{'stage':'submitting_unknown','calls':1},
+            {'stage':'returned_unconfirmed','calls':1,'recipient_verified':True}]
+        result=helper.worker(self.cfg,payload())
+        self.assertTrue(result['ok']);self.assertEqual(self.exports.status.call_count,2)
+
+    def test_old_input_model_profile_is_rejected_before_attach(self):
+        (self.assets/'profile.json').write_text(json.dumps({'sha256':'synthetic'}))
+        result=helper.worker(self.cfg,payload())
+        self.assertEqual(result['ui']['error'],'native_profile_mismatch')
+        self.device.attach.assert_not_called()
 
     def test_rpc_arm_failure_is_uncertain_when_cancellation_cannot_confirm_no_call(self):
         self.exports.arm.side_effect=RuntimeError('synthetic_transport_error')

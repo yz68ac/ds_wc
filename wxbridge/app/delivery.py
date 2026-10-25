@@ -4,9 +4,11 @@ from __future__ import annotations
 import json
 import logging
 import time
+import uuid
 from functools import partial
 from wxbridge.app.conversation import confirmation_updates
 from wxbridge.wechat.store import StoreError
+from wxbridge.native.protocol import NativeError, text_parts
 
 log = logging.getLogger('wxbridge')
 
@@ -130,15 +132,30 @@ class DeliveryController:
                 self.journal.put(task)
             log.info("模拟完成 task=%s version=%s", task["id"], task["version"])
             return
+        native = bool(task.get('external_request_id')) or self.cfg['ui'].get('backend')=='native_service'
+        if native and not notice and not task.get('external_request_id'):
+            # Preserve acknowledged prefixes; only adapt not-yet-submitted text.
+            with self.journal.db:
+                start=task['next_chunk']
+                try:
+                    parts=[part for chunk in task['chunks'][start:] for part in text_parts(chunk,self.cfg['native_api']['max_text_bytes'])]
+                except (NativeError,UnicodeError) as exc:
+                    task['blocked_reason']='native_text_limit:'+getattr(exc,'code','invalid_text')
+                    self.journal.put(task)
+                    return
+                if parts!=task['chunks'][start:]:
+                    task['chunks']=task['chunks'][:start]+parts
+                    self.journal.put(task)
         baseline = self.store.last_local_id(task.get('delivery_chat_id',self.chat_id))
         timeout = float(self.cfg["ui"]["send_confirm_timeout_seconds"])
-        self.journal.intend(task["id"], baseline, now, timeout, kind="notice" if notice else "reply")
+        options = dict(transport='native_service', request_id=task.get('external_request_id') or 'bot:'+uuid.uuid4().hex) if native else {}
+        self.journal.intend(task["id"], baseline, now, timeout, kind="notice" if notice else "reply", **options)
         try:
             current = self.journal.task(task["id"])
-            if current.get('external_request_id'):
-                job = job_factory('native_send', (self.cfg, current['delivery_chat_title'],
-                    self.journal.outgoing_text(current), current['delivery_chat_id'],
-                    current['external_request_id']), timeout=30)
+            if current['intent'].get('transport')=='native_service':
+                job = job_factory('native_send', (self.cfg, current.get('delivery_chat_title',self.chat_title),
+                    self.journal.outgoing_text(current), current.get('delivery_chat_id',self.chat_id),
+                    current['intent']['request_id']), timeout=30)
             else:
                 job = job_factory("send", (self.cfg, self.chat_title, self.journal.outgoing_text(current)), timeout=30)
             self.job = (task["id"], current["intent"]["part"], job)

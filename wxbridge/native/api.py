@@ -40,7 +40,7 @@ class NativeAPI:
 
     def handle(self, value):
         if value == {'op':'info'}:
-            return dict(enabled=True, transport='native', allowed_chat_ids=self.cfg['allowed_chat_ids'],
+            return dict(enabled=True, transport='native_service', normal_delivery=self.bot.cfg['ui']['backend'], allowed_chat_ids=self.cfg['allowed_chat_ids'],
                         max_text_bytes=self.cfg['max_text_bytes'])
         if isinstance(value, dict) and value.get('op') == 'status':
             identifier = value.get('request_id')

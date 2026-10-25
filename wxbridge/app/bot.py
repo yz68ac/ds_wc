@@ -60,6 +60,8 @@ class WeChatDeepSeekBot:
         self.chat_id, self.chat_title = self.store.resolve_chat(cfg["target"]["chat"])
         if not self.chat_id.endswith("@chatroom") or not self.store.self_wxid:
             raise StoreError("必须确认当前微信账号及目标普通群聊")
+        if cfg['ui'].get('backend')=='native_service' and (not native_options['enabled'] or self.chat_id not in native_options['allowed_chat_ids']):
+            raise ValueError('native_service requires enabled native_api and an allowed target group')
         baseline = None
         if not cfg["ui"].get("dry_run"):
             try:

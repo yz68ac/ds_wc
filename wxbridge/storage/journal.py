@@ -10,7 +10,7 @@ from typing import Any, Callable
 
 from wxbridge.storage.memoryfs import require_memory_directory
 from wxbridge.wechat.pats import is_pat
-from wxbridge.native.protocol import NativeError, task_status
+from wxbridge.native.protocol import NativeError, REQUEST_ID, task_status
 
 
 def checked_path(value: str, *, existing: bool = False) -> Path:
@@ -327,15 +327,19 @@ class Journal:
             self.put(task)
         return True
 
-    def intend(self, task_id: int, baseline: int, now: float, timeout: float, *, kind="reply"):
+    def intend(self, task_id: int, baseline: int, now: float, timeout: float, *, kind="reply", transport=None, request_id=None):
         with self.db:
             task = self.task(task_id)
             if task["intent"] is not None:
                 raise ValueError("已有待确认发送，禁止重复提交")
             if kind not in ("reply", "notice") or kind == "notice" and (task.get("notice") or {}).get("state") != "pending":
                 raise ValueError("发送意图类型或通知状态无效")
+            if transport is not None and (transport!='native_service' or not isinstance(request_id,str) or not REQUEST_ID.fullmatch(request_id)):
+                raise ValueError('invalid_native_intent')
             task["intent"] = dict(kind=kind, part=-1 if kind == "notice" else task["next_chunk"], baseline=baseline, created_at=now,
                                   deadline=None, confirm_timeout=timeout, ui=None)
+            if transport is not None:
+                task['intent'].update(transport=transport, request_id=request_id)
             if kind == 'reply' and 'first_submit_at' not in task:
                 task.update(first_submit_at=now, queue_wait_seconds=max(0, now-task.get('accepted_at', now)))
             self.put(task)

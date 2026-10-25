@@ -5,6 +5,7 @@ and accepts only bounded text jobs from the configured local account.
 """
 from __future__ import annotations
 
+from collections import OrderedDict
 import hashlib
 import json
 import os
@@ -40,7 +41,7 @@ def validate(value,allowed):
 
 
 def failure(code,submitted=False):
-    return dict(ok=False,ui=dict(backend='native',error=code,operation={'submitted':submitted}))
+    return dict(ok=False,ui=dict(backend='native_service',error=code,operation={'submitted':submitted}))
 
 
 def recv(stream):
@@ -111,6 +112,7 @@ def worker(config,value):
     import frida  # Available only in the root-owned helper venv.
     assets=Path(config['assets'])
     profile=json.loads((assets/'profile.json').read_text())
+    if profile.get('backend')!='service_v1':return failure('native_profile_mismatch')
     try:pid=find_client(config['uid'],profile['sha256'])
     except ValueError as exc:
         return failure('native_profile_mismatch' if str(exc)=='native_profile_mismatch' else 'native_wrong_client')
@@ -126,8 +128,6 @@ def worker(config,value):
             if message.get('type')=='error':agent_error=True
         script.on('message',on_message);script.load()
         if agent_error:return failure('native_agent_error')
-        found=script.exports_sync.discover()
-        if not found.get('viewFound'):return failure('native_no_unique_context')
         armed=True  # Even an RPC failure can occur after the source was enqueued.
         response=script.exports_sync.arm()
         armed=bool(response.get('accepted'))
@@ -135,15 +135,19 @@ def worker(config,value):
         deadline=time.monotonic()+5
         while time.monotonic()<deadline:
             observed=script.exports_sync.status()
-            if observed.get('stage') not in ('observing','armed','checking','calling'):break
+            if observed.get('stage') not in ('observing','armed','checking','calling','submitting_unknown'):break
             time.sleep(.03)
-        if observed.get('stage')=='returned_unconfirmed' and observed.get('calls')==1:
-            result=dict(ok=True,ui=dict(backend='native',operation={'submitted':True},
-                chars=len(value['text']),bytes=length,scanned_mib=found['scannedMiB'],main_thread=pid))
+        if (observed.get('stage')=='returned_unconfirmed' and observed.get('calls')==1
+                and observed.get('recipient_verified') is True and not observed.get('cleanup_error')):
+            result=dict(ok=True,ui=dict(backend='native_service',operation={'submitted':True},
+                chars=len(value['text']),bytes=length,recipient_verified=True,main_thread=pid))
         else:
             codes={'rejected_context':'native_context_changed','wrong_thread':'native_wrong_thread',
                    'error':'native_construct_failed'}
             code=codes.get(observed.get('stage'),'native_callback_timeout')
+            if observed.get('error') in ('registry_bounds','registry_cycle','duplicate_service','services_not_found'):
+                code='native_services_unavailable'
+            if observed.get('cleanup_error'):code='native_cleanup_failed'
             result=failure(code,None if observed.get('calls') else False)
     except Exception:
         result=failure('native_worker_failed',None if armed else False)
@@ -185,7 +189,9 @@ def serve_locked(path,config):
         if not stat.S_ISSOCK(old.st_mode) or old.st_uid!=0:raise ValueError('native_helper_config')
         target.unlink()
     stream=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)
-    cache={}
+    # Opportunistic IPC replay cache only. The main SQLite journal owns durable
+    # dedupe and never resubmits an unknown intent, including after helper restart.
+    cache=OrderedDict()
     try:
         import pwd
         stream.bind(str(target));os.chown(target,0,pwd.getpwuid(config['uid']).pw_gid);target.chmod(0o660)
@@ -204,9 +210,10 @@ def serve_locked(path,config):
                     old=cache.get(value['request_id'])
                     if old:
                         result=old[1] if old[0]==digest else failure('native_request_conflict')
-                    elif len(cache)>=4096:result=failure('native_worker_busy')
+                        cache.move_to_end(value['request_id'])
                     else:
                         result=run_child(path,value,config['worker_timeout_seconds'])
+                        if len(cache)>=4096:cache.popitem(last=False)
                         cache[value['request_id']]=(digest,result)
                     reply(connection,result)
                 except (OSError,ValueError,UnicodeError):

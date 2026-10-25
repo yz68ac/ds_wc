@@ -18,6 +18,23 @@ class NativeError(ValueError):
         self.submitted = submitted
 
 
+def text_parts(text, limit=4096):
+    """Split generated text at UTF-8 code-point boundaries without altering it."""
+    parts, current, used = [], [], 0
+    for unit in re.findall(r'\[[^\[\]\r\n]{1,20}\]|[\s\S]',text):
+        size = len(unit.encode('utf-8'))
+        if size > limit:
+            raise NativeError('text_too_large')
+        if used + size > limit:
+            parts.append(''.join(current));current=[];used=0
+        current.append(unit)
+        used += size
+    parts.append(''.join(current))
+    if any(not part.strip() for part in parts):
+        raise NativeError('invalid_text')
+    return parts
+
+
 def validate_send(value, max_bytes=4096):
     if not isinstance(value, dict) or set(value) != {'op', 'request_id', 'chat_id', 'text'} or value['op'] != 'send_text':
         raise NativeError('invalid_request')

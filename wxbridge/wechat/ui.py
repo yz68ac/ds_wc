@@ -994,6 +994,9 @@ class Sender:
         return "clipboard"
 
     def send(self, chat: str, text: str) -> dict | None:
+        if self.backend=='native_service':
+            raise UIError('后台服务发送必须提供明确 chat_id 并经过队列',
+                          code='native_requires_service_worker',metadata={'submitted':False})
         if self.dry_run:
             print(f"[dry-run] 目标已指定，回复字符数={len(text)}；未发送", flush=True)
             return
