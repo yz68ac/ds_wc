@@ -1,6 +1,8 @@
 """Stable memory ownership and temporary-label isolation; no real data or API."""
 import copy
 import unittest
+import runpy
+from pathlib import Path
 
 import test_memory as memory_tests
 from synthetic import NOW, msg
@@ -95,3 +97,13 @@ class MemoryLabelTests(unittest.TestCase):
         record=self.memory.data['learning']['records'][0]
         self.assertEqual(record['context'],'本人道谢')
         self.assertEqual(record['meaning'],'本人带点不好意思')
+
+    def test_deploy_pending_memory_opt_in_still_rejects_active_work(self):
+        idle=runpy.run_path(str(Path(__file__).resolve().parents[1]/'scripts/deploy-release.py'))['listener_idle']
+        pending=dict(pending=0,memory_pending=7)
+        self.assertFalse(idle(pending,{}))
+        self.assertTrue(idle(pending,{},allow_pending_memory=True))
+        for queue,live in ((dict(pending=1,memory_pending=7),{}),(pending,dict(generation_workers=1)),
+                           (pending,dict(memory=dict(running=True))),
+                           (pending,dict(proactive=dict(outcome='evaluating')))):
+            self.assertFalse(idle(queue,live,allow_pending_memory=True))

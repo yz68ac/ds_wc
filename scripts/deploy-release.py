@@ -60,6 +60,12 @@ def queue():
                     memory_pending=db.execute("SELECT count(*) FROM memory_jobs WHERE json_extract(data,'$.state')!='quarantined'").fetchone()[0])
 
 
+def listener_idle(snapshot, live, *, allow_pending_memory=False):
+    return (not snapshot['pending'] and (allow_pending_memory or not snapshot['memory_pending'])
+            and not live.get('generation_workers', 0) and not live.get('memory', {}).get('running')
+            and live.get('proactive', {}).get('outcome') not in ('evaluating','generating','generating_reply'))
+
+
 def atomic(path, data, mode, uid, gid):
     if any(p.is_symlink() for p in (path, *path.parents)):
         raise ValueError('unsafe_install_path')
@@ -73,7 +79,7 @@ def atomic(path, data, mode, uid, gid):
     os.replace(temporary, path)
 
 
-def deploy(stage, backup, *, apply=False, update_helper=False):
+def deploy(stage, backup, *, apply=False, update_helper=False, allow_pending_memory=False):
     old = json.loads((APP/'release-manifest.json').read_text())
     new = json.loads((stage/'release-manifest.json').read_text())
     planned = changes(old, new)
@@ -113,9 +119,7 @@ def deploy(stage, backup, *, apply=False, update_helper=False):
     for _ in range(30):
         q = queue()
         live = json.loads((RUN/'live-status.json').read_text())
-        if (not q['pending'] and not q['memory_pending'] and not live.get('generation_workers', 0)
-                and not live.get('memory', {}).get('running') and live.get('proactive', {}).get('outcome')
-                not in ('evaluating','generating','generating_reply')):
+        if listener_idle(q, live, allow_pending_memory=allow_pending_memory):
             break
         time.sleep(1)
     else:
@@ -137,7 +141,7 @@ def deploy(stage, backup, *, apply=False, update_helper=False):
                     raise ValueError('lock_owner_invalid')
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             before = queue()
-            if before['pending'] or before['memory_pending']:
+            if before['pending'] or (before['memory_pending'] and not allow_pending_memory):
                 raise ValueError('queue_changed_before_switch')
             private = {n: sha(APP/n) for n in ('config.json', '.env', *sorted(PRESERVE)) if (APP/n).is_file()}
             memory = {str(p.relative_to(APP)): sha(p) for p in (APP/'memory').rglob('*') if p.is_file()}
@@ -169,7 +173,8 @@ def deploy(stage, backup, *, apply=False, update_helper=False):
                 atomic(path, data, mode, uid, gid)
             if private != {n: sha(APP/n) for n in private} or memory != {str(p.relative_to(APP)): sha(p) for p in (APP/'memory').rglob('*') if p.is_file()} or queue() != before:
                 raise ValueError('private_state_changed')
-            report.update(cursor_before=before['cursor'], private_state_preserved=True)
+            report.update(cursor_before=before['cursor'], private_state_preserved=True,
+                          pending_memory_preserved=before['memory_pending'])
         if helper_changed:
             run('systemctl', 'start', UNITS[2])
         # Readiness is a metadata-only operation, not a test message or injection.
@@ -212,9 +217,12 @@ def main():
     parser.add_argument('--backup', type=Path, required=True)
     parser.add_argument('--apply', action='store_true')
     parser.add_argument('--update-native-helper', action='store_true')
+    parser.add_argument('--allow-pending-memory', action='store_true',
+                        help='Preserve durable pending memory jobs; no running workers or send tasks allowed')
     args = parser.parse_args()
     try:
-        print(json.dumps(deploy(args.stage, args.backup, apply=args.apply, update_helper=args.update_native_helper), ensure_ascii=False, indent=2))
+        print(json.dumps(deploy(args.stage, args.backup, apply=args.apply, update_helper=args.update_native_helper,
+                               allow_pending_memory=args.allow_pending_memory), ensure_ascii=False, indent=2))
         return 0
     except Exception as exc:
         print(json.dumps(dict(applied=False, error=type(exc).__name__, reason=str(exc) if isinstance(exc, ValueError) else 'deployment_failed')))
