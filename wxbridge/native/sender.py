@@ -36,6 +36,9 @@ def submit(cfg, title, text, chat_id, request_id):
     for key in ('chars','bytes','main_thread'):
         if type(metadata.get(key)) is int:safe[key]=metadata[key]
     if metadata.get('recipient_verified') is True:safe['recipient_verified']=True
+    timing=metadata.get('timings_ms') or {}
+    safe['timings_ms']={k:timing[k] for k in ('verify','attach','submit')
+                        if type(timing.get(k)) in (int,float) and 0<=timing[k]<=60000}
     if result.get('ok') is not True:
         code=metadata.get('error')
         if code not in SAFE_ERRORS:code='native_worker_failed'
@@ -43,3 +46,13 @@ def submit(cfg, title, text, chat_id, request_id):
     if submitted is not True or metadata.get('backend')!='native_service' or metadata.get('recipient_verified') is not True:
         raise UIError('native result uncertain',code='native_worker_failed',metadata={'submitted':None})
     return safe
+
+
+def readiness(cfg):
+    options=settings(cfg)
+    if not options['enabled']:
+        raise ValueError('native_api_disabled')
+    result=request(options['helper_socket'],dict(op='health'),timeout=5)
+    if not result.get('ok') or result.get('result',{}).get('client_ready') is not True:
+        raise ValueError('native_helper_not_ready')
+    return dict(backend='native_service',ready=True)

@@ -175,7 +175,7 @@ def parse_decision(content, max_chars=30, cfg=None):
     return result
 
 
-def evaluate(cfg, prompt, *, source_ids=None, timeout_seconds=None, on_reply=None, reply_memory=None):
+def evaluate(cfg, prompt, *, source_ids=None, timeout_seconds=None, on_reply=None, reply_memory=None, judgment_only=False):
     from wxbridge.ai.client import DeepSeekClient, DeepSeekError
     settings = cfg['proactive']
     from wxbridge.ai.roles import model_settings
@@ -188,6 +188,8 @@ def evaluate(cfg, prompt, *, source_ids=None, timeout_seconds=None, on_reply=Non
         return dict(speak=False, text='', reply_to=None)
     if decision['reply_to'] not in (source_ids or []):
         raise ProactiveError('proactive_invalid_reply_target')
+    if judgment_only:
+        return dict(speak=True, text='', reply_to=decision['reply_to'], handoff=True)
     if time.monotonic() >= deadline:
         raise ProactiveError('proactive_expired_before_reply')
     reply_prompt = build_reply_prompt(cfg, prompt, decision['reply_to'], reply_memory=reply_memory)

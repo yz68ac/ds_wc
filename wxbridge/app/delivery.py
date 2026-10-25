@@ -10,6 +10,7 @@ from wxbridge.app.conversation import confirmation_updates
 from wxbridge.wechat.store import StoreError
 from wxbridge.native.protocol import NativeError, text_parts
 from wxbridge.app.task_policy import submission_failure
+from wxbridge.wechat.transport import native as native_transport
 
 log = logging.getLogger('wxbridge')
 
@@ -33,6 +34,8 @@ class DeliveryController:
         # 发出记录可能比 UI 读回先到达；即使已确认，也保留动作核验元数据。
         with self.journal.db:
             task["last_ui"] = metadata
+            if metadata.get('timings_ms'):
+                self.journal.set('last_native_timings', metadata['timings_ms'])
             self.journal.put(task)
         log.info("发送操作 task=%s part=%s metadata=%s", task_id, part,
                  json.dumps(metadata, ensure_ascii=False))
@@ -77,28 +80,47 @@ class DeliveryController:
         task = self.journal.head()
         if not task or not task["intent"]:
             return
-        intent, cursor = task["intent"], task["intent"]["baseline"]
+        intent = task['intent']
+        now = time.time()
+        intake = self.journal.get('cursor', 0)
+        if (now < intent.get('next_check_at', 0)
+                and intake <= intent.get('seen_intake', -1)):
+            return
         text = self.journal.outgoing_text(task)
-        while True:
-            rows = self.store.messages_after(task.get('delivery_chat_id',self.chat_id), cursor, limit=100)
-            for msg in rows:
-                if (msg["local_id"] > intent["baseline"] and msg.get("sender") == self.store.self_wxid
-                        and msg.get("type") == 1 and msg.get("text") == text):
-                    self.journal.acknowledge(task["id"], msg["local_id"], time.time(), memory=memory,
-                        on_confirm=partial(confirmation_updates, settings=self.cfg.get('proactive')))
-                    log.info("发送确认 task=%s part=%s local_id=%s", task["id"], intent["part"], msg["local_id"])
-                    return
-            if len(rows) < 100:
-                break
-            next_cursor = rows[-1]["local_id"]
-            if next_cursor <= cursor:
-                raise StoreError("发送确认分页未前进")
-            cursor = next_cursor
+        scans = [('scan_cursor', max(intent['baseline'], intent.get('scan_cursor', intent['baseline'])-20), 2)]
+        # Incremental checks include a small overlap; a slow bounded audit catches
+        # old rows whose body/sender was filled in after their local_id appeared.
+        if task['blocked_reason'] and now >= intent.get('audit_at', 0):
+            scans.append(('audit_cursor', intent.get('audit_cursor', intent['baseline']), 1))
+        for field, cursor, pages in scans:
+            for _ in range(pages):
+                rows = self.store.messages_after(task.get('delivery_chat_id',self.chat_id), cursor, limit=100)
+                for msg in rows:
+                    if (msg['local_id'] > intent['baseline'] and msg.get('sender') == self.store.self_wxid
+                            and msg.get('type') == 1 and msg.get('text') == text):
+                        self.journal.acknowledge(task['id'], msg['local_id'], now, memory=memory,
+                            on_confirm=partial(confirmation_updates, settings=self.cfg.get('proactive')))
+                        log.info('发送确认 task=%s part=%s local_id=%s', task['id'], intent['part'], msg['local_id'])
+                        return
+                if rows:
+                    next_cursor = max(m['local_id'] for m in rows)
+                    if next_cursor <= cursor and len(rows) >= 100:
+                        raise StoreError('发送确认分页未前进')
+                    cursor = max(cursor, next_cursor)
+                intent[field] = cursor
+                if len(rows) < 100:
+                    if field == 'audit_cursor':
+                        intent.pop('audit_cursor', None)
+                        intent['audit_at'] = now+60
+                    break
         if intent["deadline"] is not None and time.time() >= intent["deadline"]:
             with self.journal.db:
                 code = (intent.get("ui") or {}).get("error", "no_outbound_record")
                 task["blocked_reason"] = "send_confirmation_timeout:" + code + ": 无匹配发出记录，暂停发送，继续接收"
                 self.journal.put(task)
+        with self.journal.db:
+            intent.update(seen_intake=intake, next_check_at=now+(15 if task['blocked_reason'] else 0))
+            self.journal.put(task)
 
     def _candidate(self, now):
         task = self.journal.head()
@@ -147,7 +169,7 @@ class DeliveryController:
                 self.journal.put(task)
             log.info("模拟完成 task=%s version=%s", task["id"], task["version"])
             return
-        native = bool(task.get('external_request_id')) or self.cfg['ui'].get('backend')=='native_service'
+        native = native_transport(self.cfg, external=bool(task.get('external_request_id')))
         if native and not notice and not task.get('external_request_id'):
             # Preserve acknowledged prefixes; only adapt not-yet-submitted text.
             with self.journal.db:

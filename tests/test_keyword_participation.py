@@ -105,15 +105,16 @@ class KeywordParticipationTests(unittest.TestCase):
                 patch.object(DeepSeekClient, '_post', side_effect=[
                     {'choices': [{'message': {'content': '{"speak":true,"reply_to":1}'}}]},
                     {'choices': [{'message': {'content': '我觉得你漏看了前提'}}]}]) as post:
-            self.assertTrue(evaluate(cfg, prompt, **options)['speak'])
+            decision=evaluate(cfg, prompt, **options)
+            self.assertTrue(decision['handoff'])
+            self.assertEqual(post.call_count,1)
         judge = post.call_args_list[0].args[0]
         self.assertEqual(judge['thinking'], {'type': 'disabled'})
         self.assertNotIn('reasoning_effort', judge)
         self.assertEqual(judge['max_tokens'], 256)
-        body = post.call_args.args[0]
-        self.assertEqual(body['thinking'], {'type': 'enabled'})
-        self.assertEqual(body['reasoning_effort'], 'max')
-        self.assertEqual(body['max_tokens'], 1200)
+        from wxbridge.ai.roles import model_settings
+        self.assertEqual(model_settings(cfg,'reply')['thinking'],'enabled')
+        self.assertEqual(model_settings(cfg,'reply')['reasoning_effort'],'max')
         self.assertEqual(cfg['deepseek']['reasoning_effort'], 'max')
         self.add(2)
         self.bot.tick()
@@ -200,19 +201,17 @@ class KeywordParticipationTests(unittest.TestCase):
             logging.disable(disabled)
         result = connection.send.call_args.args[0]
         self.assertTrue(result['ok'])
-        self.assertEqual(result['model_metrics'][0]['role'], 'reply')
+        self.assertEqual(result['model_metrics'][0]['role'], 'participation')
         self.assertEqual(result['decision']['reply_to'], 1)
         self.assertEqual(len(result['model_metrics']), 1)
-        self.assertEqual(connection.send.call_count, 2)
-        event = connection.send.call_args_list[0].args[0]
-        self.assertEqual(event['event'], 'proactive_reply_started')
-        self.assertEqual(event['model_metrics'][0]['role'], 'participation')
-        self.assertEqual(len(event['model_metrics']), 1)
+        self.assertEqual(connection.send.call_count, 1)
+        self.assertTrue(result['decision']['handoff'])
         self.assertNotIn('synthetic-key', str(connection.send.call_args_list))
         payload = post.call_args.args[0]
-        self.assertEqual(payload['model'], 'synthetic-reply')
-        self.assertEqual(payload['thinking'], {'type': 'enabled'})
-        self.assertEqual(payload['reasoning_effort'], 'max')
-        self.assertEqual(payload['max_tokens'], 1700)
-        self.assertLessEqual(post.call_args.args[1], 5)
+        self.assertEqual(payload['thinking'], {'type': 'disabled'})
+        job.result=result
+        self.bot.tick();self.bot.tick()
+        generated=next(j for j in self.jobs if j.kind=='generate')
+        self.assertEqual(generated.payload[0]['models']['reply']['model'],'synthetic-reply')
+        self.assertEqual(self.bot.journal.head()['trigger_kind'],'addressed')
         self.assertEqual(self.cfg, before)

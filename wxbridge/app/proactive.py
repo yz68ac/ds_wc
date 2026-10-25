@@ -255,6 +255,22 @@ class ProactiveController:
                 if not result.get('ok'):
                     self.fail(result)
                     return
+                raw = result['decision']
+                if raw.get('handoff') is True:
+                    from wxbridge.ai.proactive import parse_judgment
+                    decision = parse_judgment(json.dumps({k: raw.get(k) for k in ('speak', 'reply_to')}))
+                    target = decision['reply_to']
+                    if (pending.get('reason') != 'addressed' or not decision['speak']
+                            or target not in pending['source_ids'] or now > expires):
+                        raise ProactiveError('proactive_invalid_reply_target')
+                    rows, _ = self.context(now)
+                    source = next((m for m in rows if m['local_id'] == target), None)
+                    if source is None or not addresses_bot(source, self.bot.cfg, self.bot.store.self_wxid):
+                        self.update(outcome='source_unavailable')
+                        return
+                    task = self.bot.journal.enqueue_addressed(source, now, observe=self.observe)
+                    self.update(outcome='handed_to_reply' if task else 'already_handled', error='')
+                    return
                 decision = parse_decision(json.dumps(result['decision'], ensure_ascii=False), self.cfg['max_reply_chars'], self.bot.cfg)
                 if not decision['speak']:
                     self.update(outcome='silent', error='')
@@ -317,6 +333,7 @@ class ProactiveController:
             from wxbridge.ai.roles import model_settings
             remaining = max(0, candidate['expires_at']-now)
             options = dict(source_ids=candidate['source_ids'], timeout_seconds=remaining, reply_memory=reply_memory)
+            options['judgment_only'] = candidate.get('reason') == 'addressed'
             timeout = min(remaining, model_settings(self.bot.cfg, 'participation')['timeout_seconds']
                           + model_settings(self.bot.cfg, 'reply')['timeout_seconds'])+2
             worker = self.bot.job_factory('proactive', (self.bot.cfg, prompt, options), timeout=timeout)

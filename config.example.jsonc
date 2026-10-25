@@ -31,6 +31,10 @@
   "queue": {
     "debounce_seconds": 0, // 0 不合并；正数为同一人连续 @ 的合并静默窗口（秒）。
     "generation_concurrency": 2, // 有效 API 任务上限，只能为 1 或 2。
+    "max_pending": 32, // 普通触发达到容量时保留接收游标，等待队列腾出位置。
+    "max_pending_per_sender": 8, // 同一成员的待处理任务上限。
+    "generation_lookahead": 4, // 只预生成队列前几项；发送阻塞时暂停新生成。
+    "intake_max_pages": 4, // 单次接收最多查询几页，每页100条，随后让出调度。
     "generation_retries": 2, // 瞬时生成故障最多再试2次；永久错误直接给失败说明。
     "generation_retry_delay_seconds": 3, // 重试等待期间继续接收消息，不阻塞主进程。
     "completed_retention": 200, // 最多保留200条完成记录；未完成/未决发送不会清理。

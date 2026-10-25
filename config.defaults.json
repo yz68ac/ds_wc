@@ -24,6 +24,10 @@
   "queue": {
     "debounce_seconds": 0,
     "generation_concurrency": 2,
+    "max_pending": 32,
+    "max_pending_per_sender": 8,
+    "generation_lookahead": 4,
+    "intake_max_pages": 4,
     "generation_retries": 2,
     "generation_retry_delay_seconds": 3,
     "completed_retention": 200,

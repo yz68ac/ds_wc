@@ -572,6 +572,21 @@ class WeChatStore:
             parsed.reverse()
         return parsed
 
+    def _image_index_rows(self, digest, cache_key):
+        conn = self._connect('hardlink/hardlink.db')
+        prefix = ('SELECT i.file_name,d1.username AS bucket,d2.username AS month '
+                  'FROM image_hardlink_info_v4 i LEFT JOIN dir2id d1 ON i.dir1=d1.rowid '
+                  'LEFT JOIN dir2id d2 ON i.dir2=d2.rowid WHERE ')
+        try:
+            rows = conn.execute(prefix+'i.md5 IN (?,?,?) LIMIT 20',
+                (digest, digest.encode('ascii'), bytes.fromhex(digest))).fetchall()
+            if cache_key and re.fullmatch(r'[0-9a-f]{32}', cache_key):
+                rows += conn.execute(prefix+'i.file_name IN (?,?,?) LIMIT 20',
+                    (cache_key+'.dat', cache_key+'_h.dat', cache_key+'_t.dat')).fetchall()
+            return rows
+        finally:
+            conn.close()
+
     def image_binding(self, chat_id: str, reference: dict) -> dict:
         """主进程查当前群消息及附件索引；仅返回本账号本地加密文件描述。"""
         binding = dict(account_root=str(Path(self.db_dir).parent), account=self.self_wxid,
@@ -597,23 +612,11 @@ class WeChatStore:
                     cache_key = original.get("image_cache_key") or ""
             if not re.fullmatch(r"[0-9a-f]{32}", digest):
                 return {**binding, "error": "image_identifier_missing"}
-            conn = self._connect("hardlink/hardlink.db")
             try:
-                rows = conn.execute(
-                    "SELECT i.file_name,d1.username AS bucket,d2.username AS month "
-                    "FROM image_hardlink_info_v4 i LEFT JOIN dir2id d1 ON i.dir1=d1.rowid "
-                    "LEFT JOIN dir2id d2 ON i.dir2=d2.rowid WHERE i.md5 IN (?,?,?) LIMIT 20",
-                    (digest, digest.encode("ascii"), bytes.fromhex(digest))).fetchall()
-                # 有些图片 XML MD5 未入索引，但原消息另存了确定的本地缓存名。
-                # 只从当前群已核验的原图片消息取这个字段，不信任引用快照自带的文件名。
-                if not rows and proven and re.fullmatch(r"[0-9a-f]{32}", cache_key):
-                    rows = conn.execute(
-                        "SELECT i.file_name,d1.username AS bucket,d2.username AS month "
-                        "FROM image_hardlink_info_v4 i LEFT JOIN dir2id d1 ON i.dir1=d1.rowid "
-                        "LEFT JOIN dir2id d2 ON i.dir2=d2.rowid WHERE i.file_name IN (?,?,?) LIMIT 20",
-                        (cache_key+".dat", cache_key+"_h.dat", cache_key+"_t.dat")).fetchall()
-            finally:
-                conn.close()
+                rows = self._image_index_rows(digest, cache_key if proven else '')
+            except (StoreError, sqlite3.DatabaseError, OSError, ValueError):
+                rows = []
+                binding['index_error'] = 'local_image_index_unavailable'
             chat_hash = hashlib.md5(chat_id.encode()).hexdigest()
             for row in rows:
                 filename, bucket, month = row["file_name"], row["bucket"], row["month"]
@@ -628,13 +631,19 @@ class WeChatStore:
                         binding["candidates"].append(item)
             # A thumbnail can exist before WeChat writes any hardlink index row.
             # Never use a cache key from the quote or infer a picture from proximity.
-            if (not binding["candidates"] and proven and reference.get("sender")
+            if (proven and reference.get("sender")
                     and re.fullmatch(r"[0-9a-f]{32}", cache_key)):
-                binding["candidates"] = _verified_image_paths(Path(binding["account_root"]), chat_hash, cache_key)
-                if binding["candidates"]:
+                known = {(c['relative'], c['quality']) for c in binding['candidates']}
+                fallback = [dict(c, binding_source='verified_message_cache') for c in
+                            _verified_image_paths(Path(binding['account_root']), chat_hash, cache_key)
+                            if (c['relative'], c['quality']) not in known]
+                if fallback:
+                    binding['candidates'].extend(fallback)
                     binding["cache_fallback"] = True
+            priority = {'original': 0, 'cached': 1, 'preview': 2, 'thumbnail': 3}
+            binding['candidates'].sort(key=lambda c: priority[c['quality']])
             if not binding["candidates"]:
-                binding["error"] = "local_image_index_missing"
+                binding["error"] = binding.get('index_error', 'local_image_index_missing')
         except (StoreError, sqlite3.DatabaseError, OSError, ValueError):
             binding["error"] = "local_image_index_unavailable"
         return binding

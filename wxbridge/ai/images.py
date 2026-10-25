@@ -214,8 +214,10 @@ def read_local_image(binding, cfg):
                             raise MediaError(str(exc)) from None
                     mime, width, height = validate_image(image, max_bytes)
                     info = dict(mime=mime, width=width, height=height, bytes=len(image), quality=candidate["quality"])
-                    if binding.get("cache_fallback"):
+                    if candidate.get('binding_source') == 'verified_message_cache':
                         info["binding_source"] = "verified_message_cache"
+                    if binding.get('index_error'):
+                        info['index_error'] = binding['index_error']
                     if source_format:
                         info.update(source_format=source_format, converted=True)
                     if failures:

@@ -116,7 +116,6 @@ def probe(keys=None, *, verify=False):
     sys.path.insert(0, str(APP))
     from wxbridge.config import load_config
     from wxbridge.wechat.store import WeChatStore
-    from wxbridge.wechat.ui import A11y
     cfg = load_config(APP/'config.json')
     if keys:
         cfg['keys_file'] = str(keys)
@@ -127,10 +126,15 @@ def probe(keys=None, *, verify=False):
         if not identity['account'] or not chat.endswith('@chatroom'):
             raise ValueError('wechat_account_not_ready')
         maximum = store.last_local_id(chat)
-        # 发现主界面且目标群可选；不发送消息、不触碰输入框。
-        ui = A11y(cfg['ui'])
-        if ui.chat_is_selected(title) is not True and ui.find_chat_item(title) is None:
-            raise ValueError('wechat_login_or_target_chat_not_visible')
+        if cfg['ui']['backend']=='native_service':
+            from wxbridge.native.sender import readiness
+            readiness(cfg)
+        else:
+            # Desktop backends still require a discoverable target chat.
+            from wxbridge.wechat.ui import A11y
+            ui = A11y(cfg['ui'])
+            if ui.chat_is_selected(title) is not True and ui.find_chat_item(title) is None:
+                raise ValueError('wechat_login_or_target_chat_not_visible')
     cursor_file = PERSIST/'cursor.json'
     if cursor_file.exists():
         state = restored_state(json.loads(cursor_file.read_text()), identity, maximum)

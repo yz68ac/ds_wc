@@ -107,7 +107,17 @@ def find_client(uid,expected_hash):
     return pid
 
 
+def health(config):
+    profile=json.loads((Path(config['assets'])/'profile.json').read_text())
+    try:
+        find_client(config['uid'],profile['sha256'])
+    except ValueError as exc:
+        return dict(ok=False,error='native_profile_mismatch' if str(exc)=='native_profile_mismatch' else 'native_wrong_client')
+    return dict(ok=True,result=dict(backend='native_service',client_ready=True))
+
+
 def worker(config,value):
+    started=time.monotonic()
     length=validate(value,config['allowed_chat_ids'])
     import frida  # Available only in the root-owned helper venv.
     assets=Path(config['assets'])
@@ -116,6 +126,7 @@ def worker(config,value):
     try:pid=find_client(config['uid'],profile['sha256'])
     except ValueError as exc:
         return failure('native_profile_mismatch' if str(exc)=='native_profile_mismatch' else 'native_wrong_client')
+    verified=time.monotonic()
     session=None;script=None;armed=False;observed={};agent_error=False
     result=failure('native_worker_failed')
     try:
@@ -127,6 +138,7 @@ def worker(config,value):
             nonlocal agent_error
             if message.get('type')=='error':agent_error=True
         script.on('message',on_message);script.load()
+        attached=time.monotonic()
         if agent_error:return failure('native_agent_error')
         armed=True  # Even an RPC failure can occur after the source was enqueued.
         response=script.exports_sync.arm()
@@ -140,7 +152,10 @@ def worker(config,value):
         if (observed.get('stage')=='returned_unconfirmed' and observed.get('calls')==1
                 and observed.get('recipient_verified') is True and not observed.get('cleanup_error')):
             result=dict(ok=True,ui=dict(backend='native_service',operation={'submitted':True},
-                chars=len(value['text']),bytes=length,recipient_verified=True,main_thread=pid))
+                chars=len(value['text']),bytes=length,recipient_verified=True,main_thread=pid,
+                timings_ms=dict(verify=round((verified-started)*1000,2),
+                                attach=round((attached-verified)*1000,2),
+                                submit=round((time.monotonic()-attached)*1000,2))))
         else:
             codes={'rejected_context':'native_context_changed','wrong_thread':'native_wrong_thread',
                    'error':'native_construct_failed'}
@@ -205,7 +220,11 @@ def serve_locked(path,config):
                 peer=struct.unpack('3i',connection.getsockopt(socket.SOL_SOCKET,socket.SO_PEERCRED,12))[1]
                 if peer not in (0,config['uid']):continue
                 try:
-                    value=recv(connection);validate(value,config['allowed_chat_ids'])
+                    value=recv(connection)
+                    if value=={'op':'health'}:
+                        reply(connection,health(config))
+                        continue
+                    validate(value,config['allowed_chat_ids'])
                     digest=hashlib.sha256(json.dumps(value,sort_keys=True,ensure_ascii=True).encode()).hexdigest()
                     old=cache.get(value['request_id'])
                     if old:

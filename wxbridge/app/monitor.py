@@ -223,7 +223,9 @@ def pages(snapshot, cfg, *, now=None):
         f'主动参与：{yes(pro.get("enabled"))}    {phase(pro.get("outcome"))}',
         f'参与窗口：{yes(session.get("active"))}    剩余：{remaining(session, now)}',
         f'开机恢复阶段：{phase(mapping(snapshot.get("boot")).get("phase"))}']
-    queue = ['任务   触发       版本  阶段 / 生成      分片进度   重试次数']
+    queue = [f"发送后端：{code(s.get('configured_backend'))}    拥塞：{code(mapping(s.get('backpressure')).get('reason'))}",
+             f"最近明确失败：{code(mapping(s.get('last_delivery_failure')).get('error'))}",
+             '任务   触发       版本  阶段 / 生成      分片进度   重试次数']
     for task in items(s.get('tasks')):
         t = mapping(task)
         queue += [f'{number(t.get("id")):<6} {code(t.get("trigger_kind")):<10} {number(t.get("version")):<4}'
@@ -256,6 +258,7 @@ def pages(snapshot, cfg, *, now=None):
         v = mapping(entry)
         models.append(f'{code(name):<16} 次数 {number(v.get("count"))}  最近 {milliseconds(v.get("last_ms"))}  最大 {milliseconds(v.get("max_ms"))}')
     detail = [f'记忆启用：{yes(mem.get("enabled"))}    整理中：{yes(mem.get("running"))}',
+        f"已隔离任务：{len(items(s.get('memory_quarantined')))}",
         f'待整理：{number(s.get("memory_pending"))}    错误：{error(s.get("memory_error") or mem.get("error"))}',
         f'成员：{number(mem.get("members"))}    摘要：{number(mem.get("entries"))}    修订：{number(mem.get("revision"))}',
         f'记忆水位：{number(mem.get("watermark"))}    头像线索：{number(mem.get("initial_impressions"))}',

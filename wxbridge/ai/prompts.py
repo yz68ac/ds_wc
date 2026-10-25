@@ -88,7 +88,7 @@ def build_prompt(
         + "最近的群聊记录（从旧到新）：\n"
         + ("\n".join(lines) if lines else "（暂无）")
         + (f"\n\n请回应这次拍一拍（发起人是 {sender}）：\n" if is_pat(trigger) else
-           f"\n\n请回应这条新消息（@你的人是 {sender}）：\n" if len(triggers) == 1 else
+           f"\n\n请回应这条新消息（{'点名' if trigger.get('addressed') else '@'}你的人是 {sender}）：\n" if len(triggers) == 1 else
            f"\n\n请合并回应本批新消息（@你的人是 {sender}，每条仅列一次）：\n")
         + trigger_text
     )

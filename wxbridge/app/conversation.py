@@ -16,11 +16,11 @@ def observation_updates(message, accepted, now, previous, *, settings, account):
         return {}
     identifier = message['local_id']
     seconds = settings['conversation']['window_seconds']
-    if accepted and account in (message.get('mentioned_users') or []):
+    if accepted and (account in (message.get('mentioned_users') or []) or message.get('addressed')):
         return {'proactive_session': dict(policy=SESSION_POLICY, session_id='mention:'+str(identifier),
             anchor_id=identifier, start_id=identifier, participant=message['sender'],
             expires_at=sent+seconds, last_activity_at=sent, last_activity_id=identifier,
-            followups=0, origin='mention')}
+            followups=0, origin='addressed' if message.get('addressed') else 'mention')}
     if not previous or identifier <= previous['last_activity_id']:
         return {}
     if sent >= previous['expires_at']:

@@ -60,6 +60,8 @@ def load_config(path: str | Path = "config.json") -> dict[str, Any]:
     if p.exists():
         data = json.loads(p.read_text(encoding="utf-8"))
     cfg = _deep_merge(DEFAULTS, data)
+    from wxbridge.wechat.transport import backend
+    backend(cfg)
     poll = cfg['poll_interval_seconds']
     if type(poll) not in (int, float) or not math.isfinite(poll) or poll <= 0:
         raise ValueError('poll_interval_seconds 必须是有限的正数')
@@ -133,9 +135,9 @@ def load_config(path: str | Path = "config.json") -> dict[str, Any]:
     if not queue_path.is_absolute():
         queue_path = base / queue_path
     cfg["queue"]["file"] = str(queue_path.resolve())
-    if float(cfg["queue"]["debounce_seconds"]) < 0:
+    if not math.isfinite(float(cfg['queue']['debounce_seconds'])) or float(cfg["queue"]["debounce_seconds"]) < 0:
         raise ValueError("queue.debounce_seconds 必须大于或等于 0（0 表示每次 @ 独立排队）")
-    if float(cfg["ui"]["send_confirm_timeout_seconds"]) <= 0:
+    if not math.isfinite(float(cfg['ui']['send_confirm_timeout_seconds'])) or float(cfg["ui"]["send_confirm_timeout_seconds"]) <= 0:
         raise ValueError("ui.send_confirm_timeout_seconds 必须大于 0")
     concurrency = cfg["queue"]["generation_concurrency"]
     if isinstance(concurrency, bool) or not isinstance(concurrency, int) or not 1 <= concurrency <= 2:
@@ -193,6 +195,14 @@ def load_config(path: str | Path = "config.json") -> dict[str, Any]:
     if not isinstance(phrases, list) or not phrases or any(not isinstance(p, str) or not 1 <= len(p.strip()) <= 80 for p in phrases):
         raise ValueError("search.feedback_phrases 须为非空短句列表，每句 1–80 字")
     queue = cfg['queue']
+    for key, default, maximum in (('max_pending', 32, 1000), ('max_pending_per_sender', 8, 1000),
+                                  ('generation_lookahead', 4, 32), ('intake_max_pages', 4, 20)):
+        value = queue.get(key, default)
+        if type(value) is not int or not 1 <= value <= maximum:
+            raise ValueError('queue.'+key+' exceeds its allowed range')
+        queue[key] = value
+    if queue['max_pending_per_sender'] > queue['max_pending']:
+        raise ValueError('queue.max_pending_per_sender exceeds max_pending')
     for key, low, high in (('generation_retries', 0, 3), ('completed_retention', 0, 10000)):
         if type(queue[key]) is not int or not low <= queue[key] <= high:
             raise ValueError('queue.'+key+' 超出范围')

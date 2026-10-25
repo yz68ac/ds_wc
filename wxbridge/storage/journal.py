@@ -181,7 +181,7 @@ class Journal:
 
     def intake(self, messages: list[dict], accept: Callable[[dict], bool], now: float,
                debounce: float, describe: Callable[[dict], dict] | None = None,
-               observe: Callable[[dict, bool], None] | None = None):
+               observe: Callable[[dict, bool], None] | None = None, *, limits=None):
         """接纳、成员活动和游标同事务提交；回调抛异常时一起回滚。"""
         events = []
         with self.db:
@@ -194,6 +194,14 @@ class Journal:
                     events.append(describe(msg))
                 accepted = accept(msg)
                 if accepted:
+                    options = limits or {}
+                    total = options.get('max_pending', 0)
+                    per_sender = options.get('max_pending_per_sender', 0)
+                    if ((total and len(tasks) >= total) or (per_sender and sum(
+                            t.get('sender') == msg['sender'] for t in tasks) >= per_sender)):
+                        self.set('intake_deferred', dict(local_id=msg['local_id'], accepted_at=now))
+                        self.set('backpressure', dict(reason='queue_capacity', at=now, local_id=msg['local_id']))
+                        break  # Do not advance the cursor over an unqueued trigger.
                     kind = "pat" if is_pat(msg) else "mention"
                     task = next((t for t in tasks if kind == "mention" and t.get("trigger_kind", "mention") == kind
                                  and debounce > 0 and t["phase"] == "open"
@@ -212,6 +220,8 @@ class Journal:
                                 generation="pending", chunks=[], blocked_reason="", generation_attempts=0,
                                 generation_retry_at=0, generation_failed=False, last_generation_error='')
                     self.put(task)
+                    self.set('intake_deferred', None)
+                    self.set('backpressure', None)
                 if observe:
                     observe(msg, accepted)
                 cursor = max(cursor, msg["local_id"])
@@ -269,6 +279,22 @@ class Journal:
             if metadata:
                 task['proactive'].update(metadata)
                 self.put(task)
+            return task
+
+    def enqueue_addressed(self, message, now, *, observe=None):
+        """Promote a model-approved explicit invitation without advancing intake."""
+        with self.db:
+            if message['local_id'] <= self.get('addressed_through', 0):
+                return None
+            question = dict(message, addressed=True)
+            task = dict(id=self._next_task_id(), sender=message['sender'], phase='queued', version=1,
+                        trigger_kind='addressed', triggers=[question], trigger_ids=[message['local_id']],
+                        generation='pending', chunks=[], next_chunk=0, intent=None, blocked_reason='',
+                        deadline=now, closed_at=now, accepted_at=now)
+            self.put(task)
+            self.set('addressed_through', message['local_id'])
+            if observe:
+                observe(question, True, now)
             return task
 
     def discard_proactive(self, identifier, reason):
@@ -387,12 +413,15 @@ class Journal:
                 task.update(phase="done", triggers=[], chunks=[], completed_at=now)
             self.put(task)
 
-    def memory_jobs(self):
-        jobs = [json.loads(row[0]) for row in self.db.execute("SELECT data FROM memory_jobs ORDER BY id")]
+    def memory_jobs(self, *, include_quarantined=False):
+        sql = "SELECT data FROM memory_jobs"
+        if not include_quarantined:
+            sql += " WHERE COALESCE(json_extract(data,'$.state'),'pending')!='quarantined'"
+        jobs = [json.loads(row[0]) for row in self.db.execute(sql+' ORDER BY id')]
         return sorted(jobs, key=lambda j: ((j.get('window') or [0, j['triggers'][-1]['time']])[-1], j['id']))
 
     def enqueue_memory(self, origin, key, triggers, window=None):
-        if any(j.get('key') == key for j in self.memory_jobs()):
+        if any(j.get('key') == key for j in self.memory_jobs(include_quarantined=True)):
             return
         identifier = self.get('memory_sequence', 0)+1
         self.set('memory_sequence', identifier)
@@ -423,11 +452,16 @@ class Journal:
                     recent_intake=self.get("recent_intake", [])[-20:],
                     last_vision=self.get("last_vision"),
                     last_search=self.get("last_search"),
+                    backpressure=self.get('backpressure'),
                     proactive=self.get('proactive'),
                     conversation=dict(active=bool(session), expires_at=session.get('expires_at'),
                                       followups_sent=session.get('followups', 0),
                                       activity_at=session.get('last_activity_at'), origin=session.get('origin')),
                     memory_pending=len(self.memory_jobs()), memory_error=self.get("memory_error", ""),
+                    memory_quarantined=[dict(id=j['id'], error=j.get('last_error'), attempts=j['attempts'])
+                                        for j in self.memory_jobs(include_quarantined=True) if j['state']=='quarantined'][-20:],
+                    last_delivery_failure=self.get('last_delivery_failure'),
+                    native_timings_ms=self.get('last_native_timings'),
                     memory_recovery=self.get('memory_recovery'),
                     passive_learning=self.get('passive_learning'),
                     tasks=[dict(id=t["id"], version=t["version"], phase=t["phase"], trigger_kind=t.get('trigger_kind', 'mention'),

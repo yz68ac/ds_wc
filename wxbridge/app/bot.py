@@ -143,7 +143,9 @@ class WeChatDeepSeekBot:
             return "invalid_time"
         if sent > now:
             return "future_time"
-        if max_age > 0 and now - sent > max_age:
+        deferred = self.journal.get('intake_deferred') or {}
+        previously_seen = deferred.get('local_id') == msg.get('local_id')
+        if max_age > 0 and now - sent > max_age and not previously_seen:
             return "stale_at_intake"
         if not self._triggered(msg):
             if is_pat(msg):
@@ -162,18 +164,20 @@ class WeChatDeepSeekBot:
                     reference_chars=len(reference.get("text") or ""))
 
     def _poll_once(self):
-        while True:
+        for _ in range(int(self.cfg['queue'].get('intake_max_pages', 4))):
             rows = self.store.messages_after(self.chat_id, self.last_local_id, limit=100)
             now, old_cursor = time.time(), self.last_local_id
             events = self.journal.intake(rows, lambda m: self._accept(m, now), now,
                                          float(self.cfg["queue"]["debounce_seconds"]),
                                          describe=lambda m: self._intake_metadata(m, now),
                                          observe=(lambda m, accepted: self.proactive.observe(m, accepted, now))
-                                         if self.proactive else None)
+                                         if self.proactive else None, limits=self.cfg['queue'])
             for event in events:
                 if event["real_mention"] or event["text_has_at"] or event["kind"] == "pat":
                     log.info("接收判定 metadata=%s", json.dumps(event, ensure_ascii=False))
             if len(rows) < 100:
+                return
+            if self.journal.get('backpressure'):
                 return
             if self.last_local_id <= old_cursor:
                 raise StoreError("消息分页游标未前进")
@@ -223,6 +227,12 @@ class WeChatDeepSeekBot:
                 log.info("生成结束 task=%s version=%s chunks=%s images=%s error=%s", task_id, version,
                          len(chunks), (result.get("vision") or {}).get("images", 0), error or "none")
         for task in sorted(self.journal.tasks(), key=lambda t: (t["deadline"], t["id"])):
+            head = self.journal.head()
+            if head and head.get('blocked_reason'):
+                break
+            ahead = sorted(self.journal.tasks(), key=lambda t: (t['deadline'], t['id']))
+            if task['id'] not in {t['id'] for t in ahead[:self.cfg['queue'].get('generation_lookahead', 4)]}:
+                break
             if len(self.generators) >= int(self.cfg["queue"]["generation_concurrency"]):
                 break
             if task["generation"] != "pending" or time.time() < task.get('generation_retry_at', 0):
@@ -441,6 +451,10 @@ class WeChatDeepSeekBot:
                     record.update(state="pending", attempts=record["attempts"]+1, last_error=code,
                                   retry_at=now+max(self.cfg['memory']['learning']['min_interval_seconds'] if record.get('origin') == 'activity' else 0,
                                                    min(300, 60*(record["attempts"]+1))))
+                    terminal = code in ('memory_missing_api_key', 'memory_http_401', 'memory_http_403')
+                    maximum = 8 if record.get('learning_suppressed') else 5
+                    if terminal or record['attempts'] >= maximum:
+                        record.update(state='quarantined', quarantined_at=now)
                     self.journal.put_memory(record)
                 self.journal.set("memory_error", code)
             log.warning("记忆延后 category=%s", code)
@@ -491,6 +505,11 @@ class WeChatDeepSeekBot:
                       require_mention_metadata=True,
                       pat_enabled=self.cfg["target"]["trigger"].get("pat_enabled", True))
         status.update(build=self.build, metrics=self.metrics.snapshot())
+        status['configured_backend'] = self.cfg['ui']['backend']
+        status['alerts'] = [name for name, present in (
+            ('send_blocked', bool(status.get('blocked_reason'))),
+            ('queue_backpressure', bool(status.get('backpressure'))),
+            ('memory_quarantined', bool(status.get('memory_quarantined')))) if present]
         status["memory"] = dict(enabled=self.memory is not None, running=self.memory_job is not None,
                                 error=self.memory_error, **(self.memory.status(time.time()) if self.memory else {}))
         status['reply_style'] = {key:self.cfg.get('reply_style', {}).get(key, default)

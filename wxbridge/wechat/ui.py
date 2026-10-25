@@ -921,7 +921,8 @@ class Sender:
         self.x11 = X11(self.ui_cfg)
         self.a11y = A11y(self.ui_cfg)
         self.clipboard = Clipboard()
-        backend = self.ui_cfg.get("backend", "auto")
+        from wxbridge.wechat.transport import backend as configured_backend
+        backend = configured_backend(cfg)
         if backend == "atspi":
             self.backend = "atspi"
         elif backend == "xdotool":
