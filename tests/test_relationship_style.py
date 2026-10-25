@@ -74,6 +74,7 @@ class RelationshipStyleTests(unittest.TestCase):
             self.assertEqual(text,relation.with_reply_policy('',state(lower,mood=dict(state='neutral',intensity=2))))
             self.assertIn('明确痛苦或紧急求助在任何档位',text)
             self.assertIn('对话中你对别人的语气，不代表对这个人的语气',text)
+            self.assertIn('问排查方法就给可操作检查',text)
         close=relation.with_reply_policy('',dict(affinity=95,familiarity=0,trust=50))
         self.assertNotIn('你们很熟',close)
         self.assertIn('不擅自亲昵称呼',close)
