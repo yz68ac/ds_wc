@@ -9,6 +9,7 @@ from wxbridge import config
 from wxbridge.ai.context import ContextError, select_context, message_time
 from wxbridge.ai.identity import member_labels, member_name, reference_data
 from wxbridge.wechat.pats import is_pat
+from wxbridge.storage.relationships import with_reply_policy
 
 
 def system_prompt(cfg: dict[str, Any]) -> str:
@@ -48,6 +49,9 @@ def build_prompt(
     lines: list[str] = []
     triggers = triggers or [trigger]
     labels = member_labels(context, triggers, account, initial=(memory or {}).get('labels'))
+    relationship = ((memory or {}).get('relationship') if trigger.get('sender')
+                    and (memory or {}).get('relationship_for') == trigger.get('sender') else None)
+    system = with_reply_policy(system, relationship)
     def name(message):
         return member_name(message, labels, account)
     trigger_ids = {m["local_id"] for m in triggers if m.get("local_id") is not None}

@@ -209,6 +209,18 @@ class MemoryStore:
                                      entries=usable_entries(p, now), relationship=safe_legacy_metadata(relationships.background(p, now)))
         return result
 
+    def reply_relationship(self, member, now):
+        person = self.data['members'].get(member)
+        if person is None:
+            return None
+        relation = relationships.state(person)
+        result = dict(affinity=affinity_value(person, now), familiarity=relation['familiarity'], trust=relation['trust'])
+        mood = relation.get('mood')
+        if mood and now < mood['expires_at']:
+            intensity = 1 if now-mood['time'] >= relationships.MOOD_TTL/2 else mood['intensity']
+            result['mood'] = dict(state=mood['state'], intensity=intensity)
+        return result
+
     def prompt(self, labels, asker, now, budget=1200, *, use_avatar=True, dialogue='', use_learning=True, question=''):
         result, used, visual_hints = [], 0, []
         topic = MemoryTopic(dialogue, question)

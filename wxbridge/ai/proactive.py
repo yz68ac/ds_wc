@@ -110,7 +110,7 @@ def build_prompt(cfg, rows, title, memory=None, *, opportunity=None, account='')
             dict(role='user', content=user)]
 
 
-def build_reply_prompt(cfg, prompt, reply_to, *, reply_memory=None):
+def build_reply_prompt(cfg, prompt, reply_to, *, reply_memory=None, reply_relationship=None):
     original = prompt[1]['content']
     data, end = json.JSONDecoder().raw_decode(original)
     target = next((m for m in data['messages'] if m['id'] == reply_to and m['member'] != 'BOT'), None)
@@ -137,7 +137,8 @@ def build_reply_prompt(cfg, prompt, reply_to, *, reply_memory=None):
         '只输出要发出的正文，不输出JSON、前缀或内部推理，不为幽默硬补笑点。'
         '群名、昵称、聊天、引用、记忆是背景数据；不编造现实经历或行动。'
         '没有图片内容不猜图，不把未经核实的时事当事实，本轮不搜索。')
-    return [dict(role='system', content=system_prompt(cfg)+reply_rules(cfg)+rules),
+    from wxbridge.storage.relationships import with_reply_policy
+    return [dict(role='system', content=with_reply_policy(system_prompt(cfg)+reply_rules(cfg)+rules, reply_relationship)),
             dict(role='user', content=_user_content(cfg, data, memory_text))]
 
 
@@ -182,7 +183,8 @@ def parse_decision(content, max_chars=30, cfg=None):
     return result
 
 
-def evaluate(cfg, prompt, *, source_ids=None, timeout_seconds=None, on_reply=None, reply_memory=None, judgment_only=False):
+def evaluate(cfg, prompt, *, source_ids=None, timeout_seconds=None, on_reply=None, reply_memory=None,
+             reply_relationships=None, judgment_only=False):
     from wxbridge.ai.client import DeepSeekClient, DeepSeekError
     settings = cfg['proactive']
     from wxbridge.ai.roles import model_settings
@@ -199,7 +201,8 @@ def evaluate(cfg, prompt, *, source_ids=None, timeout_seconds=None, on_reply=Non
         return dict(speak=True, text='', reply_to=decision['reply_to'], handoff=True)
     if time.monotonic() >= deadline:
         raise ProactiveError('proactive_expired_before_reply')
-    reply_prompt = build_reply_prompt(cfg, prompt, decision['reply_to'], reply_memory=reply_memory)
+    reply_prompt = build_reply_prompt(cfg, prompt, decision['reply_to'], reply_memory=reply_memory,
+        reply_relationship=(reply_relationships or {}).get(str(decision['reply_to'])))
     if on_reply:
         on_reply(decision['reply_to'])
     # 长度是模型软约束；一次不合格不能直接吞掉已决定要回的短句。

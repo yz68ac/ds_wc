@@ -15,12 +15,61 @@ SCENE_GAP = 600
 FAMILIARITY_GAP = 1800
 MOODS = {'happy': '开心', 'amused': '被逗乐', 'shy': '有点害羞',
          'helpless': '有些无奈', 'upset': '有点不悦', 'neutral': '平静'}
-AFFINITY_BANDS = ((20, '明显疏远'), (40, '有些距离'), (60, '普通相处'),
-                  (75, '有好感'), (90, '熟悉亲近'), (101, '很亲近'))
-PROMPT_POLICY = ('关系只作语气参考，具体偏好和边界优先；尚不熟时保留分寸，高好感不自动暧昧。'
+AFFINITY_PROFILES = (
+    (20, '明显疏远', '明显冷淡、只答必要内容、不主动延续',
+     '保持清楚距离，语气简短直接，可自然表示不想继续闲聊。只回答这次必要内容，不主动关心、安慰、逗弄或追问；不用亲昵称呼，不哄人，不为了显得友好另补热心建议。'),
+    (40, '有些距离', '克制疏离、少情绪投入、少延伸',
+     '保持礼貌但有距离，措辞干脆，少解释、少情绪投入。可以回应眼前的话，但不主动套近乎、不撒娇、不替对方操心；与明显疏远相比不刻意拒绝交流。'),
+    (60, '普通相处', '自然聊天、平等随和、没有特殊亲昵',
+     '像普通群友一样平等自然地聊，可以顺口接梗，但没有额外偏爱。避免自动套用照顾者语气、亲昵称呼、撒娇、护短或过度热情；简单问题说到位就停。'),
+    (75, '有好感', '愿意接话、适度玩笑、多一点关注',
+     '更愿意接住对方的话和情绪，合适时多一点轻松玩笑或贴着当前话题的关心。回应比普通相处更有互动感，可以顺着聊半步，但不机械加反问或无关叮嘱。'),
+    (90, '熟悉亲近', '可嘴硬式关心、熟人调侃、少客套',
+     '亲近感要能从语气听出来：少客套，允许熟人式调侃、嘴硬式关心和小小偏袒。被夸或被看穿关心时可以俏皮顶一句，随后仍接住对方；不把每句都写成傲娇表演，也不解释心理活动。'),
+    (101, '很亲近', '可护短关心、偶尔流露依恋，保持独立',
+     '表达明显的亲近与偏爱，遇到对方示弱时可以更柔软、更护短，轻松私密的语境下允许偶尔撒娇或流露依恋。保持独立和分寸，不讨好、不占有，也不把普通闲聊都变成暧昧。'),
+)
+AFFINITY_BANDS = tuple((end, name) for end, name, _, _ in AFFINITY_PROFILES)
+PROMPT_POLICY = ('关系要落实到当前语气、亲疏距离和延伸意愿，具体偏好和边界优先；尚不熟时保留分寸，高好感不自动暧昧。'
                  '熟悉度仅表示已积累的互动线索，不否认具体共同记忆。'
                  '情绪可随当前语境缓和，不迁怒其他成员；仍明确回应真实@、保证事实准确，避免固定话术。'
                  '不要公开分数、评估或心理过程。')
+REPLY_POLICY_START = '\n\n【本轮关系语气】'
+REPLY_POLICY_END = '\n【关系语气结束】'
+
+
+def affinity_profile(affinity):
+    return next(item for item in AFFINITY_PROFILES if affinity < item[0])
+
+
+def with_reply_policy(system, relationship):
+    """Only program-computed numbers/enums enter system instructions; no memory prose."""
+    system = re.sub(re.escape(REPLY_POLICY_START)+r'.*?'+re.escape(REPLY_POLICY_END), '', system, flags=re.S)
+    if (not isinstance(relationship, dict) or any(type(relationship.get(k)) is not int
+            or not 0 <= relationship[k] <= 100 for k in ('affinity','familiarity','trust'))):
+        return system
+    score = relationship['affinity']
+    upper, name, _, detail = affinity_profile(score)
+    lower = next((p[0] for p in reversed(AFFINITY_PROFILES) if p[0] <= score), 0)
+    fraction = (score-lower)/max(1,upper-lower-1)
+    degree = ('刚进入这一档，先体现本档的基本距离' if fraction < .34 else
+              '处于这一档中段，按本档常态表达' if fraction < .67 else
+              '接近这一档上沿，可以更明显体现本档特点，仍不越过下一档边界')
+    policy = ('下面只约束本次正在回应的成员，不影响对其他群友的态度。'
+        '沿用核心人格，在亲疏距离、回应热度、愿意延伸的程度、玩笑和关心的力度上优先落实本档要求。'
+        '有表达空间时应体现可感知的差异，不把所有关系都回复成同样温柔热心的助手。'
+        f'\n当前档位：{name}。{detail}\n程度：{degree}。'
+        '\n短答仍按原长度偏好，不靠多写一段证明亲近；专业问题保留必要事实、步骤和条件，不因疏远故意答错、漏关键内容或静默丢任务。'
+        '具体称呼、玩笑偏好和明确拒绝优先，严肃求助按情境收敛调侃；不输出分数、档位、内部编号或评估过程。')
+    if relationship['familiarity'] < 10:
+        policy += '\n尚不熟时限制亲昵称呼和共同经历假设，保留当前好感对应的热度，不把高好感自动降回普通态度。'
+    if relationship['trust'] < 30:
+        policy += '\n信任偏低时保留边界，不轻易承诺或采信未经核实的说法；它不等于好感低，不抹去已有的亲近语气。'
+    mood = relationship.get('mood')
+    if (isinstance(mood,dict) and type(mood.get('state')) is str and mood['state'] in MOODS and type(mood.get('intensity')) is int
+            and 1 <= mood['intensity'] <= 2):
+        policy += f"\n近期情绪：{MOODS[mood['state']]}，只影响当下反应，不覆盖长期亲疏；当前对话可以缓和它。"
+    return system+REPLY_POLICY_START+policy+REPLY_POLICY_END
 
 
 def defaults():
@@ -241,12 +290,9 @@ def background(person, now):
 
 def describe(person, affinity, now):
     r = state(person)
-    band = next(label for end, label in AFFINITY_BANDS if affinity < end)
+    _, band, detail, _ = affinity_profile(affinity)
     familiar = '初识' if r['familiarity'] < 10 else '有些熟悉' if r['familiarity'] < 30 else '熟悉' if r['familiarity'] < 60 else '很熟悉'
     trust = '谨慎信任' if r['trust'] < 30 else '信任普通' if r['trust'] < 70 else '比较信任'
-    detail = ('可冷淡短答、少延伸' if affinity < 40 else '自然聊天' if affinity < 60 else
-              '愿意接话、适度玩笑' if affinity < 75 else '可嘴硬式关心、熟人调侃' if affinity < 90 else
-              '可护短关心、偶尔流露依恋，保持独立')
     text = f'{familiar}，{band}，{trust}；{detail}'
     mood = r['mood']
     if mood and now < mood['expires_at']:

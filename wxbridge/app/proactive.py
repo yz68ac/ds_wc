@@ -330,6 +330,7 @@ class ProactiveController:
             prompt = build_prompt(self.bot.cfg, self.dialogue, self.bot.chat_title, dict(labels=labels),
                 opportunity={k:v for k,v in candidate.items() if k != 'expires_at'}, account=self.bot.store.self_wxid)
             reply_memory = {}
+            reply_relationships = {}
             if self.bot.memory and candidate.get('reason') != 'addressed':
                 cached = {}
                 for source in rows:
@@ -344,13 +345,15 @@ class ProactiveController:
                             dialogue=topic, question=source.get('text', ''),
                             use_learning=self.bot.cfg['memory']['learning']['enabled'])
                     reply_memory[str(source['local_id'])] = cached[key]
+                    reply_relationships[str(source['local_id'])] = self.bot.memory.reply_relationship(source['sender'], now)
             through = max(m['local_id'] for m in self.dialogue)
             self.update(last_evaluated_id=through, last_evaluated_at=now,
                         evaluations=state['evaluations']+1, outcome='evaluating', mode=candidate['mode'],
                         opportunity=candidate['reason'], model_role='participation', error='', reply_chars=None)
             from wxbridge.ai.roles import model_settings
             remaining = max(0, candidate['expires_at']-now)
-            options = dict(source_ids=candidate['source_ids'], timeout_seconds=remaining, reply_memory=reply_memory)
+            options = dict(source_ids=candidate['source_ids'], timeout_seconds=remaining, reply_memory=reply_memory,
+                           reply_relationships=reply_relationships)
             options['judgment_only'] = candidate.get('reason') == 'addressed'
             timeout = min(remaining, model_settings(self.bot.cfg, 'participation')['timeout_seconds']
                           + model_settings(self.bot.cfg, 'reply')['timeout_seconds'])+2

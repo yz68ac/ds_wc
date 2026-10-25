@@ -50,7 +50,8 @@ def _work(connection, kind, payload):
                         metrics.clear()  # 判断用量在阶段事件中上报，最终结果只带生成用量。
                     result = {'decision': evaluate(cfg, prompt, source_ids=options.get('source_ids'),
                         timeout_seconds=options.get('timeout_seconds'), on_reply=reply_started,
-                        reply_memory=options.get('reply_memory'), judgment_only=options.get('judgment_only', False))}
+                        reply_memory=options.get('reply_memory'), reply_relationships=options.get('reply_relationships'),
+                        judgment_only=options.get('judgment_only', False))}
                 elif kind == "memory":
                     from wxbridge.ai.memory import extract
                     cfg, snapshot = payload

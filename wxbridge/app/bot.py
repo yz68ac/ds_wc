@@ -258,7 +258,9 @@ class WeChatDeepSeekBot:
                                       use_avatar=self.cfg["memory"].get("avatar", {}).get("enabled", False),
                                       dialogue=memory_dialogue(context, task['triggers'], self.store.self_wxid),
                                       question=trigger.get('text', ''),
-                                      use_learning=self.cfg['memory']['learning']['enabled']))
+                                      use_learning=self.cfg['memory']['learning']['enabled']),
+                                      relationship=self.memory.reply_relationship(trigger['sender'], time.time()),
+                                      relationship_for=trigger['sender'])
                     except Exception as exc:
                         self.memory_error = type(exc).__name__
                         log.warning("跳过记忆背景 category=%s", self.memory_error)
