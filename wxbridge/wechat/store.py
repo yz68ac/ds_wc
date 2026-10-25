@@ -45,6 +45,39 @@ class StoreError(RuntimeError):
     pass
 
 
+def _image_paths(bucket: str, month: str, chat_hash: str, stem: str) -> list[dict]:
+    base = f"msg/attach/{bucket}/{month}/Img/"
+    return [dict(relative=relative, quality=quality) for relative, quality in (
+        (base+stem+"_h.dat", "original"), (base+stem+".dat", "cached"),
+        (f"cache/{month}/Message/{chat_hash}/Bubble/{stem}_b.dat", "preview"),
+        (base+stem+"_t.dat", "thumbnail"))]
+
+
+def _verified_image_paths(account_root: Path, chat_hash: str, cache_key: str) -> list[dict]:
+    """Find month containers in this group only; filenames come from the original message."""
+    root = account_root.resolve()
+
+    def safe_directory(path):
+        if not path.is_dir() or not path.resolve().is_relative_to(root):
+            return False
+        return not any(part.is_symlink() for part in (path, *path.parents) if part.is_relative_to(root))
+
+    months = set()
+    for base, tail in ((root/"msg/attach"/chat_hash, Path("Img")),
+                       (root/"cache", Path("Message")/chat_hash/"Bubble")):
+        if not safe_directory(base):
+            continue
+        for month in base.iterdir():
+            if re.fullmatch(r"20[0-9]{2}-(?:0[1-9]|1[0-2])", month.name) and safe_directory(month/tail):
+                months.add(month.name)
+    # Prefer higher quality across all months, including forwarded/older cached pictures.
+    candidates = [item for month in sorted(months, reverse=True)
+                  for item in _image_paths(chat_hash, month, chat_hash, cache_key)
+                  if safe_directory((root/item["relative"]).parent)]
+    priority = {"original": 0, "cached": 1, "preview": 2, "thumbnail": 3}
+    return sorted(candidates, key=lambda item: priority[item["quality"]])
+
+
 def parse_mentioned_users(source: str) -> list[str] | None:
     if not source.strip():
         return None
@@ -553,6 +586,8 @@ class WeChatStore:
             if re.fullmatch(r"[1-9][0-9]{0,19}", server_id):
                 originals = self._query_messages(chat_id, 2, server_id=server_id)
                 if originals:
+                    if len(originals) != 1:
+                        return {**binding, "error": "image_reference_mismatch"}
                     original = originals[0]
                     if (original["type"] != 3 or not original.get("image_md5")
                             or (digest and digest != original["image_md5"])
@@ -588,14 +623,16 @@ class WeChatStore:
                         or (bucket.lower() != chat_hash and not proven)):
                     continue
                 stem = re.sub(r"_[ht]$", "", filename[:-4])
-                base = f"msg/attach/{bucket}/{month}/Img/"
-                candidates = [(base+stem+"_h.dat", "original"), (base+stem+".dat", "cached"),
-                              (f"cache/{month}/Message/{chat_hash}/Bubble/{stem}_b.dat", "preview"),
-                              (base+stem+"_t.dat", "thumbnail")]
-                for relative, quality in candidates:
-                    item = dict(relative=relative, quality=quality)
+                for item in _image_paths(bucket, month, chat_hash, stem):
                     if item not in binding["candidates"]:
                         binding["candidates"].append(item)
+            # A thumbnail can exist before WeChat writes any hardlink index row.
+            # Never use a cache key from the quote or infer a picture from proximity.
+            if (not binding["candidates"] and proven and reference.get("sender")
+                    and re.fullmatch(r"[0-9a-f]{32}", cache_key)):
+                binding["candidates"] = _verified_image_paths(Path(binding["account_root"]), chat_hash, cache_key)
+                if binding["candidates"]:
+                    binding["cache_fallback"] = True
             if not binding["candidates"]:
                 binding["error"] = "local_image_index_missing"
         except (StoreError, sqlite3.DatabaseError, OSError, ValueError):

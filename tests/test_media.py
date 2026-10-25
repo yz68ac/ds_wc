@@ -245,6 +245,123 @@ class ImageBindingTests(unittest.TestCase):
         self.assertNotIn("error", binding)
         self.assertIn(self.filename, binding["candidates"][1]["relative"])
 
+    def indexless_source(self, *, month="2026-10", bucket=None, suffix="_t"):
+        with closing(sqlite3.connect(self.path)) as conn, conn:
+            conn.execute("DELETE FROM image_hardlink_info_v4")
+        self.store._query_messages.return_value = [dict(type=3, image_md5=self.digest,
+                                                        sender="friend", image_cache_key="b"*32)]
+        picture = self.root/"msg/attach"/(bucket or self.bucket)/month/"Img"/("b"*32+suffix+".dat")
+        picture.parent.mkdir(parents=True, exist_ok=True)
+        picture.write_bytes(png())
+        return picture, dict(kind="image", server_id="123", sender="friend", chat_id=self.chat,
+                             image_md5=self.digest, available=False, text="")
+
+    def test_indexless_thumbnail_reaches_multimodal_request_with_quality_label(self):
+        picture, reference = self.indexless_source()
+        binding = self.store.image_binding(self.chat, reference)
+        self.assertNotIn("error", binding)
+        self.assertTrue(binding["cache_fallback"])
+        trigger = msg(10, NOW, "@ds 这怎么看")
+        trigger["reference"] = reference
+        cfg = _deep_merge(DEFAULTS, {})
+        cfg["deepseek"].update(system_prompt_file="", system_prompt="合成人格")
+        generation = dict(context=[], triggers=[trigger], chat_title="合成群",
+                          images=[dict(trigger_index=0, depth=0, **binding)])
+        base = build_prompt(cfg, [], trigger, "合成群")
+        prompt, meta = prepare_multimodal(cfg, base, generation)
+        self.assertEqual(meta["images"], 1)
+        self.assertEqual(meta["items"][0]["quality"], "thumbnail")
+        self.assertEqual(meta["items"][0]["binding_source"], "verified_message_cache")
+        self.assertIn("本地缩略图", prompt[1]["content"][-2]["text"])
+        self.assertEqual(base64.b64decode(prompt[1]["content"][-1]["image_url"]["url"].split(",", 1)[1]), png())
+        self.assertEqual(picture.read_bytes(), png())
+        self.assertEqual(len(list(picture.parent.iterdir())), 1)
+        self.assertNotIn("relative", json.dumps(meta))
+
+    def test_indexless_full_image_wins_over_thumbnail_in_newer_month(self):
+        _, reference = self.indexless_source(month="2026-10")
+        full = self.root/"msg/attach"/self.bucket/"2026-09/Img"/("b"*32+"_h.dat")
+        full.parent.mkdir(parents=True)
+        full.write_bytes(png())
+        _, info = read_local_image(self.store.image_binding(self.chat, reference), DEFAULTS)
+        self.assertEqual(info["quality"], "original")
+
+    def test_indexless_preview_cache_is_bound_to_exact_group(self):
+        thumbnail, reference = self.indexless_source()
+        thumbnail.unlink()
+        preview = self.root/"cache/2026-09/Message"/self.bucket/"Bubble"/("b"*32+"_b.dat")
+        preview.parent.mkdir(parents=True)
+        preview.write_bytes(png())
+        binding = self.store.image_binding(self.chat, reference)
+        self.assertEqual(read_local_image(binding, DEFAULTS)[1]["quality"], "preview")
+
+    def test_indexless_cache_cannot_replace_original_identity_checks(self):
+        _, reference = self.indexless_source()
+        original = self.store._query_messages.return_value[0].copy()
+        cases = [(dict(reference, sender="other"), [original], "image_reference_mismatch"),
+                 (dict(reference, image_md5="c"*32), [original], "image_reference_mismatch"),
+                 (reference, [dict(original, type=1)], "image_reference_mismatch"),
+                 (reference, [original, original], "image_reference_mismatch"),
+                 (dict(reference, sender=""), [original], "local_image_index_missing"),
+                 (dict(reference, server_id="0"), [original], "local_image_index_missing"),
+                 (dict(reference, image_cache_key="b"*32), [], "local_image_index_missing")]
+        for ref, originals, error in cases:
+            with self.subTest(error=error, original_count=len(originals)):
+                self.store._query_messages.return_value = originals
+                binding = self.store.image_binding(self.chat, ref)
+                self.assertEqual(binding["error"], error)
+                self.assertFalse(binding["candidates"])
+
+    def test_indexless_cache_never_searches_other_groups_or_guesses_filenames(self):
+        _, reference = self.indexless_source(bucket="d"*32)
+        self.assertEqual(self.store.image_binding(self.chat, reference)["error"], "local_image_index_missing")
+        own = self.root/"msg/attach"/self.bucket/"2026-10/Img"/("c"*32+"_t.dat")
+        own.parent.mkdir(parents=True)
+        own.write_bytes(png())
+        binding = self.store.image_binding(self.chat, reference)
+        with self.assertRaisesRegex(MediaError, "local_image_not_cached"):
+            read_local_image(binding, DEFAULTS)
+
+    def test_indexless_bad_month_and_unknown_source_key_fail_closed(self):
+        _, reference = self.indexless_source(month="2026-13")
+        self.assertEqual(self.store.image_binding(self.chat, reference)["error"], "local_image_index_missing")
+        for key in ("", "../unsafe", "c"*32):
+            with self.subTest(key=key):
+                self.store._query_messages.return_value[0]["image_cache_key"] = key
+                self.assertFalse(self.store.image_binding(self.chat, reference)["candidates"])
+
+    def test_indexless_cache_wait_observes_later_full_image_without_database_refresh(self):
+        thumbnail, reference = self.indexless_source()
+        thumbnail.unlink()
+        binding = self.store.image_binding(self.chat, reference)
+        full = thumbnail.with_name("b"*32+"_h.dat")
+        trigger = msg(10, NOW, "@ds 这怎么看")
+        trigger["reference"] = reference
+        cfg = _deep_merge(DEFAULTS, {})
+        cfg["deepseek"].update(system_prompt_file="", system_prompt="合成人格")
+        generation = dict(context=[], triggers=[trigger], chat_title="合成群",
+                          images=[dict(trigger_index=0, depth=0, **binding)])
+        self.store._query_messages.reset_mock()
+        with patch("wxbridge.ai.images.time.sleep", side_effect=lambda _: full.write_bytes(png())):
+            _, meta = prepare_multimodal(cfg, build_prompt(cfg, [], trigger, "合成群"), generation)
+        self.assertEqual(meta["images"], 1)
+        self.assertEqual(meta["items"][0]["quality"], "original")
+        self.store._query_messages.assert_not_called()
+
+    def test_symlinked_month_is_not_used_by_fallback_or_image_reader(self):
+        thumbnail, reference = self.indexless_source(month="2026-09")
+        alias = thumbnail.parent.parent.parent/"2026-10"
+        try:
+            alias.symlink_to(thumbnail.parent.parent, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            self.skipTest("creating directory symlinks requires host support")
+        binding = self.store.image_binding(self.chat, reference)
+        self.assertTrue(binding["candidates"])
+        self.assertFalse(any("/2026-10/" in c["relative"] for c in binding["candidates"]))
+        forged = dict(binding, candidates=[dict(relative=str((alias/"Img"/thumbnail.name).relative_to(self.root)), quality="thumbnail")])
+        with self.assertRaisesRegex(MediaError, "unsafe_image_path"):
+            read_local_image(forged, DEFAULTS)
+
     def test_unproven_or_forged_cache_key_cannot_select_attachment(self):
         ref = dict(image_md5="c"*32, image_cache_key="b"*32)
         self.assertEqual(self.store.image_binding(self.chat, ref)["error"], "local_image_index_missing")

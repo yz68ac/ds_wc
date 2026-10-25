@@ -179,7 +179,9 @@ def read_local_image(binding, cfg):
         path = root/candidate["relative"]
         try:
             resolved = path.resolve()
-            if not resolved.is_relative_to(root) or path.is_symlink() or not any(resolved.is_relative_to(root/part) for part in ("msg/attach", "cache")):
+            if (not resolved.is_relative_to(root)
+                    or any(part.is_symlink() for part in (path, *path.parents) if part.is_relative_to(root))
+                    or not any(resolved.is_relative_to(root/part) for part in ("msg/attach", "cache"))):
                 raise MediaError("unsafe_image_path")
             fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
             try:
@@ -212,6 +214,8 @@ def read_local_image(binding, cfg):
                             raise MediaError(str(exc)) from None
                     mime, width, height = validate_image(image, max_bytes)
                     info = dict(mime=mime, width=width, height=height, bytes=len(image), quality=candidate["quality"])
+                    if binding.get("cache_fallback"):
+                        info["binding_source"] = "verified_message_cache"
                     if source_format:
                         info.update(source_format=source_format, converted=True)
                     if failures:
