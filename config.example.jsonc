@@ -79,6 +79,7 @@
     "max_message_age_seconds": 90, // 仅首次接收过滤旧触发；已入队问题不会因此过期。
     "context_window_seconds": 300, // 普通回复上下文 5 分钟；人物记忆单独注入。
     "context_max_chars": 24000, // 上下文字符预算；超出时取消，不悄悄截断历史。
+    "context_budget_strategy": "strict", // 可选 recent：超预算时省略完整旧消息并告知模型，保留当前提问及引用；默认不启用。
     "max_reply_chars": 1800 // 微信单条分片上限；日常短答偏好另由提示词控制。
   },
   // 真实 @ 和正文关键词点名的回复模型；密钥不要直接写在这里。

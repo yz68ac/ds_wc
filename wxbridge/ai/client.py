@@ -108,15 +108,18 @@ class DeepSeekClient:
 
     def complete(self, messages, *, require_complete=False, **kwargs) -> dict:
         result = self.request(messages, **kwargs)
+        code = ''
         if require_complete and result.finish_reason == 'length':
+            code = 'output_limit'
+        elif require_complete and result.finish_reason == 'content_filter':
+            code = 'output_filtered'
+        elif require_complete and not result.message.get('tool_calls') and not (result.message.get('content') or '').strip():
+            code = 'empty_reply'
+        if code:
             values = _metrics.get()
             if values:
-                values[-1]['error'] = 'output_limit'
-            raise DeepSeekError('output_limit', retryable=True)
-        if require_complete and result.finish_reason == 'content_filter':
-            raise DeepSeekError('output_filtered')
-        if require_complete and not result.message.get('tool_calls') and not (result.message.get('content') or '').strip():
-            raise DeepSeekError('empty_reply', retryable=True)
+                values[-1]['error'] = code
+            raise DeepSeekError(code, retryable=code != 'output_filtered')
         return result.message
 
     def chat(self, messages):

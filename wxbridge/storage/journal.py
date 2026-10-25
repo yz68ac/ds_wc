@@ -194,20 +194,19 @@ class Journal:
                     events.append(describe(msg))
                 accepted = accept(msg)
                 if accepted:
-                    options = limits or {}
-                    total = options.get('max_pending', 0)
-                    per_sender = options.get('max_pending_per_sender', 0)
-                    if ((total and len(tasks) >= total) or (per_sender and sum(
-                            t.get('sender') == msg['sender'] for t in tasks) >= per_sender)):
-                        self.set('intake_deferred', dict(local_id=msg['local_id'], accepted_at=now))
-                        self.set('backpressure', dict(reason='queue_capacity', at=now, local_id=msg['local_id']))
-                        break  # Do not advance the cursor over an unqueued trigger.
                     kind = "pat" if is_pat(msg) else "mention"
                     task = next((t for t in tasks if kind == "mention" and t.get("trigger_kind", "mention") == kind
                                  and debounce > 0 and t["phase"] == "open"
                                  and t["sender"] == msg["sender"]
                                  and (now < t["deadline"] or msg["time"] < t["deadline"])), None)
                     if task is None:
+                        options = limits or dict(max_pending=32, max_pending_per_sender=8)
+                        total, per_sender = options.get('max_pending', 0), options.get('max_pending_per_sender', 0)
+                        if ((total and len(tasks) >= total) or (per_sender and sum(
+                                t.get('sender') == msg['sender'] for t in tasks) >= per_sender)):
+                            self.set('intake_deferred', dict(local_id=msg['local_id'], accepted_at=now))
+                            self.set('backpressure', dict(reason='queue_capacity', at=now, local_id=msg['local_id']))
+                            break
                         task = dict(id=self._next_task_id(), sender=msg["sender"], phase="open", version=0, trigger_kind=kind,
                                     triggers=[], trigger_ids=[], generation="pending", chunks=[], next_chunk=0,
                                     intent=None, blocked_reason="", closed_at=None, accepted_at=now)
@@ -225,6 +224,10 @@ class Journal:
                 if observe:
                     observe(msg, accepted)
                 cursor = max(cursor, msg["local_id"])
+                deferred = self.get('intake_deferred') or {}
+                if deferred.get('local_id', cursor+1) <= cursor:
+                    self.set('intake_deferred', None)
+                    self.set('backpressure', None)
             self.set("cursor", cursor)
             if events:
                 self.set("recent_intake", (self.get("recent_intake", []) + events)[-50:])

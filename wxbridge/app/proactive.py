@@ -312,7 +312,7 @@ class ProactiveController:
             prompt = build_prompt(self.bot.cfg, self.dialogue, self.bot.chat_title, dict(labels=labels),
                 opportunity={k:v for k,v in candidate.items() if k != 'expires_at'}, account=self.bot.store.self_wxid)
             reply_memory = {}
-            if self.bot.memory:
+            if self.bot.memory and candidate.get('reason') != 'addressed':
                 cached = {}
                 for source in rows:
                     if source['local_id'] not in candidate['source_ids']:

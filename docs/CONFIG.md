@@ -1,5 +1,7 @@
 # 配置项说明
 
+2026-10-25新增的队列容量、生成背压、可选上下文降级与状态字段见[审阅修复](REVIEW_FIXES.md)。
+
 全部默认配置保存在源码根目录 [config.defaults.json](../config.defaults.json)，与 `wxbridge` 文件夹同级。[config.example.jsonc](../config.example.jsonc) 是带注释的自定义配置参考；实际运行使用标准 JSON 格式的 `config.json` 覆盖默认值。只需填写要覆盖的字段，无需复制全部示例；复制字段时去掉注释，程序不直接加载这个 JSONC 参考文件。真实 Linux 配置在 `/opt/wxbridge/config.json`，本地修改不会自动同步。
 
 ## 配置如何生效

@@ -72,6 +72,8 @@ def load_config(path: str | Path = "config.json") -> dict[str, Any]:
     if cfg["deepseek"].get("reasoning_effort") not in (None, "low", "high", "max"):
         raise ValueError("deepseek.reasoning_effort 必须为 low/high/max")
     window = cfg["target"]["context_window_seconds"]
+    if cfg['target'].get('context_budget_strategy', 'strict') not in ('strict', 'recent'):
+        raise ValueError('target.context_budget_strategy must be strict/recent')
     if type(window) is not int or window <= 0:
         raise ValueError("target.context_window_seconds 必须是正整数")
     if type(cfg["target"]["trigger"]["pat_enabled"]) is not bool:
@@ -135,9 +137,11 @@ def load_config(path: str | Path = "config.json") -> dict[str, Any]:
     if not queue_path.is_absolute():
         queue_path = base / queue_path
     cfg["queue"]["file"] = str(queue_path.resolve())
-    if not math.isfinite(float(cfg['queue']['debounce_seconds'])) or float(cfg["queue"]["debounce_seconds"]) < 0:
+    if (type(cfg['queue']['debounce_seconds']) not in (int, float)
+            or not math.isfinite(float(cfg['queue']['debounce_seconds'])) or float(cfg["queue"]["debounce_seconds"]) < 0):
         raise ValueError("queue.debounce_seconds 必须大于或等于 0（0 表示每次 @ 独立排队）")
-    if not math.isfinite(float(cfg['ui']['send_confirm_timeout_seconds'])) or float(cfg["ui"]["send_confirm_timeout_seconds"]) <= 0:
+    if (type(cfg['ui']['send_confirm_timeout_seconds']) not in (int, float)
+            or not math.isfinite(float(cfg['ui']['send_confirm_timeout_seconds'])) or float(cfg["ui"]["send_confirm_timeout_seconds"]) <= 0):
         raise ValueError("ui.send_confirm_timeout_seconds 必须大于 0")
     concurrency = cfg["queue"]["generation_concurrency"]
     if isinstance(concurrency, bool) or not isinstance(concurrency, int) or not 1 <= concurrency <= 2:

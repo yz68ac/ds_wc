@@ -196,8 +196,9 @@ class FrozenMemoryPipelineTests(unittest.TestCase):
     add = pipeline.PipelineTests.add
 
     def test_main_process_freezes_target_memories_without_adding_them_to_judgment(self):
-        self.add(1, sender='member_a', text='ds聊聊JOJO', mention=False)
-        self.add(2, sender='member_b', text='ds另一个问题', mention=False)
+        self.cfg['proactive']['min_messages'] = 2
+        self.add(1, sender='member_a', text='聊聊JOJO', mention=False)
+        self.add(2, sender='member_b', text='另一个问题', mention=False)
         with self.bot.journal.db:
             self.bot.journal.set('cursor', 2)
         memory = Mock()

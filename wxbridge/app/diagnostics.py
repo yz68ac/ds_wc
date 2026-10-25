@@ -17,7 +17,11 @@ def check(cfg: dict, group: str = "") -> int:
     chat_id, title = store.resolve_chat(group or cfg["target"]["chat"])
     print(f"目标群：{title} ({chat_id})")
     print(f"最新消息 local_id：{store.last_local_id(chat_id)}（不显示正文）")
-    print(json.dumps(Sender(cfg).status(), ensure_ascii=False, indent=2))
+    if cfg['ui']['backend']=='native_service':
+        from wxbridge.native.sender import readiness
+        print(json.dumps(readiness(cfg)))
+    else:
+        print(json.dumps(Sender(cfg).status(), ensure_ascii=False, indent=2))
     print(f"DeepSeek key：{'已配置' if deepseek_api_key(cfg) else '未配置'}")
     return 0
 

@@ -74,6 +74,7 @@
     "max_message_age_seconds": 90,
     "context_window_seconds": 300,
     "context_max_chars": 24000,
+    "context_budget_strategy": "strict",
     "max_reply_chars": 1800
   },
   "deepseek": {

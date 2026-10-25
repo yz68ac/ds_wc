@@ -1,5 +1,45 @@
 """Conservative lexical retrieval, independent of memory persistence and scoring."""
 import re
+import json
+from pathlib import Path
+from functools import lru_cache
+
+
+@lru_cache(maxsize=4)
+def _read_aliases(path, stamp):
+    try:
+        raw = Path(path).read_bytes()
+        if len(raw) > 16384:
+            return ()
+        groups = json.loads(raw).get('groups', [])
+        if not isinstance(groups, list) or len(groups) > 128:
+            return ()
+        return tuple(tuple(s.casefold() for s in group) for group in groups
+                     if isinstance(group, list) and 2 <= len(group) <= 12
+                     and all(isinstance(s, str) and 2 <= len(s) <= 48 for s in group))
+    except (OSError, ValueError, TypeError, AttributeError):
+        return ()
+
+
+def topic_aliases():
+    path = Path(__file__).resolve().parents[2]/'prompts/topic_aliases.json'
+    try:
+        return _read_aliases(str(path), path.stat().st_mtime_ns)
+    except OSError:
+        return ()
+
+
+def entity_terms(text, groups):
+    terms = set()
+    for i, group in enumerate(groups):
+        for alias in group:
+            pattern = re.escape(alias)
+            if alias.isascii():
+                pattern = r'(?<![a-z0-9_])'+pattern+r'(?![a-z0-9_])'
+            if re.search(pattern, text, re.I):
+                terms.add('entity:'+str(i))
+                break
+    return terms
 
 
 STYLE = re.compile(r'回答|回复|答复|解释|称呼|叫我|别叫|不要叫|语气|说话|简洁|简短|结论|字数|表情|剧透')
@@ -24,9 +64,11 @@ def grams(text):
 
 
 class MemoryTopic:
-    def __init__(self, dialogue, question=''):
+    def __init__(self, dialogue, question='', *, aliases=None):
         self.empty = not dialogue.strip()
+        self.aliases = topic_aliases() if aliases is None else aliases
         self.terms, self.grams = words(dialogue), grams(dialogue)
+        self.terms |= entity_terms(dialogue, self.aliases)
         asks = re.search(r'记不记得|还记得|记得我|什么|哪个|哪些|[?？]', question)
         personal = re.search(r'之前|以前|上次|刚才|曾经|我的.{0,8}(?:爱好|偏好|兴趣)|我.{0,8}(?:喜欢什么|爱玩什么|玩什么)', question)
         self.recall = bool('我' in question and asks and (personal or '记' in question) and not words(question))
@@ -39,7 +81,7 @@ class MemoryTopic:
         if personal and self.recall:
             return 3  # Explicitly recalling one's past can intentionally use an old topic.
         summary = entry['summary']
-        terms = words(summary)
+        terms = words(summary) | entity_terms(summary, self.aliases)
         shared = terms & self.terms
         if terms and not shared:
             return 0
