@@ -629,7 +629,9 @@ class PipelineTests(unittest.TestCase):
         client = DeepSeekClient.__new__(DeepSeekClient)
         client.cfg = {**self.cfg["deepseek"], "thinking": "disabled"}
         client._post = Mock(return_value={"choices": [{"message": {"content": "", "reasoning_content": "PRIVATE"}}]})
-        self.assertEqual(client.chat([]), "")
+        from wxbridge.ai.client import DeepSeekError
+        with self.assertRaisesRegex(DeepSeekError, 'empty_reply'):
+            client.chat([])
         self.assertEqual(client._post.call_args.args[0]["thinking"], {"type": "disabled"})
 
 

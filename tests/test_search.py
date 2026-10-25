@@ -39,25 +39,21 @@ class SearchTests(unittest.TestCase):
         self.notice.assert_not_called()
         self.backend.search.assert_not_called()
 
-    def test_empty_final_content_is_silent_instead_of_a_fallback(self):
+    def test_empty_final_content_is_a_retryable_failure(self):
         for content in (None, '', ' \n ', '---', '```json\n```'):
             with self.subTest(content=content):
                 self.client.complete.return_value = dict(content=content, reasoning_content='PRIVATE_REASONING')
-                text, meta = self.answer()
-                self.assertEqual(text, '')
-                self.assertIn('empty_reply', meta['errors'])
-                self.assertFalse(meta['attempted'])
+                with self.assertRaisesRegex(DeepSeekError, 'empty_reply'):
+                    self.answer()
         self.backend.search.assert_not_called()
 
-    def test_empty_reply_after_search_does_not_send_sources_or_no_results_fallback(self):
+    def test_empty_reply_after_search_is_a_failure_not_silence(self):
         for rows in (result(), dict(results=[])):
             with self.subTest(found=bool(rows['results'])):
                 self.client.complete.side_effect = [dict(tool_calls=[call(query='合成查询')]), dict(content='')]
                 self.backend.search.return_value = rows
-                text, meta = self.answer()
-                self.assertEqual(text, '')
-                self.assertTrue(meta['attempted'])
-                self.assertIn('empty_reply', meta['errors'])
+                with self.assertRaisesRegex(DeepSeekError, 'empty_reply'):
+                    self.answer()
 
     def test_feedback_off_discards_tool_waiting_draft_and_preserves_search_metadata(self):
         self.assertFalse(self.cfg['search']['feedback_enabled'])

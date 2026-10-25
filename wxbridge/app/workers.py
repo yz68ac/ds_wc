@@ -34,6 +34,8 @@ def _work(connection, kind, payload):
                         answer = DeepSeekClient(cfg).chat(response_prompt(prompt, cfg))
                         answer = format_reply(answer, cfg)
                     result = {"reply": answer}
+                    if not answer.strip():
+                        raise DeepSeekError('empty_reply', retryable=True)
                     if vision is not None:
                         result["vision"] = vision
                     if search is not None:

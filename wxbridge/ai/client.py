@@ -113,10 +113,14 @@ class DeepSeekClient:
             if values:
                 values[-1]['error'] = 'output_limit'
             raise DeepSeekError('output_limit', retryable=True)
+        if require_complete and result.finish_reason == 'content_filter':
+            raise DeepSeekError('output_filtered')
+        if require_complete and not result.message.get('tool_calls') and not (result.message.get('content') or '').strip():
+            raise DeepSeekError('empty_reply', retryable=True)
         return result.message
 
     def chat(self, messages):
-        return (self.complete(messages).get('content') or '').strip()
+        return (self.complete(messages, require_complete=True).get('content') or '').strip()
 
 
 ModelClient = DeepSeekClient  # 保留已有导入入口；业务调用按 role 隔离配置。

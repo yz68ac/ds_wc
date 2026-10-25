@@ -207,7 +207,7 @@ def evaluate(cfg, prompt, *, source_ids=None, timeout_seconds=None, on_reply=Non
             if exc.code != 'proactive_invalid_reply_length' or attempt:
                 raise
         except DeepSeekError as exc:
-            if exc.code != 'output_limit' or attempt:
+            if exc.code not in ('output_limit', 'empty_reply') or attempt:
                 raise
         reply_prompt[0]['content'] += (f'\n【重新生成短答】上一条未满足输出要求。只保留最关键的一句，'
             f'最多{settings["max_reply_chars"]}字；省去扩展解释，不输出JSON或改写说明，直接给出完整短句。')

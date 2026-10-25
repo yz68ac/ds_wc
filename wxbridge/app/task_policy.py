@@ -3,6 +3,20 @@ from dataclasses import dataclass
 import re
 
 
+NATIVE_TRANSIENT = frozenset({'native_service_unavailable', 'native_worker_busy',
+    'native_wrong_client', 'native_services_unavailable', 'native_schedule_failed'})
+UI_TRANSIENT = frozenset({'command_timeout', 'command_failed', 'activation_failed',
+    'pointer_mismatch', 'pointer_unknown', 'button_obstructed'})
+
+
+def submission_failure(metadata):
+    """Only an explicit False proves a send was not submitted."""
+    operation = metadata.get('operation') or {}
+    definite = operation.get('submitted') is False
+    code = metadata.get('error', 'send_failed')
+    return definite, definite and code in NATIVE_TRANSIENT | UI_TRANSIENT
+
+
 def proactive_failure_code(result):
     code = result.get('error')
     known = {'proactive_invalid_judgment', 'proactive_invalid_response',

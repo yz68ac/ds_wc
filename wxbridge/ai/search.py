@@ -114,8 +114,7 @@ def answer_with_search(cfg, client, messages, on_search=None, *, search_client=N
     def finish(text):
         text = format_reply(text, cfg)
         if not text.strip():
-            errors.append('empty_reply')
-            return '', metadata()
+            raise DeepSeekError('empty_reply', retryable=True)
         if sources and sources[0]["url"] not in text:
             text += "\n参考："+sources[0]["url"]
         return text.strip(), metadata()
@@ -123,7 +122,8 @@ def answer_with_search(cfg, client, messages, on_search=None, *, search_client=N
     for turn in range(int(settings.get("max_tool_rounds", 2))+1):
         exhausted = turn >= int(settings.get("max_tool_rounds", 2)) or calls >= int(settings.get("max_requests", 3))
         try:
-            message = client.complete(conversation, tools=TOOLS, tool_choice="none" if exhausted else "auto", deadline=deadline)
+            message = client.complete(conversation, tools=TOOLS, tool_choice="none" if exhausted else "auto", deadline=deadline,
+                                      require_complete=True)
         except DeepSeekError:
             if not attempted:
                 raise

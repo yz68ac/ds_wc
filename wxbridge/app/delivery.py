@@ -9,6 +9,7 @@ from functools import partial
 from wxbridge.app.conversation import confirmation_updates
 from wxbridge.wechat.store import StoreError
 from wxbridge.native.protocol import NativeError, text_parts
+from wxbridge.app.task_policy import submission_failure
 
 log = logging.getLogger('wxbridge')
 
@@ -44,14 +45,28 @@ class DeliveryController:
                             external_error=metadata.get('error','native_rejected'),completed_at=time.time())
                 self.journal.put(task)
             return
-        retryable = {"command_timeout", "command_failed", "activation_failed", "pointer_mismatch", "pointer_unknown", "button_obstructed"}
-        if (not result["ok"] and operation.get("submitted") is False
-                and metadata.get("error") in retryable and task.get("pre_submit_attempts", 0) < 2):
+        definite, retryable = submission_failure(metadata)
+        attempts = task.get('pre_submit_attempts', 0)
+        maximum = 3 if metadata.get('error', '').startswith('native_') else 2
+        if not result['ok'] and definite and retryable and attempts < maximum:
             with self.journal.db:
-                task.update(intent=None, blocked_reason="", retry_at=time.time()+2,
-                            pre_submit_attempts=task.get("pre_submit_attempts", 0)+1)
+                delay = min(30, 2**(attempts+1)) if maximum == 3 else 2
+                task.update(intent=None, blocked_reason="", retry_at=time.time()+delay,
+                            pre_submit_attempts=attempts+1)
                 self.journal.put(task)
             log.info("提交前失败，安全等待重试 task=%s part=%s attempt=%s", task_id, part, task["pre_submit_attempts"])
+            return
+        if not result['ok'] and definite and metadata.get('error', '').startswith('native_'):
+            # A proven non-submission cannot acquire an outbound confirmation.
+            # Retain an explicit terminal result, but do not block unrelated tasks.
+            with self.journal.db:
+                failure = dict(task_id=task_id, part=part, error=metadata.get('error', 'send_failed'),
+                               at=time.time(), submitted=False, attempts=attempts+1)
+                task.update(phase='done', intent=None, chunks=[], triggers=[], blocked_reason='',
+                            delivery_error=failure['error'], completed_at=time.time())
+                self.journal.set('last_delivery_failure', failure)
+                self.journal.put(task)
+            log.warning('发送明确失败 task=%s part=%s error=%s', task_id, part, failure['error'])
             return
         with self.journal.db:
             task["intent"]["deadline"] = time.time() + float(self.cfg["ui"]["send_confirm_timeout_seconds"])
