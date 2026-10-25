@@ -38,8 +38,8 @@ class RelationshipStyleTests(unittest.TestCase):
         low=build_prompt(self.cfg,[],trigger,'合成群',memory=dict(text='',relationship_for='wxid_a',relationship=state(10)))
         high=build_prompt(self.cfg,[],trigger,'合成群',memory=dict(text='',relationship_for='wxid_a',relationship=state(95)))
         self.assertEqual(low[1],base[1]);self.assertEqual(high[1],base[1])
-        self.assertIn('不主动关心',low[0]['content'])
-        self.assertIn('表达明显的亲近与偏爱',high[0]['content'])
+        self.assertIn('不主动接梗、追问或关心',low[0]['content'])
+        self.assertIn('允许流露亲近或依恋',high[0]['content'])
         self.assertNotIn('affinity',high[0]['content'])
         self.assertNotIn('wxid_a',high[0]['content'])
 
@@ -58,12 +58,25 @@ class RelationshipStyleTests(unittest.TestCase):
             self.assertEqual(relation.with_reply_policy('人格',invalid),'人格')
         text=relation.with_reply_policy('人格',dict(affinity=95,familiarity=0,trust=20,
             nickname='NICK_SECRET',summary='MEMORY_SECRET',mood=dict(state='shy',intensity=2,reason='REASON_SECRET')))
-        self.assertIn('不把高好感自动降回普通态度',text)
-        self.assertIn('不抹去已有的亲近语气',text)
+        self.assertIn('保留当前好感对应的热度',text)
+        self.assertIn('已有好感对应的热度保持',text)
+        self.assertIn('对方明确认可的普通称呼可用',text)
+        self.assertIn('不覆盖事实核验和必要信息',text)
         self.assertIn('有点害羞',text)
         for secret in ('NICK_SECRET','MEMORY_SECRET','REASON_SECRET'):
             self.assertNotIn(secret,text)
         self.assertNotIn('近期情绪',relation.with_reply_policy('',state(50,mood=dict(state=[],intensity=2))))
+
+    def test_six_bands_have_no_subbands_or_default_neutral_mood(self):
+        for lower,upper in ((0,19),(20,39),(40,59),(60,74),(75,89),(90,100)):
+            text=relation.with_reply_policy('',state(lower))
+            self.assertEqual(text,relation.with_reply_policy('',state(upper)))
+            self.assertEqual(text,relation.with_reply_policy('',state(lower,mood=dict(state='neutral',intensity=2))))
+            self.assertIn('明确痛苦或紧急求助在任何档位',text)
+            self.assertIn('对话中你对别人的语气，不代表对这个人的语气',text)
+        close=relation.with_reply_policy('',dict(affinity=95,familiarity=0,trust=50))
+        self.assertNotIn('你们很熟',close)
+        self.assertIn('不擅自亲昵称呼',close)
 
     def test_snapshot_does_not_change_memory_or_expose_evidence(self):
         self.memory.apply(memory_tests.suggestion(),self.snap(),NOW)
