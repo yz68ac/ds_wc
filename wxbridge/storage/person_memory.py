@@ -13,10 +13,25 @@ from wxbridge.ai.avatars import validate_visual, visual_description
 from wxbridge.storage import expression_memory, relationships
 from wxbridge.ai.emoticons import token_pattern
 from wxbridge.storage.memory_selection import MemoryTopic
+from wxbridge.storage.member_references import MEMBER_LABEL, ambiguous_fields, bind_text, safe_legacy_metadata
 
 DAY = 86400
 LIMITS = {"scene": 10, "event": 10, "preference": 5, "impression": 3}
 TTL = {"scene": 6*3600, "event": 30*DAY, "preference": 90*DAY, "impression": 90*DAY}
+
+
+def ambiguous_labels(entry):
+    """Old summaries have no historical label map; never reinterpret it using today's map."""
+    return ambiguous_fields(entry, ('summary',))
+
+
+def usable_entries(person, now):
+    return [e for e in active_entries(person, now) if not ambiguous_labels(e)]
+
+
+def bind_summary(summary, owner, mapping, members, source_texts):
+    """Resolve only the current validated snapshot; preserve literal technical identifiers."""
+    return bind_text(summary, owner, mapping, members, source_texts)
 
 
 def private_directory(path):
@@ -127,9 +142,14 @@ class MemoryStore:
         # 只有权威 JSON 落盘后才推进内存水位；失败不得把重试误判为已处理。
         atomic_write(self.path, json.dumps(data, ensure_ascii=False, indent=2)+"\n")
         self.data = data
+        self.write_projection(now)
+
+    def write_projection(self, now):
+        """Rebuild only the human-readable view; never advance revision or evidence."""
         # 可重建投影，JSON 是唯一权威数据；不把模型响应直接写成提示词文件。
         lines = ["# 人物记忆（由 memory.json 生成）", "生成于："+datetime.fromtimestamp(now).isoformat(timespec="seconds"),
-                 "仅为背景数据；印象均为暂时推测。相对时间以本投影生成时刻为准。"]
+                 "仅为背景数据；印象均为暂时推测。相对时间以本投影生成时刻为准。",
+                 f"成员档案：{len(self.data['members'])}；有可用摘要：{sum(bool(usable_entries(p, now)) for p in self.data['members'].values())}。表达学习区不是成员。"]
         for uid, person in self.data["members"].items():
             lines += ["", f"## {person['nickname']} ({uid})", f"好感度：{affinity_value(person, now)}"]
             relation = relationships.state(person)
@@ -139,14 +159,15 @@ class MemoryStore:
                                         ('信任', relation['trust_evidence'])):
                 for item in evidence[-5:]:
                     lines.append(f"- {dimension}变化 {item['delta']:+d}（来源 {item['sources']}）：{item['reason']}")
-            lines += [f"- {e['kind']}/{e['mode']}（{fuzzy_time(e['occurred_at'], now)}）：{e['summary']}"
+            lines += [f"- {'[隔离：旧临时编号无法还原] ' if ambiguous_labels(e) else ''}{e['kind']}/{e['mode']}（{fuzzy_time(e['occurred_at'], now)}）：{e['summary']}"
                       for e in active_entries(person, now)]
             initial = person.get("initial_impression", {})
             if initial.get("state") == "ready":
                 lines.append("- 初始头像视觉（非性格判断，低权重）："+visual_description(initial["visual"]))
-        lines += ['', '## 语境表达学习（候选不用于生成）']
+        lines += ['', '# 语境表达学习（非成员档案；候选不用于生成）']
         for r in self.data.get('learning', {}).get('records', []):
-            lines.append(f"- {r['id']} {r['scope']}/{r['state']} {r['expression']}；语境：{r['context']}；{r['meaning']}")
+            marker='[隔离：旧临时编号无法还原] ' if ambiguous_fields(r, ('context','meaning')) else ''
+            lines.append(f"- {marker}{r['id']} {r['scope']}/{r['state']} {r['expression']}；语境：{r['context']}；{r['meaning']}")
         try:
             atomic_write(self.projection, "\n".join(lines)+"\n")
         except OSError as exc:
@@ -158,6 +179,9 @@ class MemoryStore:
         return dict(revision=self.data["revision"], watermark=self.data["watermark"],
                     members=len(self.data["members"]),
                     entries=sum(len(active_entries(p, now)) for p in self.data["members"].values()),
+                    members_with_memories=sum(bool(usable_entries(p, now)) for p in self.data['members'].values()),
+                    ambiguous_entries=sum(ambiguous_labels(e) for p in self.data['members'].values() for e in active_entries(p, now)),
+                    ambiguous_learning=sum(ambiguous_fields(r, ('context', 'meaning')) for r in expression_memory.active_records(self.data, now)),
                     initial_impressions=sum(p.get("initial_impression", {}).get("state") == "ready" for p in self.data["members"].values()),
                     learning_candidates=sum(r['state'] == 'candidate' for r in self.data.get('learning', {}).get('records', [])),
                     learning_stable=sum(r['state'] == 'stable' for r in self.data.get('learning', {}).get('records', [])))
@@ -182,7 +206,7 @@ class MemoryStore:
             p = self.data["members"].get(uid)
             if p:
                 result[label] = dict(nickname=p["nickname"], affinity=affinity_value(p, now),
-                                     entries=active_entries(p, now), relationship=relationships.background(p, now))
+                                     entries=usable_entries(p, now), relationship=safe_legacy_metadata(relationships.background(p, now)))
         return result
 
     def prompt(self, labels, asker, now, budget=1200, *, use_avatar=True, dialogue='', use_learning=True, question=''):
@@ -194,7 +218,7 @@ class MemoryStore:
             if not p:
                 continue
             score = affinity_value(p, now)
-            header = f"{labels[uid]}：{relationships.describe(p, score, now)}"
+            header = f"{labels[uid]}：{safe_legacy_metadata(relationships.describe(p, score, now))}"
             if not result:
                 header = relationships.PROMPT_POLICY+'\n'+header
             if used+len(header) > budget:
@@ -202,7 +226,7 @@ class MemoryStore:
             result.append(header)
             used += len(header)+1
             initial = p.get("initial_impression", {})
-            entries = active_entries(p, now)
+            entries = usable_entries(p, now)
             # 仅早期弱参考；直接发言形成的印象始终优先，避免头像先入为主。
             if (use_avatar and initial.get("state") == "ready" and now-initial["learned_at"] < 30*DAY
                     and p.get("interaction_batches", 0) < 4 and not any(e["kind"] == "impression" for e in entries)):
@@ -262,6 +286,22 @@ class MemoryStore:
             if re.search(r"sk-[A-Za-z0-9]{16,}|-----BEGIN [A-Z ]*PRIVATE KEY-----", value):
                 raise ValueError("memory_sensitive_text")
             return value.strip()
+        unbound=object()
+        def bound_change(value, label, owner, fields=('reason', 'event')):
+            if not isinstance(value, dict):
+                return value
+            result=copy.deepcopy(value)
+            for field in fields:
+                content=result.get(field)
+                if not isinstance(content,str) or not MEMBER_LABEL.search(content):
+                    continue
+                proof=sources(result.get('sources'),label)
+                try:
+                    result[field],_=bind_text(content,owner,mapping,snapshot['members'],[m['text'] for m in proof])
+                except ValueError:
+                    data['rejected_label_metadata']=data.get('rejected_label_metadata',0)+1
+                    return unbound
+            return result
         for update in proposal["updates"]:
             if (not isinstance(update, dict) or not {'member', 'memories', 'affinity'} <= set(update)
                     or set(update)-{'member', 'memories', 'affinity', 'relationship'}):
@@ -300,6 +340,15 @@ class MemoryStore:
                 if isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or not 0 <= confidence <= 1:
                     raise ValueError("memory_invalid_confidence")
                 src = sources(item["sources"], label)
+                try:
+                    summary, literal_labels = bind_summary(summary, uid, mapping, snapshot['members'], [m['text'] for m in src])
+                    summary = text(summary, 220)
+                except ValueError as exc:
+                    if str(exc) != 'memory_unbound_label':
+                        raise
+                    # Reject only this ambiguous suggestion; other validated updates still progress.
+                    data['rejected_label_summaries'] = data.get('rejected_label_summaries', 0)+1
+                    continue
                 if kind == 'impression' and all(not re.sub(token_pattern(), '', m['text']).strip() for m in src):
                     continue
                 previous = next((e for e in person["entries"] if e["id"] == item["replaces"]), None)
@@ -310,13 +359,24 @@ class MemoryStore:
                              sources=[m["local_id"] for m in src],
                              occurred_at=previous["occurred_at"] if previous else min(m["time"] for m in src),
                              confirmed_at=max(m["time"] for m in src))
+                if literal_labels:
+                    entry['literal_labels'] = literal_labels
                 person["entries"] = [e for e in person["entries"] if e != previous and
                                      (e["kind"], e["mode"], e["summary"]) != (kind, mode, summary)] + [entry]
             # 自然回归只结算一次，然后交给独立规则校验本轮增量。
             person['affinity'] = affinity_value(person, now)
-            relationships.score(person, update['affinity'], lambda ids: sources(ids, label), now)
+            affinity=bound_change(update['affinity'],label,uid)
+            relationships.score(person, affinity if affinity is not unbound else dict(delta=0,reason='',sources=[]), lambda ids: sources(ids, label), now)
             scored.add(uid)
-            relationships.apply(person, update.get('relationship'), lambda ids: sources(ids, label), [], now)
+            relation=copy.deepcopy(update.get('relationship'))
+            if isinstance(relation,dict):
+                if 'trust' in relation:
+                    trust=bound_change(relation['trust'],label,uid)
+                    relation['trust']=trust if trust is not unbound else dict(delta=0,reason='',sources=[])
+                if 'mood' in relation:
+                    mood=bound_change(relation['mood'],label,uid,('reason',))
+                    relation['mood']=mood if mood is not unbound else None
+            relationships.apply(person, relation, lambda ids: sources(ids, label), [], now)
         # 真实互动可更新昵称与互动时间，但拍一拍不属于发言证据，不参与记事/好感计分。
         for uid, member in snapshot["members"].items():
             own = [m for m in [*evidence.values(), *interactions] if m["member"] == member["label"]]

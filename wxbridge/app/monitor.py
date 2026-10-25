@@ -260,7 +260,8 @@ def pages(snapshot, cfg, *, now=None):
     detail = [f'记忆启用：{yes(mem.get("enabled"))}    整理中：{yes(mem.get("running"))}',
         f"已隔离任务：{len(items(s.get('memory_quarantined')))}",
         f'待整理：{number(s.get("memory_pending"))}    错误：{error(s.get("memory_error") or mem.get("error"))}',
-        f'成员：{number(mem.get("members"))}    摘要：{number(mem.get("entries"))}    修订：{number(mem.get("revision"))}',
+        f'成员档案：{number(mem.get("members"))}    有可用摘要：{number(mem.get("members_with_memories"))}    修订：{number(mem.get("revision"))}',
+        f'摘要：{number(mem.get("entries"))}    临时编号歧义隔离：{number(mem.get("ambiguous_entries"))}',
         f'记忆水位：{number(mem.get("watermark"))}    头像线索：{number(mem.get("initial_impressions"))}',
         f'表达候选：{number(mem.get("learning_candidates"))}    已稳定：{number(mem.get("learning_stable"))}']
     recovery = mapping(s.get('memory_recovery'))

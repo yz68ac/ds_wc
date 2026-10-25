@@ -103,6 +103,7 @@ def active_records(data, now):
 
 
 def apply(data, proposals, snapshot, now):
+    from wxbridge.storage.member_references import bind_text
     if not isinstance(proposals, list) or len(proposals) > 3:
         raise ValueError('memory_learning_limit')
     if not proposals:
@@ -137,6 +138,14 @@ def apply(data, proposals, snapshot, now):
         evidence = [sources[i] for i in ids]
         if scope == 'member' and any(members.get(m['member']) != owner for m in evidence):
             raise ValueError('memory_learning_foreign_source')
+        try:
+            context,context_labels=bind_text(context,owner,members,snapshot['members'],[m['text'] for m in evidence])
+            meaning,meaning_labels=bind_text(meaning,owner,members,snapshot['members'],[m['text'] for m in evidence])
+            context,meaning=clean_text(context,80),clean_text(meaning,120)
+        except ValueError as exc:
+            if str(exc)!='memory_unbound_label':raise
+            data['rejected_label_learning']=data.get('rejected_label_learning',0)+1
+            continue
         dialogue = {m['id']: m for m in snapshot.get('dialogue', [])}
         for m in evidence:
             if expression in m['text']:
@@ -181,6 +190,7 @@ def apply(data, proposals, snapshot, now):
         record['evidence'] = sorted(record['evidence']+[dict(id=m['local_id'], time=m['time'], member=members[m['member']], stance=stance)
                                                        for m in fresh], key=lambda e: (e['time'], e['id']))[-30:]
         record.update(confirmed_at=max(e['time'] for e in record['evidence']), context=context, basis=item['basis'])
+        record['literal_labels']=sorted(set(context_labels+(meaning_labels if stance!='counter' else record.get('literal_labels',[]))))
         if stance != 'counter':
             record['meaning'] = meaning
         record['state'] = ('stable' if scope == 'bot' and stance == 'support' else state(record))
@@ -188,9 +198,12 @@ def apply(data, proposals, snapshot, now):
 
 
 def background(data, labels, now):
+    from wxbridge.storage.member_references import ambiguous_fields
     mapping = {uid: label for uid, label in labels.items()}
     result = []
     for record in active_records(data, now):
+        if ambiguous_fields(record,('context','meaning')):
+            continue
         if record['scope'] == 'member' and record['owner'] not in labels:
             continue
         item = {key: record[key] for key in ('id', 'scope', 'expression', 'context', 'meaning', 'state', 'basis')}
@@ -202,8 +215,11 @@ def background(data, labels, now):
 
 
 def prompt(data, labels, asker, dialogue, budget, now):
+    from wxbridge.storage.member_references import ambiguous_fields
     relevant = []
     for record in active_records(data, now):
+        if ambiguous_fields(record,('context','meaning')):
+            continue
         if record['state'] == 'candidate' or (record['scope'] == 'member' and record['owner'] not in labels):
             continue
         if record['scope'] != 'member' and record['expression'] not in dialogue and not any(
