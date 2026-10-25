@@ -21,21 +21,22 @@ class RelationshipStyleTests(unittest.TestCase):
     setUp = memory_tests.MemoryTests.setUp
     snap = memory_tests.MemoryTests.snap
 
-    def test_six_profiles_share_thresholds_and_have_distinct_behavior(self):
-        expected=((0,'明显疏远'),(19,'明显疏远'),(20,'有些距离'),(39,'有些距离'),
-                  (40,'普通相处'),(59,'普通相处'),(60,'有好感'),(74,'有好感'),
-                  (75,'熟悉亲近'),(89,'熟悉亲近'),(90,'很亲近'),(100,'很亲近'))
-        for score,band in expected:
+    def test_ten_profiles_cover_every_score_and_share_thresholds(self):
+        names=('明显疏远','保持距离','有所保留','平淡相处','普通相处',
+               '相处轻松','有些好感','更加在意','亲近偏爱','很亲近')
+        self.assertEqual(tuple(end for end,_ in relation.AFFINITY_BANDS),(*range(10,100,10),101))
+        for score in range(101):
+            band=names[min(score//10,9)]
             self.assertEqual(relation.affinity_profile(score)[1],band)
             self.assertIn('当前档位：'+band,relation.with_reply_policy('',state(score)))
-        self.assertEqual(len({p[2] for p in relation.AFFINITY_PROFILES}),6)
-        self.assertEqual(len({p[3] for p in relation.AFFINITY_PROFILES}),6)
+        self.assertEqual(len({p[2] for p in relation.AFFINITY_PROFILES}),10)
+        self.assertEqual(len({p[3] for p in relation.AFFINITY_PROFILES}),10)
 
     def test_relationship_survives_empty_memory_budget_without_changing_history(self):
         trigger=msg(1,NOW,'你今天怎么样','wxid_a')
         base=build_prompt(self.cfg,[],trigger,'合成群')
         self.cfg['target']['context_max_chars']=len(base[1]['content'])
-        low=build_prompt(self.cfg,[],trigger,'合成群',memory=dict(text='',relationship_for='wxid_a',relationship=state(10)))
+        low=build_prompt(self.cfg,[],trigger,'合成群',memory=dict(text='',relationship_for='wxid_a',relationship=state(5)))
         high=build_prompt(self.cfg,[],trigger,'合成群',memory=dict(text='',relationship_for='wxid_a',relationship=state(95)))
         self.assertEqual(low[1],base[1]);self.assertEqual(high[1],base[1])
         self.assertIn('不主动接梗、追问或关心',low[0]['content'])
@@ -67,8 +68,9 @@ class RelationshipStyleTests(unittest.TestCase):
             self.assertNotIn(secret,text)
         self.assertNotIn('近期情绪',relation.with_reply_policy('',state(50,mood=dict(state=[],intensity=2))))
 
-    def test_six_bands_have_no_subbands_or_default_neutral_mood(self):
-        for lower,upper in ((0,19),(20,39),(40,59),(60,74),(75,89),(90,100)):
+    def test_ten_bands_have_no_subbands_or_default_neutral_mood(self):
+        for lower in range(0,100,10):
+            upper=lower+9 if lower<90 else 100
             text=relation.with_reply_policy('',state(lower))
             self.assertEqual(text,relation.with_reply_policy('',state(upper)))
             self.assertEqual(text,relation.with_reply_policy('',state(lower,mood=dict(state='neutral',intensity=2))))
@@ -112,7 +114,7 @@ class RelationshipStyleTests(unittest.TestCase):
         final=response_prompt(rebuilt,case.cfg)
         self.assertEqual(info['images'],1)
         self.assertEqual(final[0]['content'].count(relation.REPLY_POLICY_START),1)
-        self.assertIn('当前档位：熟悉亲近',final[0]['content'])
+        self.assertIn('当前档位：亲近偏爱',final[0]['content'])
 
     def test_proactive_uses_selected_target_and_does_not_add_judgment_requests(self):
         rows=[msg(1,NOW,'刚才挺有意思','wxid_a'),msg(2,NOW,'我也觉得','wxid_b')]
@@ -123,6 +125,6 @@ class RelationshipStyleTests(unittest.TestCase):
         self.assertEqual(client.complete.call_count,2)
         self.assertNotIn(relation.REPLY_POLICY_START,client.complete.call_args_list[0].args[0][0]['content'])
         reply=client.complete.call_args_list[1].args[0][0]['content']
-        self.assertIn('当前档位：明显疏远',reply)
+        self.assertIn('当前档位：保持距离',reply)
         self.assertNotIn('当前档位：很亲近',reply)
         self.assertTrue(result['speak'])

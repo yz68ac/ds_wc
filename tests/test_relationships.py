@@ -185,11 +185,11 @@ class RelationshipTests(unittest.TestCase):
         self.assertEqual(p['affinity_evidence'][-1]['delta'], 1)
         self.assertFalse(p['relationship']['trust_evidence'])
 
-    def test_six_bands_and_prompt_keep_scores_and_evidence_private(self):
+    def test_ten_bands_and_prompt_keep_scores_and_evidence_private(self):
         p = self.turn(mood=emotion(state='amused'))
-        for score, name in ((19,'明显疏远'), (20,'有些距离'), (39,'有些距离'), (40,'普通相处'),
-                            (59,'普通相处'), (60,'有好感'), (74,'有好感'), (75,'熟悉亲近'),
-                            (89,'熟悉亲近'), (90,'很亲近')):
+        for score, name in ((9,'明显疏远'),(10,'保持距离'),(20,'有所保留'),(30,'平淡相处'),
+                            (40,'普通相处'),(50,'相处轻松'),(60,'有些好感'),(70,'更加在意'),
+                            (80,'亲近偏爱'),(90,'很亲近'),(100,'很亲近')):
             self.assertIn(name, relation.describe(p, score, NOW))
         p['affinity'] = 94
         p['relationship']['trust'] = 28
