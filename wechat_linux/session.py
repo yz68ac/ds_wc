@@ -23,8 +23,9 @@ class SessionConfig:
 
 
 class WeChatSession:
-    def __init__(self,config:SessionConfig,*,submitter=None):
+    def __init__(self,config:SessionConfig,*,submitter=None,image_downloader=None):
         self.config,self.submitter=config,submitter
+        self.image_downloader=image_downloader
         self.store=self.outbox=self._lock=None
 
     def __enter__(self):
@@ -59,12 +60,18 @@ class WeChatSession:
         rows=self.store.messages_after(chat_id,after,limit=limit)
         return MessageBatch(tuple(Message.from_mapping(chat_id,m) for m in rows),max([after]+[m['local_id'] for m in rows]))
 
-    def fetch_image(self,chat_id,reference,*,download=False,timeout=20,ui=None,max_bytes=8*1024*1024):
+    def fetch_image(self,chat_id,reference,*,download=False,timeout=20,ui=None,max_bytes=8*1024*1024,
+                    download_backend='desktop',request_id=None):
         from wechat_linux.media.images import read_local_image
         if type(download) is not bool or type(timeout) not in (int,float) or not math.isfinite(timeout) or not 5<=timeout<=30:
             raise ValueError('invalid_image_options')
         if type(max_bytes) is not int or not 1<=max_bytes<=8*1024*1024:raise ValueError('invalid_image_options')
+        if download_backend not in ('desktop','native'):raise ValueError('invalid_image_backend')
         self._chat(chat_id);binding=self.store.image_binding(chat_id,reference)
+        if download and download_backend=='native':
+            if self.image_downloader is None:raise StoreError('native_image_downloader_not_configured')
+            return self.image_downloader.download(binding,chat_id=chat_id,request_id=request_id,
+                                                  timeout=timeout,max_bytes=max_bytes)
         cfg=dict(vision=dict(max_image_bytes=max_bytes),queue=dict(file=str(Path(self.config.decrypted_dir).parent/'sdk-outbox.sqlite3')),
                  ui={'backend':'native_service',**(ui or {})})
         data,info=read_local_image(binding,cfg)

@@ -106,12 +106,18 @@ def receive(stream):
     return decode(exact(count))
 
 
-def request(path, value, timeout=5):
+def request(path, value, timeout=5, *, peer_uid=None):
     may_have_submitted=False
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stream:
             stream.settimeout(timeout)
             stream.connect(path)
+            if peer_uid is not None:
+                if not hasattr(socket, 'SO_PEERCRED'):
+                    raise NativeError('native_peer_unavailable', submitted=False)
+                credentials = struct.unpack('3i', stream.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+                if credentials[1] != peer_uid:
+                    raise NativeError('native_peer_rejected', submitted=False)
             may_have_submitted=True
             stream.sendall(encode(value))
             return receive(stream)

@@ -61,8 +61,8 @@ assert 'wechat_linux.desktop.ui' not in sys.modules
         old={'files':{}};new={'files':{}}
         for name in ('helper.py','agent.js','profile.json'):
             body=(ROOT/'wechat_linux/native'/name).read_bytes()
-            # Audited 4.1.13.26 service_v1 baseline, normalized release bytes.
-            expected={'helper.py':'e5e8ba3a0d4921e385f36ef48b8efd482c4610f9cadfb5ec0f88f417935e0eec',
+            # Versioned 4.1.13.26 assets. Image jobs remain opt-in; sender assets unchanged.
+            expected={'helper.py':'3bfe8a108ffd0aff5f262167455bf4cfa70e04a9b311acca2d1347074d70f1d6',
                       'agent.js':'213197f9b630a6c7796e531c0aecfecaaaef552adefc312a1f97cf0930757790',
                       'profile.json':'c8b22bb22e05019d4f538bc473b893b6fd280b5a8a7ee23d7bb180a0bcc58c96'}
             self.assertEqual(hashlib.sha256(body.replace(b'\r\n',b'\n')).hexdigest(),expected[name])

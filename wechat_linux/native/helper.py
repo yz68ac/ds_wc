@@ -1,12 +1,14 @@
 """Standalone privileged helper. Install root-owned and run with Python -I.
 
 It imports no application/configuration code, exposes no TCP port, reads no chat DB,
-and accepts only bounded text jobs from the configured local account.
+and accepts bounded jobs from the configured local account. Native image support
+is separately enabled; old configurations start no image worker or threads.
 """
 from __future__ import annotations
 
 from collections import OrderedDict
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -75,7 +77,8 @@ def trusted(path):
 
 def configuration(path):
     value=json.loads(trusted(path).read_text())
-    if set(value)!={'socket','uid','allowed_chat_ids','assets','worker_timeout_seconds'}:
+    required={'socket','uid','allowed_chat_ids','assets','worker_timeout_seconds'}
+    if not isinstance(value,dict) or set(value)-{'image_download'}!=required:
         raise ValueError('native_helper_config')
     if type(value['uid']) is not int or value['uid']<=0:raise ValueError('native_helper_config')
     if not isinstance(value['allowed_chat_ids'],list) or not 0<len(value['allowed_chat_ids'])<=16:
@@ -86,6 +89,26 @@ def configuration(path):
         raise ValueError('native_helper_config')
     assets=trusted(value['assets'])
     for name in ('agent.js','profile.json'):trusted(assets/name)
+    image=value.get('image_download',{'enabled':False})
+    if not isinstance(image,dict) or type(image.get('enabled')) is not bool:
+        raise ValueError('native_helper_config')
+    if image['enabled']:
+        if (set(image)!={'enabled','expected_account','account_root','timeout_seconds'}
+                or not isinstance(image['expected_account'],str)
+                or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}',image['expected_account'])
+                or type(image['timeout_seconds']) is not int or not 5<=image['timeout_seconds']<=30
+                or not isinstance(image['account_root'],str)):
+            raise ValueError('native_helper_config')
+        account=Path(image['account_root'])
+        if (not account.is_absolute() or str(account.resolve())!=str(account)
+                or not account.is_dir() or account.stat().st_uid!=value['uid']
+                or not (account.name==image['expected_account'] or account.name.startswith(image['expected_account']+'_'))
+                or any(p.is_symlink() for p in (account,*account.parents))):
+            raise ValueError('native_helper_config')
+        for name in ('image_worker.py','image_contract.py','image_agent.js','image_adapter.c','image_profile.json'):
+            trusted(assets/name)
+    elif set(image)!={'enabled'}:
+        raise ValueError('native_helper_config')
     if not isinstance(value['socket'],str) or not value['socket'].startswith('/run/') or len(value['socket'].encode())>100:
         raise ValueError('native_helper_config')
     return value
@@ -207,7 +230,13 @@ def serve_locked(path,config):
     # Opportunistic IPC replay cache only. The main SQLite journal owns durable
     # dedupe and never resubmits an unknown intent, including after helper restart.
     cache=OrderedDict()
+    images=None
     try:
+        if config.get('image_download',{}).get('enabled'):
+            spec=importlib.util.spec_from_file_location('_trusted_wechat_image_worker',
+                                                       trusted(Path(config['assets'])/'image_worker.py'))
+            module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+            images=module.ImageManager(config,find_client)
         import pwd
         stream.bind(str(target));os.chown(target,0,pwd.getpwuid(config['uid']).pw_gid);target.chmod(0o660)
         inode=target.stat().st_ino;stream.listen(4)
@@ -223,6 +252,10 @@ def serve_locked(path,config):
                     value=recv(connection)
                     if value=={'op':'health'}:
                         reply(connection,health(config))
+                        continue
+                    if isinstance(value,dict) and value.get('op') in ('download_image','image_status'):
+                        reply(connection,images.handle(value) if images else
+                              dict(ok=False,error='native_image_disabled',requested=False))
                         continue
                     validate(value,config['allowed_chat_ids'])
                     digest=hashlib.sha256(json.dumps(value,sort_keys=True,ensure_ascii=True).encode()).hexdigest()
@@ -240,6 +273,7 @@ def serve_locked(path,config):
                     except OSError:pass
     finally:
         stream.close()
+        if images is not None:images.close()
         try:
             if target.lstat().st_ino==inode:target.unlink()
         except (FileNotFoundError,UnboundLocalError):pass

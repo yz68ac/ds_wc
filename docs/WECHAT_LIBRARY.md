@@ -12,9 +12,9 @@ python3 -m pip install .
 python3 -m pip install '.[database]'
 ```
 
-要求 Python 3.11 或以上。默认没有 Python 第三方依赖；读库可选 pycryptodome、zstandard。图片的 WXGF 解码依赖客户端兼容的原生组件；自动下载清晰图片还需要已登录微信、X11、D-Bus、AT-SPI、窗口管理器、PyGObject/GdkPixbuf 和 xdotool。库不安装系统组件，不自动登录、不提取密钥、不启动服务、不读取 `.env`。
+要求 Python 3.11 或以上。默认没有 Python 第三方依赖；读库可选 pycryptodome、zstandard。图片的 WXGF 解码依赖客户端兼容的原生组件；桌面兼容下载需要已登录微信、X11、D-Bus、AT-SPI、窗口管理器、PyGObject/GdkPixbuf 和 xdotool。另有默认关闭的原生图片下载 SDK，使用受约束 helper，不操作图片窗口；微信本体启动与登录仍可能需要虚拟显示。库不安装系统组件，不自动登录、不提取密钥、不启动服务、不读取 `.env`。
 
-wheel 只包含 `wechat_linux` 和必要的 `agent.js`、`profile.json`；不包含机器人、模型提示词、配置、聊天记录、记忆、凭据或微信二进制。暂未选择许可证，发布或转授权前需要项目所有者明确许可。
+wheel 只包含 `wechat_linux` 及原生发送/图片下载所需的 JS、C 和版本 profile；不包含机器人、模型提示词、配置、聊天记录、记忆、凭据或微信二进制。暂未选择许可证，发布或转授权前需要项目所有者明确许可。
 
 对应版本的微信主程序和原始 deb 已另存为 [本地备用资源](../resources/wechat/README.md)，附版本、来源及 SHA-256 清单；大文件不进入 wheel，运行时不会自动执行或替换它们。
 
@@ -28,7 +28,7 @@ wheel 只包含 `wechat_linux` 和必要的 `agent.js`、`profile.json`；不包
 | `storage` | 客户端数据库发现、SQLCipher/WAL、联系人与消息查询、管理员密钥扫描 |
 | `media` | 绑定本账号缓存、图片校验及内存解密、WXGF 解码 |
 | `desktop` | 可选桌面兼容操作、绑定来源的清晰图下载 |
-| `native` | 本地协议、客户端、发送提交、独立 helper、版本 profile |
+| `native` | 本地协议、客户端、发送提交、显式原生图片下载、独立 helper、版本 profile |
 | `sending` | 发出记录核对、独立项目持久发送意图 |
 | `transport` | 可嵌入主进程的非阻塞 Unix socket；业务处理器由调用方提供 |
 | `runtime` | 私有 tmpfs/noswap 校验、单一读库所有者锁 |
@@ -99,6 +99,8 @@ with WeChatSession(cfg, submitter=sender) as wechat:
 ## 图片与能力声明
 
 使用从 `Message.reference` 取得的原始引用，调用 `wechat.fetch_image(chat_id, reference, download=False)`；返回 `Image.data` 与 `Image.info`，后者明确区分 original、cached、preview、thumbnail。默认只读缓存；`download=True` 才允许在受锁保护的桌面环境中打开绑定图片。若下载失败会返回原缓存和失败原因，不能把缩略图当成原图。详细实现见 [图片下载说明](IMAGE_DOWNLOAD.md)。
+
+原生图片下载已独立封装为 `NativeImageDownloader`。注入会话后，显式传入 `download=True, download_backend="native", request_id=...` 调用；失败抛出 `ImageDownloadError`，不自动降级或重试。它要求独立启用的可信 helper 资源及安全排空策略，当前 bot 和线上 helper 尚未接入。完整示例和边界见 [原生图片 SDK](NATIVE_IMAGE_SDK.md)。
 
 `capabilities()` 只读取随包的声明，不连接微信。当前 native profile 为 Linux 微信 4.1.13.26、x86_64；helper 会校验 ELF SHA-256 与指令签名。客户端更新后必须重新分析和测试，不能直接沿用偏移。声明的支持不等于当前已登录或依赖已安装。
 

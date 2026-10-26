@@ -417,7 +417,7 @@ helper 超时可能发生在提交之前，也可能发生在微信已经接受�
 
 ### 11.4 生产中的清晰缓存下载路线
 
-生产监听仍使用受控桌面兼容路线；新原生路线已完成单样本验证，尚未接入 SDK 和生产。兼容路线中，主进程先给出来源证明，图片工作进程持有 UI 锁，打开已核验群的媒体页，在内存比较原绑定缩略图与可见候选项。
+生产监听仍使用受控桌面兼容路线；新原生路线已完成单样本验证及默认关闭的 SDK 封装，尚未接入 bot 或部署生产。兼容路线中，主进程先给出来源证明，图片工作进程持有 UI 锁，打开已核验群的媒体页，在内存比较原绑定缩略图与可见候选项。
 
 匹配同时检查 RGB 误差、空间相关性、图像细节和第二候选的距离，最多看三屏。平坦图片、不唯一或特征不足时拒绝猜测。点击前核对真实 X11 窗口、进程归属、几何位置和鼠标命中；Qt 残留的无障碍节点不能替代真实窗口存在。
 
@@ -446,7 +446,7 @@ helper 超时可能发生在提交之前，也可能发生在微信已经接受�
 
 关键教训是：没有直接 wait 调用，不表示整个下游不依赖协程。普通 GLib 回调曾在 `0x9ae35b2` 的协程上下文检查处失败，普通工作线程也没有所需上下文；通过微信真正的协程调度器后，完整流程才通过。
 
-这是一张图片的研究验证，尚未构成生产 API，也没有证明微信本体可去掉 Xvfb。较下层工厂曾创建 CDN 任务但未验收到缓存，原因仍未确认。详见 [调用链与生命周期](NATIVE_IMAGE_ANALYSIS.md) · [脱敏验证结果](research/native-image-validation.json)。
+这是一张图片的研究验证，尚未构成生产 API，也没有证明微信本体可去掉 Xvfb。后续已把该路径封装为显式 `NativeImageDownloader`，加入来源核对、串行 worker、请求去重、取消排空和缓存验收；Windows/Linux 离线检查通过，新封装仍需真实进程验收，默认关闭。较下层工厂曾创建 CDN 任务但未验收到缓存，原因仍未确认。详见 [调用链与生命周期](NATIVE_IMAGE_ANALYSIS.md) · [SDK 用法与边界](NATIVE_IMAGE_SDK.md) · [脱敏验证结果](research/native-image-validation.json)。
 
 <a id="headless"></a>
 ## 12. 距离“无桌面”究竟还差什么
@@ -458,7 +458,7 @@ helper 超时可能发生在提交之前，也可能发生在微信已经接受�
 | 人不通过实体显示器操作 | 已满足日常运行 | SSH 管理、虚拟显示，登录必要时仍需人工确认 |
 | 文字发送不操作界面、不切换会话 | 已实现并上线 | 仍依赖已登录微信客户端及兼容 helper |
 | 停用窗口管理器、AT-SPI 后继续文字收发 | 已在现有登录会话短时验证 | 不等于冷启动、重登和所有功能都无需它们 |
-| 清晰图下载也不走桌面 | 单张冷缓存研究验证通过，尚未上线 | 生产兼容路线仍依赖桌面；原生协程路径有待 SDK 与故障回归 |
+| 清晰图下载也不走桌面 | 单张研究验证及显式 SDK 封装完成，尚未上线 | 生产兼容路线仍依赖桌面；新封装待真实进程与部署停止流程验收 |
 | 微信本体完全不需要 X11 / Xvfb | 尚未验证 | 没有完成替代显示后端的端到端实验 |
 | 整机关机后无需手机参与即可恢复认证 | 不能保证 | 客户端认证由微信决定；快照、休眠没有在本项目验收 |
 
@@ -578,7 +578,7 @@ SHA-256: e58facbc7c94ef06733bbeaf3d9a4bad4f898bb8e179fd107d562a9b866138dc
 
 | 事项 | 已知状态 | 合理的下一步 |
 | --- | --- | --- |
-| 原生清晰图片下载 | 尚无稳定封装；当前用受控 UI 获取缓存 | 从客户端正常下载路径查对象、调度、来源校验及完成事件，先只读观察 |
+| 原生清晰图片下载 | 实验 SDK 已封装并通过离线回归，生产仍用受控 UI | 新 helper 真实验收、回调排空服务策略和应用持久任务恢复；之后再决定启用 |
 | 冷启动精简 | 仅已登录会话中的短时精简通过 | 提供可回退模式，单独验收启动、登录、图像和异常恢复 |
 | 完全无 X11 | 未做完整验证 | 明确微信本体所需平台环境，再开展独立受控实验 |
 | 休眠恢复登录 | 候选方案，未验收 | 测试系统休眠能力、唤醒、网络重连和认证，不回滚业务队列 |
@@ -588,7 +588,7 @@ SHA-256: e58facbc7c94ef06733bbeaf3d9a4bad4f898bb8e179fd107d562a9b866138dc
 | 拍一拍 | 能解析已出现的记录，但新事件同步曾不稳定 | 区分手机新事件、客户端同步、旧行更新和触发解析，不放大触发范围掩盖缺失 |
 | 风控、长期稳定性及功耗 | 没有足够定量证据支持承诺 | 分别定义测量与观察周期，不能由一次成功或短期 CPU 变化推出结论 |
 
-当前最直接的方向是把图片下载也从桌面操作变成可验证的原生能力；这同时能减少后续精简桌面环境时的功能冲突。但应保留已有效的兼容路线，直到新接口的来源绑定和完成确认都被证明可靠。
+图片下载的原生研究与独立 SDK 封装已经完成，后续重点是新版 helper 的真实验收和应用恢复设计。按当前要求暂不接入 bot，保留生产兼容路线；待明确授权后再推进上线，这也能为精简桌面环境提供基础。
 
 <a id="source-map"></a>
 ## 16. 源码地图与原始记录索引
@@ -603,9 +603,9 @@ SHA-256: e58facbc7c94ef06733bbeaf3d9a4bad4f898bb8e179fd107d562a9b866138dc
 | 后台提交的三个位置 | [sender.py](../wechat_linux/native/sender.py)、[helper.py](../wechat_linux/native/helper.py)、[agent.js](../wechat_linux/native/agent.js) |
 | 固定版本指纹 | [profile.json](../wechat_linux/native/profile.json)、[能力声明](../wechat_linux/profiles.py) |
 | 接口、锁与确认 | [本地 server](../wechat_linux/transport/server.py)、[锁](../wechat_linux/runtime/locking.py)、[发出确认](../wechat_linux/sending/confirmation.py)、[独立 outbox](../wechat_linux/sending/outbox.py) |
-| 图片链路 | [images.py](../wechat_linux/media/images.py)、[wxgf.py](../wechat_linux/media/wxgf.py)、[image_download.py](../wechat_linux/desktop/image_download.py) |
+| 图片链路 | [images.py](../wechat_linux/media/images.py)、[wxgf.py](../wechat_linux/media/wxgf.py)、[桌面兼容下载](../wechat_linux/desktop/image_download.py)、[原生下载 SDK](../wechat_linux/native/image_download.py)、[图片 agent](../wechat_linux/native/image_agent.js) |
 | 机器人如何消费库 | [bot.py](../wxbridge/app/bot.py)、[delivery.py](../wxbridge/app/delivery.py)、[本地服务业务适配](../wxbridge/app/native_gateway.py) |
-| 实际故障条件 | [SDK 回归](../tests/test_wechat_library.py)、[native 回归](../tests/test_native_api.py)、[图片下载回归](../tests/test_image_download.py) |
+| 实际故障条件 | [SDK 回归](../tests/test_wechat_library.py)、[native 回归](../tests/test_native_api.py)、[桌面图片回归](../tests/test_image_download.py)、[原生图片回归](../tests/test_native_images.py) |
 
 ### 16.2 本机研究档案
 

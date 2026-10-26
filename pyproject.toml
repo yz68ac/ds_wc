@@ -22,4 +22,4 @@ where = ["."]
 include = ["wechat_linux", "wechat_linux.*"]
 
 [tool.setuptools.package-data]
-"wechat_linux.native" = ["agent.js", "profile.json"]
+"wechat_linux.native" = ["agent.js", "profile.json", "image_agent.js", "image_adapter.c", "image_profile.json"]

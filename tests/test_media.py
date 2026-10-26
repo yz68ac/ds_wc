@@ -243,7 +243,8 @@ class ImageBindingTests(unittest.TestCase):
         self.store._query_messages.return_value = [dict(type=3, image_md5="c"*32, sender="friend", image_cache_key="b"*32)]
         binding = self.store.image_binding(self.chat, dict(server_id="123", sender="friend"))
         self.assertNotIn("error", binding)
-        self.assertEqual(binding['download'],dict(verified=True,server_id='123'))
+        self.assertEqual(binding['download'],dict(verified=True,server_id='123',chat_id=self.chat,
+                                                sender='friend',image_md5='c'*32))
         self.assertNotIn('download',self.store.image_binding(self.chat,dict(server_id='123')))
         self.assertIn(self.filename, binding["candidates"][1]["relative"])
 

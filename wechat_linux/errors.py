@@ -41,3 +41,9 @@ class DependencyError(WeChatError, RuntimeError):
 
 class MediaError(WeChatError, ValueError):
     pass
+
+
+class ImageDownloadError(MediaError):
+    def __init__(self, code, *, requested=None):
+        super().__init__(code)
+        self.code, self.requested = code, requested

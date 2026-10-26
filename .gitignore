@@ -37,6 +37,9 @@ bot.log.*
 venv/
 .venv/
 .test-tmp/
+/build/
+/dist/
+/*.egg-info/
 memory/
 Thumbs.db
 .DS_Store

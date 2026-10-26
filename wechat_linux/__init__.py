@@ -1,11 +1,11 @@
 """Reusable Linux WeChat adapter. No model configuration or implicit I/O on import."""
 from wechat_linux.models import DeliveryState,Image,Message,MessageBatch,SendReceipt
-from wechat_linux.errors import WeChatError,NativeError,OwnerBusyError,SendError,StoreError,MediaError,DependencyError
+from wechat_linux.errors import WeChatError,NativeError,OwnerBusyError,SendError,StoreError,MediaError,DependencyError,ImageDownloadError
 
 __version__='0.1.0'
 __all__=['WeChatSession','SessionConfig','NativeClient','NativeSender','DeliveryState','Image','Message',
          'MessageBatch','SendReceipt','WeChatError','NativeError','OwnerBusyError','SendError','StoreError','MediaError',
-         'DependencyError','capabilities']
+         'DependencyError','capabilities','NativeImageDownloader','ImageDownloadError']
 
 
 def __getattr__(name):
@@ -18,6 +18,9 @@ def __getattr__(name):
     if name=='NativeSender':
         from wechat_linux.native.sender import NativeSender
         return NativeSender
+    if name=='NativeImageDownloader':
+        from wechat_linux.native.image_download import NativeImageDownloader
+        return NativeImageDownloader
     if name=='capabilities':
         from wechat_linux.profiles import capabilities
         return capabilities

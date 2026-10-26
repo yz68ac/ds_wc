@@ -610,7 +610,8 @@ class WeChatStore:
                     digest, proven = original["image_md5"], True
                     cache_key = original.get("image_cache_key") or ""
                     if reference.get('sender') and original.get('sender') == reference['sender']:
-                        binding['download'] = dict(verified=True, server_id=server_id)
+                        binding['download'] = dict(verified=True, server_id=server_id, chat_id=chat_id,
+                                                   sender=original['sender'], image_md5=digest)
             if not re.fullmatch(r"[0-9a-f]{32}", digest):
                 return {**binding, "error": "image_identifier_missing"}
             try:
