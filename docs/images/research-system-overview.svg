@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 772" width="1280" height="772" role="img" aria-labelledby="research-overview-title research-overview-desc">
+<title id="research-overview-title">消息读取、生成和后台发送</title><desc id="research-overview-desc">主进程唯一读库，慢工作放入子进程，原生 helper 显式指定收件人，最后回到主进程核对新增发出记录。</desc>
+<defs><marker id="research-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8" fill="none" stroke="#3f657c" stroke-width="1.5"/></marker></defs>
+<style>text{font-family:'Microsoft YaHei','Noto Sans CJK SC',sans-serif;fill:#233c4c}.rtitle{font-size:26px;font-weight:700}.rbody{font-size:22px;font-weight:600}.rsub{font-size:18px;fill:#546c7b}</style>
+<rect width="1280" height="772" rx="16" fill="#f8fafb"/><text x="32" y="53" font-size="29" font-weight="700">一条群聊回复如何经过系统</text><text x="32" y="85" class="rsub">Linux 微信 4.1.13.26 · 架构与确认边界 · 2026-10-26</text>
+<rect x="32" y="113" width="384" height="470" rx="14" fill="#edf4ff"/><text x="52" y="154" class="rtitle" style="fill:#43689d">01  接收：唯一读库主进程</text>
+<rect x="52" y="180" width="344" height="90" rx="10" fill="white" stroke="#43689d" stroke-opacity=".25"/><text x="68" y="215" class="rbody">微信原始数据库与 WAL</text><text x="68" y="245" class="rsub">客户端写入，程序读取</text>
+<path d="M224 271V289" stroke="#3f657c" stroke-width="2" marker-end="url(#research-arrow)"/>
+<rect x="52" y="292" width="344" height="90" rx="10" fill="white" stroke="#43689d" stroke-opacity=".25"/><text x="68" y="327" class="rbody">受保护的解密副本</text><text x="68" y="357" class="rsub">解析稳定 ID、真实 @、引用</text>
+<path d="M224 383V401" stroke="#3f657c" stroke-width="2" marker-end="url(#research-arrow)"/>
+<rect x="52" y="404" width="344" height="90" rx="10" fill="white" stroke="#43689d" stroke-opacity=".25"/><text x="68" y="439" class="rbody">接纳任务并推进游标</text><text x="68" y="469" class="rsub">任务与游标在同一事务提交</text>
+<text x="52" y="558" class="rsub">发出确认也由该主进程执行</text>
+<rect x="448" y="113" width="384" height="470" rx="14" fill="#fff5e7"/><text x="468" y="154" class="rtitle" style="fill:#94612d">02  业务与受控工作进程</text>
+<rect x="468" y="180" width="344" height="90" rx="10" fill="white" stroke="#94612d" stroke-opacity=".25"/><text x="484" y="215" class="rbody">上下文与引用素材</text><text x="484" y="245" class="rsub">人格、记忆由业务层组织</text>
+<path d="M640 271V289" stroke="#3f657c" stroke-width="2" marker-end="url(#research-arrow)"/>
+<rect x="468" y="292" width="344" height="90" rx="10" fill="white" stroke="#94612d" stroke-opacity=".25"/><text x="484" y="327" class="rbody">API 与图片工作进程</text><text x="484" y="357" class="rsub">解码／按需下载，再交给模型</text>
+<path d="M640 383V401" stroke="#3f657c" stroke-width="2" marker-end="url(#research-arrow)"/>
+<rect x="468" y="404" width="344" height="90" rx="10" fill="white" stroke="#94612d" stroke-opacity=".25"/><text x="484" y="439" class="rbody">回复进入原有发送队列</text><text x="484" y="469" class="rsub">冷却等待、逐片处理</text>
+<text x="468" y="558" class="rsub">慢任务不会占住接收循环</text>
+<rect x="864" y="113" width="384" height="470" rx="14" fill="#eaf7f1"/><text x="884" y="154" class="rtitle" style="fill:#2b7860">03  客户端后台发送</text>
+<rect x="884" y="180" width="344" height="90" rx="10" fill="white" stroke="#2b7860" stroke-opacity=".25"/><text x="900" y="215" class="rbody">隔离权限的 helper</text><text x="900" y="245" class="rsub">检查目标、客户端和版本</text>
+<path d="M1056 271V289" stroke="#3f657c" stroke-width="2" marker-end="url(#research-arrow)"/>
+<rect x="884" y="292" width="344" height="90" rx="10" fill="white" stroke="#2b7860" stroke-opacity=".25"/><text x="900" y="327" class="rbody">微信进程内 agent</text><text x="900" y="357" class="rsub">主线程构造并订阅消息源</text>
+<path d="M1056 383V401" stroke="#3f657c" stroke-width="2" marker-end="url(#research-arrow)"/>
+<rect x="884" y="404" width="344" height="90" rx="10" fill="white" stroke="#2b7860" stroke-opacity=".25"/><text x="900" y="439" class="rbody">微信自己的工作线程</text><text x="900" y="469" class="rsub">处理消息并写入本地记录</text>
+<text x="884" y="558" class="rsub">文字提交不依赖当前聊天窗口</text>
+<g fill="none" stroke="#3f657c" stroke-width="2.4" marker-end="url(#research-arrow)"><path d="M396 449H432V225H466"/><path d="M812 449H848V225H882"/><path d="M1056 494V635H224V584"/></g>
+<rect x="330" y="612" width="610" height="44" rx="12" fill="#f8fafb"/><text x="346" y="640" font-size="20" font-weight="700">回到主进程：核对目标、本人、基线后记录和精确正文</text>
+<rect x="32" y="687" width="1216" height="58" rx="12" fill="#e6edf1"/><text x="54" y="723" font-size="22">文字后台发送已脱离窗口；客户端运行和可选清晰图下载仍保留显示环境</text></svg>

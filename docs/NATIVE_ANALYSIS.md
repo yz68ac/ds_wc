@@ -2,6 +2,8 @@
 
 适配样本：Linux x86-64 微信 4.1.13.26。研究结论只针对已核对的固定 ELF。
 
+完整过程、原理与证据边界见 [详细技术报告](WECHAT_RESEARCH_REPORT.md)；也可打开带目录和可放大图示的 [离线 HTML 阅读版](WECHAT_RESEARCH_REPORT.html)。
+
 ![微信会话模型与后台服务发送分析](images/native-analysis.svg)
 
 [PNG 预览](images/native-analysis.png) · [可编辑 SVG](images/native-analysis.svg) · [接口、配置与恢复规则](NATIVE_API.md)
