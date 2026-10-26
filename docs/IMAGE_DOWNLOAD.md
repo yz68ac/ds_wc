@@ -26,4 +26,4 @@ Linux微信有时只自动收到缩略图。手机能看清不代表Linux本地�
 
 `last_vision.items[].download`记录outcome及elapsed_ms，常见结果为downloaded、download_unverified、download_busy、download_match_missing、download_match_ambiguous、download_timeout或download_ui_unavailable。不记录聊天、成员ID、图片、路径或凭据。
 
-默认最多三屏，过旧图片或缩略图特征不足可能无法自动定位；此时保留原有降级行为。提高API图像detail不能还原缩略图丢失的细节。兼容下载增加对虚拟桌面组件的依赖，尚未代替为稳定的原生图片下载接口。
+默认最多三屏，过旧图片或缩略图特征不足可能无法自动定位；此时保留原有降级行为。提高API图像detail不能还原缩略图丢失的细节。兼容下载增加对虚拟桌面组件的依赖。2026-10-26 已通过一张冷缓存图片的原生协程下载验证（140×210 → 850×1276），没有切换会话或点击图片；尚未接入生产下载器。调用链、已确认边界与后续工作见 [原生图片下载研究](NATIVE_IMAGE_ANALYSIS.md)。

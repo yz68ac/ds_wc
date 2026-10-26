@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-26",
+  "client_version": "4.1.13.26",
+  "architecture": "linux-x86_64",
+  "client_sha256": "2749535f299ba67feb8ef80cab898bb0531fa8f376b16f8a72db706811c84132",
+  "status": "single_cold_cache_native_download_verified",
+  "production_integrated": false,
+  "source_checks": {
+    "record_type": 3,
+    "server_matches": true,
+    "chat_matches": true,
+    "sender_matches": true,
+    "digest_matches": true,
+    "message_verified": true
+  },
+  "execution": {
+    "coroutine_context_available": true,
+    "coroutine_completion_state": 1,
+    "download_call_returned": true,
+    "download_future_state": 1,
+    "download_status": [
+      0,
+      0
+    ],
+    "callback_references": 0,
+    "cleanup": true,
+    "download_attempts": 1,
+    "desktop_operations": 0,
+    "sent_messages": 0,
+    "model_api_calls": 0
+  },
+  "before": {
+    "mime": "image/jpeg",
+    "width": 140,
+    "height": 210,
+    "bytes": 6417,
+    "quality": "thumbnail",
+    "binding_source": "verified_message_cache",
+    "index_error": "local_image_index_unavailable"
+  },
+  "after": {
+    "mime": "image/png",
+    "width": 850,
+    "height": 1276,
+    "bytes": 1193677,
+    "quality": "cached",
+    "binding_source": "verified_message_cache",
+    "index_error": "local_image_index_unavailable",
+    "source_format": "wxgf",
+    "converted": true
+  },
+  "clear_cache_verified": true,
+  "queue_cursor_unchanged": true,
+  "wechat_process_unchanged": true,
+  "services_restored": true,
+  "scope": [
+    "One source-bound cold-cache image only",
+    "No original-upload quality claim",
+    "WeChat still ran in its existing Xvfb session",
+    "No production sender/downloader/configuration changes"
+  ],
+  "evidence_sha256": "4ea5ebf00218c155f81f5c6d811d2417b894c6d65afb032e35a052c537c840d4",
+  "evidence_file": "archives/reverse-engineering/native-image-20261026/coroutine-download-result.json",
+  "raw_controller_note": "The raw controller v1 top-level downloads field was an initialization placeholder; invocation count is native.downloads."
+}
