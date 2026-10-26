@@ -276,11 +276,15 @@ class WeChatDeepSeekBot:
                         reference, depth = question.get("reference"), 0
                         while isinstance(reference, dict):
                             if reference.get("kind") == "image":
-                                images.append(dict(trigger_index=index, depth=depth,
-                                                   **self.store.image_binding(self.chat_id, reference)))
+                                binding = self.store.image_binding(self.chat_id, reference)
+                                if binding.get('download'):
+                                    binding['download']['chat_title'] = self.chat_title
+                                images.append(dict(trigger_index=index, depth=depth, **binding))
                             reference, depth = reference.get("reference"), depth+1
                 payload = (self.cfg, prompt, echo)
                 if images:
+                    if self.cfg['vision'].get('download_enabled', False):
+                        timeout += self.cfg['vision'].get('download_timeout_seconds', 20)
                     payload += (dict(context=context, triggers=task["triggers"], chat_title=self.chat_title, images=images,
                                      memory=memory, account=self.store.self_wxid),)
                 job = self.job_factory("generate", payload, timeout=timeout)

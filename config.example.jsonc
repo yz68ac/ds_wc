@@ -130,7 +130,10 @@
     "detail": "original", // 优先原图，受微信实际缓存情况限制。
     "max_images": 4,
     "max_image_bytes": 8388608,
-    "cache_wait_seconds": 3
+    "cache_wait_seconds": 3,
+    // 需要原生发送后台及可用AT-SPI；唯一匹配引用缩略图后触发微信下载清晰缓存
+    "download_enabled": false,
+    "download_timeout_seconds": 20
   },
   // 按机器人账号、群和成员 wxid 隔离的持久摘要；完整说明见 docs/MEMORY.md。
   "memory": {

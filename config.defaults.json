@@ -122,7 +122,9 @@
     "detail": "original",
     "max_images": 4,
     "max_image_bytes": 8388608,
-    "cache_wait_seconds": 3
+    "cache_wait_seconds": 3,
+    "download_enabled": false,
+    "download_timeout_seconds": 20
   },
   "memory": {
     "enabled": true,

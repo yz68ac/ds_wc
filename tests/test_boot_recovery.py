@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import sqlite3
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -37,8 +38,14 @@ class BootRecoveryTests(unittest.TestCase):
             db.execute('INSERT INTO tasks VALUES (?)',(json.dumps(dict(phase='queued',text='CHAT_SECRET',prompt='PROMPT_SECRET')),))
             db.execute('INSERT INTO memory_jobs VALUES (?)',('"MEMORY_SECRET"',))
             db.commit(); db.close()
-            with patch.object(boot,'RUN',run),patch.object(boot,'PERSIST',persist):
+            account=SimpleNamespace(pw_uid=995,pw_gid=984)
+            with patch.object(boot,'RUN',run),patch.object(boot,'PERSIST',persist),\
+                 patch.object(boot,'owner',return_value=account),\
+                 patch.object(boot.os,'geteuid',return_value=0,create=True),\
+                 patch.object(boot.os,'chown',create=True) as ownership:
                 result=boot.checkpoint()
+            self.assertEqual(ownership.call_count,1)
+            self.assertEqual(ownership.call_args.args[1:],(995,984))
             text=(persist/'cursor.json').read_text()
             self.assertEqual(result,dict(saved=True,cursor=9,pending=1,memory_pending=1))
             for secret in ('KEY_SECRET','CHAT_SECRET','PROMPT_SECRET','MEMORY_SECRET'):

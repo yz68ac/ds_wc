@@ -186,6 +186,12 @@ def load_config(path: str | Path = "config.json") -> dict[str, Any]:
             raise ValueError(f"vision.{key} 必须为 1 到 {maximum} 的整数")
     if not 0 <= float(vision["cache_wait_seconds"]) <= 10:
         raise ValueError("vision.cache_wait_seconds 必须为 0 到 10 秒")
+    if type(vision.get('download_enabled')) is not bool:
+        raise ValueError('vision.download_enabled 必须为布尔值')
+    download_timeout = vision.get('download_timeout_seconds')
+    if (type(download_timeout) not in (int, float) or not math.isfinite(download_timeout)
+            or not 5 <= download_timeout <= 30):
+        raise ValueError('vision.download_timeout_seconds 必须为5到30秒')
     search = cfg["search"]
     if not isinstance(search["enabled"], bool) or not isinstance(search["feedback_enabled"], bool):
         raise ValueError("search 开关必须为布尔值")

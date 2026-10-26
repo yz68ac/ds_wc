@@ -98,7 +98,9 @@ def checkpoint():
         raise ValueError('checkpoint_invalid_queue_metadata')
     value = dict(schema=1, identity=meta['identity'], cursor=meta['cursor'], updated_at=int(time.time()),
                  pending_at_shutdown=pending, memory_pending_at_shutdown=memory_pending)
-    atomic_json(PERSIST/'cursor.json', value)
+    # The subsequent probe runs as wxbridge, including after a root maintenance checkpoint.
+    atomic_json(PERSIST/'cursor.json', value,
+                owner=owner() if getattr(os, 'geteuid', lambda: None)() == 0 else None)
     return dict(saved=True, cursor=value['cursor'], pending=pending, memory_pending=memory_pending)
 
 

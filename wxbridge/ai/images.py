@@ -247,6 +247,7 @@ def prepare_multimodal(cfg, base_prompt, generation):
     settings = cfg.get("vision") or {}
     wait = max(0, min(float(settings.get("cache_wait_seconds", 3)), 10))
     deadline = time.monotonic()+wait
+    download_deadline = time.monotonic()+float(settings.get('download_timeout_seconds', 20))
     for binding in generation["images"]:
         reference = triggers[binding["trigger_index"]]["reference"]
         for _ in range(binding["depth"]):
@@ -266,6 +267,9 @@ def prepare_multimodal(cfg, base_prompt, generation):
                     if str(exc) not in ("local_image_not_cached", "local_image_pending", "invalid_encrypted_image", "invalid_image") or time.monotonic() >= deadline:
                         raise
                     time.sleep(.2)
+            if settings.get('download_enabled', False) and info['quality'] in ('thumbnail', 'preview'):
+                from wxbridge.wechat.image_download import improve_image
+                data, info = improve_image(binding, cfg, data, info, download_deadline)
             quality = {"original": "本地原图", "cached": "本地微信缓存图（不保证原图）", "preview": "本地预览图", "thumbnail": "本地缩略图"}[info["quality"]]
             reference.update(available=True, text=f"{label}随本条请求附送，来源为{quality}。请直接观察；小字不可辨时请说明，不要补造。", image_label=label,
                              image_quality=info["quality"], image_width=info["width"], image_height=info["height"])
