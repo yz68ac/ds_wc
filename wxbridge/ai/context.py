@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from typing import Any
-from wxbridge.wechat.pats import is_pat
+from wechat_linux.messages.pats import is_pat
 
 
 class ContextError(ValueError):

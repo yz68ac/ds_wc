@@ -7,10 +7,10 @@ import time
 import uuid
 from functools import partial
 from wxbridge.app.conversation import confirmation_updates
-from wxbridge.wechat.store import StoreError
-from wxbridge.native.protocol import NativeError, text_parts
+from wechat_linux.sending.confirmation import scan_confirmation
+from wechat_linux.native.protocol import NativeError, text_parts
 from wxbridge.app.task_policy import submission_failure
-from wxbridge.wechat.transport import native as native_transport
+from wechat_linux.sending.transport import native as native_transport
 
 log = logging.getLogger('wxbridge')
 
@@ -87,32 +87,13 @@ class DeliveryController:
                 and intake <= intent.get('seen_intake', -1)):
             return
         text = self.journal.outgoing_text(task)
-        scans = [('scan_cursor', max(intent['baseline'], intent.get('scan_cursor', intent['baseline'])-20), 2)]
-        # Incremental checks include a small overlap; a slow bounded audit catches
-        # old rows whose body/sender was filled in after their local_id appeared.
-        if task['blocked_reason'] and now >= intent.get('audit_at', 0):
-            scans.append(('audit_cursor', intent.get('audit_cursor', intent['baseline']), 1))
-        for field, cursor, pages in scans:
-            for _ in range(pages):
-                rows = self.store.messages_after(task.get('delivery_chat_id',self.chat_id), cursor, limit=100)
-                for msg in rows:
-                    if (msg['local_id'] > intent['baseline'] and msg.get('sender') == self.store.self_wxid
-                            and msg.get('type') == 1 and msg.get('text') == text):
-                        self.journal.acknowledge(task['id'], msg['local_id'], now, memory=memory,
-                            on_confirm=partial(confirmation_updates, settings=self.cfg.get('proactive')))
-                        log.info('发送确认 task=%s part=%s local_id=%s', task['id'], intent['part'], msg['local_id'])
-                        return
-                if rows:
-                    next_cursor = max(m['local_id'] for m in rows)
-                    if next_cursor <= cursor and len(rows) >= 100:
-                        raise StoreError('发送确认分页未前进')
-                    cursor = max(cursor, next_cursor)
-                intent[field] = cursor
-                if len(rows) < 100:
-                    if field == 'audit_cursor':
-                        intent.pop('audit_cursor', None)
-                        intent['audit_at'] = now+60
-                    break
+        ack = scan_confirmation(self.store, task.get('delivery_chat_id', self.chat_id),
+                                self.store.self_wxid, text, intent, now, blocked=bool(task['blocked_reason']))
+        if ack is not None:
+            self.journal.acknowledge(task['id'], ack, now, memory=memory,
+                on_confirm=partial(confirmation_updates, settings=self.cfg.get('proactive')))
+            log.info('发送确认 task=%s part=%s local_id=%s', task['id'], intent['part'], ack)
+            return
         if intent["deadline"] is not None and time.time() >= intent["deadline"]:
             with self.journal.db:
                 code = (intent.get("ui") or {}).get("error", "no_outbound_record")

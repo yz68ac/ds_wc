@@ -57,11 +57,11 @@ def _work(connection, kind, payload):
                     cfg, snapshot = payload
                     result = {"proposal": extract(cfg, snapshot)}
                 elif kind == "send":
-                    from wxbridge.wechat.ui import Sender
+                    from wechat_linux.desktop.ui import Sender
                     cfg, chat, text = payload
                     result = {"ui": Sender(cfg).send(chat, text)}
                 elif kind == 'native_send':
-                    from wxbridge.native.sender import submit
+                    from wechat_linux.native.sender import submit
                     result = {'ui': submit(*payload)}
                 else:
                     raise ValueError("unknown_worker_kind")

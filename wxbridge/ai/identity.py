@@ -1,5 +1,5 @@
 """One per-request identity map for messages and nested quotes; no IO."""
-from wxbridge.wechat.references import prompt_reference
+from wechat_linux.messages.references import prompt_reference
 
 
 def member_labels(context, triggers, account, *, initial=None):

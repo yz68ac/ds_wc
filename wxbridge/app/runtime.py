@@ -2,27 +2,11 @@
 from __future__ import annotations
 
 import copy
-from contextlib import ExitStack, contextmanager
-import os
+from contextlib import ExitStack
 from pathlib import Path
 
 from wxbridge.app.bot import WeChatDeepSeekBot, setup_logging
-from wxbridge.storage.journal import checked_path
-
-
-@contextmanager
-def instance_lock(path):
-    import fcntl
-    target = checked_path(path)
-    fd = os.open(target, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
-    try:
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            raise ValueError("已有监听实例占用队列或解密目录") from exc
-        yield
-    finally:
-        os.close(fd)
+from wechat_linux.runtime.locking import instance_lock
 
 
 def run_bot(cfg, *, once=False, echo=False):

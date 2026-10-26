@@ -44,6 +44,18 @@ def changes(old, new):
     return sorted(result)
 
 
+def helper_asset(manifest, name):
+    for prefix in ('wechat_linux/native/', 'wxbridge/native/'):
+        if prefix+name in manifest['files']:
+            return prefix+name
+    raise ValueError('helper_asset_missing')
+
+
+def helper_changes(old, new):
+    return [name for name in ASSETS if old['files'][helper_asset(old, name)]['sha256']
+            != new['files'][helper_asset(new, name)]['sha256']]
+
+
 def active(unit):
     return subprocess.run(['systemctl', 'is-active', '--quiet', unit], capture_output=True).returncode == 0
 
@@ -88,7 +100,7 @@ def deploy(stage, backup, *, apply=False, update_helper=False, allow_pending_mem
         target = stage/name
         if not target.resolve().is_relative_to(stage.resolve()) or sha(target) != info['sha256']:
             raise ValueError('staged_hash_mismatch')
-    helper_changed = [n for n in ASSETS if 'wxbridge/native/'+n in planned]
+    helper_changed = helper_changes(old, new)
     report = dict(commit=new['commit'], base=old['commit'], changed_files=planned,
                   helper_assets=helper_changed, applied=False)
     if not apply:
@@ -151,7 +163,7 @@ def deploy(stage, backup, *, apply=False, update_helper=False, allow_pending_mem
             if helper_changed:
                 installation = json.loads((HELPER/'installation.json').read_text())
                 for name in helper_changed:
-                    data = (stage/'wxbridge/native'/name).read_bytes()
+                    data = (stage/helper_asset(new, name)).read_bytes()
                     updates[HELPER/name] = (data, 0o644, 0, 0)
                     installation['files'][name] = hashlib.sha256(data).hexdigest()
                 installation['review_release'] = new['commit']

@@ -17,8 +17,8 @@ from wxbridge.config import PROJECT_ROOT
 from wxbridge.storage.person_memory import MemoryStore
 from wxbridge.storage.journal import Journal
 from wxbridge.wechat.messages import chunk_text, is_triggered, reply_chunks
-from wxbridge.wechat.store import StoreError, WeChatStore
-from wxbridge.wechat.pats import is_pat
+from wechat_linux.storage.store import StoreError, WeChatStore
+from wechat_linux.messages.pats import is_pat
 from wxbridge.app.workers import ProcessJob
 from wxbridge.app.proactive import ProactiveController
 from wxbridge.app.learning import enqueue_if_active, eligible_messages
@@ -53,7 +53,7 @@ def setup_logging(cfg, verbose=True):
 
 class WeChatDeepSeekBot:
     def __init__(self, cfg, echo=False):
-        from wxbridge.native.protocol import settings as native_settings
+        from wechat_linux.native.protocol import settings as native_settings
         native_options = native_settings(cfg)
         self.cfg, self.echo = cfg, echo
         self.store = WeChatStore(cfg["db_dir"], cfg["keys_file"], cfg["decrypted_dir"])
@@ -108,8 +108,9 @@ class WeChatDeepSeekBot:
         self.next_poll_at = 0
         self.native_api = None
         if native_options['enabled'] and not cfg['ui'].get('dry_run'):
-            from wxbridge.native.api import NativeAPI
-            self.native_api = NativeAPI(self)
+            from wechat_linux.transport.server import NativeServer
+            from wxbridge.app.native_gateway import BotNativeService
+            self.native_api = NativeServer(native_options, BotNativeService(self, native_options))
 
     _chunk = staticmethod(chunk_text)
 

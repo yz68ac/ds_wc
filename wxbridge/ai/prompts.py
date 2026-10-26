@@ -8,7 +8,7 @@ from typing import Any
 from wxbridge import config
 from wxbridge.ai.context import ContextError, select_context, message_time
 from wxbridge.ai.identity import member_labels, member_name, reference_data
-from wxbridge.wechat.pats import is_pat
+from wechat_linux.messages.pats import is_pat
 from wxbridge.storage.relationships import with_reply_policy
 
 

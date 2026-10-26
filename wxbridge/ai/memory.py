@@ -9,7 +9,7 @@ from wxbridge.ai.prompts import system_prompt
 from wxbridge.ai.emoticons import semantics_prompt
 from wxbridge.config import PROJECT_ROOT
 from wxbridge.storage import expression_memory
-from wxbridge.wechat.pats import is_pat
+from wechat_linux.messages.pats import is_pat
 from wxbridge.ai.identity import member_labels
 
 INSTRUCTIONS = """你负责整理群成员记忆，只输出 JSON 对象 {"updates": [...], "learning": [...]}，不要 Markdown、推理或解释。

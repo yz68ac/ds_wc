@@ -7,8 +7,8 @@ import shutil
 from pathlib import Path
 
 from wxbridge.config import deepseek_api_key
-from wxbridge.wechat.store import StoreError, WeChatStore, discover_db_dir
-from wxbridge.wechat.ui import A11y, Sender, UIError
+from wechat_linux.storage.store import StoreError, WeChatStore, discover_db_dir
+from wechat_linux.desktop.ui import A11y, Sender, UIError
 
 
 def check(cfg: dict, group: str = "") -> int:
@@ -18,7 +18,7 @@ def check(cfg: dict, group: str = "") -> int:
     print(f"目标群：{title} ({chat_id})")
     print(f"最新消息 local_id：{store.last_local_id(chat_id)}（不显示正文）")
     if cfg['ui']['backend']=='native_service':
-        from wxbridge.native.sender import readiness
+        from wechat_linux.native.sender import readiness
         print(json.dumps(readiness(cfg)))
     else:
         print(json.dumps(Sender(cfg).status(), ensure_ascii=False, indent=2))

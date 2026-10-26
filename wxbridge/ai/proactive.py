@@ -8,7 +8,7 @@ import time
 from wxbridge.ai.context import ContextError, message_time
 from wxbridge.ai.output import reply_rules, format_reply
 from wxbridge.ai.prompts import system_prompt
-from wxbridge.wechat.pats import is_pat
+from wechat_linux.messages.pats import is_pat
 from wxbridge.ai.identity import member_labels, member_tag, reference_data
 
 

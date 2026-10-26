@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wechat-linux-adapter"
+version = "0.1.0"
+description = "Local Linux WeChat message, media and confirmed-delivery adapter"
+readme = "docs/WECHAT_LIBRARY.md"
+requires-python = ">=3.11"
+classifiers = [
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+]
+dependencies = []
+
+[project.optional-dependencies]
+database = ["pycryptodome>=3.20", "zstandard>=0.22"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["wechat_linux", "wechat_linux.*"]
+
+[tool.setuptools.package-data]
+"wechat_linux.native" = ["agent.js", "profile.json"]

@@ -37,7 +37,7 @@ def install(wheel,user,allowed):
     with wheel.open('rb') as stream:
         if hashlib.file_digest(stream,'sha256').hexdigest()!=WHEEL_SHA256:
             raise ValueError('frida_wheel_hash_mismatch')
-    source=Path(__file__).resolve().parents[1]/'wxbridge'/'native'
+    source=Path(__file__).resolve().parents[1]/'wechat_linux'/'native'
     # Validate input before creating any installation target.
     sys.path.insert(0,str(source))
     import helper

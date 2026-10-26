@@ -1,0 +1,9 @@
+include pyproject.toml
+include docs/WECHAT_LIBRARY.md
+recursive-include wechat_linux *.py *.js *.json
+exclude README.md CONTRIBUTING.md
+prune tests
+prune wxbridge
+prune scripts
+prune prompts
+global-exclude __pycache__ *.py[cod]

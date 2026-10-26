@@ -1,7 +1,7 @@
 """成员活动驱动的参与窗口；纯策略由接收/确认事务写入同一队列。"""
 
 from wxbridge.ai.context import message_time
-from wxbridge.wechat.pats import is_pat
+from wechat_linux.messages.pats import is_pat
 
 SESSION_POLICY = 2
 

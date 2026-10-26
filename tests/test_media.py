@@ -108,7 +108,7 @@ class LocalImageTests(unittest.TestCase):
     def test_wxgf_conversion_keeps_pixels_in_memory_and_reports_format(self):
         source = b"wxgf"+bytes(80)
         self.path.write_bytes(encrypted(source))
-        with patch('wxbridge.ai.images.key_candidates',return_value=[(b'wrong-key-123456',77),(b'synthetic-key-16',77)]), patch('wxbridge.ai.wxgf.decode_wxgf',return_value=png()) as convert:
+        with patch('wechat_linux.media.images.key_candidates',return_value=[(b'wrong-key-123456',77),(b'synthetic-key-16',77)]), patch('wxbridge.ai.wxgf.decode_wxgf',return_value=png()) as convert:
             data,info = read_local_image(self.binding,self.cfg)
         self.assertEqual(data,png())
         convert.assert_called_once_with(source,self.cfg['vision']['max_image_bytes'])
@@ -119,7 +119,7 @@ class LocalImageTests(unittest.TestCase):
     def test_wxgf_failure_survives_later_wrong_keys_and_can_fall_back(self):
         from wxbridge.ai.wxgf import WxgfError
         self.path.write_bytes(encrypted(b'wxgf'+bytes(80)))
-        with patch('wxbridge.ai.images.key_candidates',return_value=[(b'synthetic-key-16',77),(b'wrong-key-123456',77)]), patch('wxbridge.ai.wxgf.decode_wxgf',side_effect=WxgfError('wxgf_decoder_unavailable')):
+        with patch('wechat_linux.media.images.key_candidates',return_value=[(b'synthetic-key-16',77),(b'wrong-key-123456',77)]), patch('wxbridge.ai.wxgf.decode_wxgf',side_effect=WxgfError('wxgf_decoder_unavailable')):
             with self.assertRaisesRegex(MediaError,'^wxgf_decoder_unavailable$'):
                 read_local_image(self.binding,self.cfg)
             thumbnail = self.path.with_name('image_t.dat')

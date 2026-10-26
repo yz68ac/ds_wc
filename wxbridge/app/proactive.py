@@ -6,7 +6,7 @@ import logging
 
 from wxbridge.ai.proactive import activity, addresses_bot, build_prompt, parse_decision, timeline, ProactiveError
 from wxbridge.ai.memory import member_labels
-from wxbridge.wechat.pats import is_pat
+from wechat_linux.messages.pats import is_pat
 from wxbridge.app.conversation import SESSION_POLICY, observation_updates
 from wxbridge.app.task_policy import proactive_failure_code
 from wxbridge.storage.memory_selection import memory_dialogue
