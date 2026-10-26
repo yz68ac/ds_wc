@@ -627,6 +627,8 @@ class PipelineTests(unittest.TestCase):
 
     def test_reasoning_is_not_sent_as_answer(self):
         client = DeepSeekClient.__new__(DeepSeekClient)
+        from wxbridge.ai.providers import get_adapter
+        client.adapter = get_adapter('deepseek')
         client.cfg = {**self.cfg["deepseek"], "thinking": "disabled"}
         client._post = Mock(return_value={"choices": [{"message": {"content": "", "reasoning_content": "PRIVATE"}}]})
         from wxbridge.ai.client import DeepSeekError
@@ -770,7 +772,7 @@ class WorkerTests(unittest.TestCase):
         prior = logging.root.manager.disable
         connection = Mock()
         try:
-            with patch("wxbridge.ai.client.DeepSeekClient") as client:
+            with patch("wxbridge.ai.client.ModelClient") as client:
                 client.return_value.chat.return_value = "**简单说**，先这样。"
                 _work(connection, "generate", ({"search": {"enabled": False}}, [dict(role="system", content="合成人格")], None))
                 prompt = client.return_value.chat.call_args.args[0]
@@ -789,7 +791,7 @@ class WorkerTests(unittest.TestCase):
             on_search()
             return "联网回答", dict(attempted=True, calls=1, results=1, errors=[])
         try:
-            with patch("wxbridge.ai.client.DeepSeekClient"), patch("wxbridge.ai.search.answer_with_search", side_effect=answer):
+            with patch("wxbridge.ai.client.ModelClient"), patch("wxbridge.ai.search.answer_with_search", side_effect=answer):
                 _work(connection, "generate", ({}, [], None))
         finally:
             logging.disable(prior)

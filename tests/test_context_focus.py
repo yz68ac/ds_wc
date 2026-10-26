@@ -144,7 +144,7 @@ class IdentityAndFocusTests(unittest.TestCase):
         p = build_prompt(self.cfg, self.rows, '合成群', account=self.account)
         client = Mock()
         client.complete.side_effect = [dict(content='{"speak":true,"reply_to":2}'), dict(content='接上这句了')]
-        with patch('wxbridge.ai.client.DeepSeekClient', return_value=client):
+        with patch('wxbridge.ai.client.ModelClient', return_value=client):
             result = evaluate(self.cfg, p, source_ids=[2,3],
                 reply_memory={'2':'SELECTED_MEMBER_MEMORY', '3':'OTHER_MEMBER_MEMORY'})
         self.assertEqual(client.complete.call_count, 2)

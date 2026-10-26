@@ -120,7 +120,7 @@ class RelationshipStyleTests(unittest.TestCase):
         rows=[msg(1,NOW,'刚才挺有意思','wxid_a'),msg(2,NOW,'我也觉得','wxid_b')]
         prompt=participation_prompt(self.cfg,rows,'合成群',opportunity=dict(mode='followup',reason='conversation',source_ids=[1,2]))
         client=Mock();client.complete.side_effect=[dict(content='{"speak":true,"reply_to":1}'),dict(content='有点意思')]
-        with patch('wxbridge.ai.client.DeepSeekClient',return_value=client):
+        with patch('wxbridge.ai.client.ModelClient',return_value=client):
             result=evaluate(self.cfg,prompt,source_ids=[1,2],reply_relationships={'1':state(10),'2':state(95)})
         self.assertEqual(client.complete.call_count,2)
         self.assertNotIn(relation.REPLY_POLICY_START,client.complete.call_args_list[0].args[0][0]['content'])

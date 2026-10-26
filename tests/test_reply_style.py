@@ -117,7 +117,7 @@ class ReplyStyleTests(unittest.TestCase):
         client=Mock()
         client.chat.return_value='知道啦。[偷笑]'
         try:
-            with patch('wxbridge.ai.client.DeepSeekClient',return_value=client):
+            with patch('wxbridge.ai.client.ModelClient',return_value=client):
                 _work(connection,'generate',(cfg,[dict(role='system',content='合成人格')],None))
         finally:
             logging.disable(prior)
@@ -152,7 +152,7 @@ class ReplyStyleTests(unittest.TestCase):
                    messages=[dict(id='m1',member='U1',text='[微笑]')])
         client=Mock()
         client.complete.return_value=dict(content='{"updates":[]}')
-        with patch('wxbridge.ai.client.DeepSeekClient',return_value=client):
+        with patch('wxbridge.ai.client.ModelClient',return_value=client):
             self.assertEqual(extract(settings(),value),dict(updates=[]))
         prompt=client.complete.call_args.args[0]
         self.assertIn('[微笑]：冷淡、无语、反讽',prompt[0]['content'])

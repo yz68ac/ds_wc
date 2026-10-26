@@ -84,7 +84,7 @@ class AvatarTests(unittest.TestCase):
     def test_text_judgement_never_sees_avatar_and_visual_has_no_chat_context(self):
         value = self.snap()
         response = dict(avatars=[update()])
-        with patch("wxbridge.ai.client.DeepSeekClient") as client:
+        with patch("wxbridge.ai.client.ModelClient") as client:
             client.return_value.complete.side_effect = [dict(content='{"updates":[]}'), dict(content=json.dumps(response))]
             result = extract(self.cfg, value)
             first, second = client.return_value.complete.call_args_list
@@ -99,7 +99,7 @@ class AvatarTests(unittest.TestCase):
             self.assertEqual(model_settings(client.call_args.args[0], 'avatar')['reasoning_effort'], 'max')
 
     def test_visual_api_failure_keeps_text_proposal(self):
-        with patch("wxbridge.ai.client.DeepSeekClient") as client:
+        with patch("wxbridge.ai.client.ModelClient") as client:
             client.return_value.complete.side_effect = [dict(content='{"updates":[]}'), TimeoutError()]
             result = extract(self.cfg, self.snap())
         self.assertEqual(result, dict(updates=[], avatar_updates=[]))

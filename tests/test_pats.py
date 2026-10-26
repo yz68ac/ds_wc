@@ -88,7 +88,7 @@ class PatTests(unittest.TestCase):
         value = snapshot(self.cfg, [], [event], self.identity, self.memory, NOW)
         self.assertEqual(value["messages"], [])
         self.assertEqual(value["interactions"][0]["kind"], "pat")
-        with patch("wxbridge.ai.client.DeepSeekClient") as client:
+        with patch("wxbridge.ai.client.ModelClient") as client:
             proposal = extract(self.cfg, value)
         client.assert_not_called()
         with self.assertRaisesRegex(ValueError, "memory_unknown_source"):

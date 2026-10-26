@@ -5,7 +5,7 @@ import logging
 import multiprocessing as mp
 import os
 import time
-from wxbridge.ai.client import capture_metrics, DeepSeekError
+from wxbridge.ai.client import capture_metrics, ModelError
 
 
 def _work(connection, kind, payload):
@@ -16,7 +16,7 @@ def _work(connection, kind, payload):
         with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink), capture_metrics() as metrics:
             try:
                 if kind == "generate":
-                    from wxbridge.ai.client import DeepSeekClient
+                    from wxbridge.ai.client import ModelClient
                     cfg, prompt, echo_text = payload[:3]
                     vision = None
                     if echo_text is None and len(payload) > 3:
@@ -27,15 +27,15 @@ def _work(connection, kind, payload):
                         answer = echo_text
                     elif cfg.get("search", {}).get("enabled", True):
                         from wxbridge.ai.search import answer_with_search
-                        answer, search = answer_with_search(cfg, DeepSeekClient(cfg), prompt,
+                        answer, search = answer_with_search(cfg, ModelClient(cfg), prompt,
                             on_search=lambda: connection.send({"event": "search_started"}))
                     else:
                         from wxbridge.ai.output import format_reply, response_prompt
-                        answer = DeepSeekClient(cfg).chat(response_prompt(prompt, cfg))
+                        answer = ModelClient(cfg).chat(response_prompt(prompt, cfg))
                         answer = format_reply(answer, cfg)
                     result = {"reply": answer}
                     if not answer.strip():
-                        raise DeepSeekError('empty_reply', retryable=True)
+                        raise ModelError('empty_reply', retryable=True)
                     if vision is not None:
                         result["vision"] = vision
                     if search is not None:
@@ -77,7 +77,7 @@ def _work(connection, kind, payload):
                     result['error'] = proactive_failure_code({'error': getattr(exc, 'code', type(exc).__name__)})
                     if isinstance(exc, ProactiveError) and type(exc.reply_chars) is int:
                         result['reply_chars'] = exc.reply_chars
-                if isinstance(exc, DeepSeekError):
+                if isinstance(exc, ModelError):
                     result.update(error=exc.code, retryable=exc.retryable)
                 if metrics:
                     result['model_metrics'] = metrics

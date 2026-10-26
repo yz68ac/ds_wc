@@ -82,7 +82,7 @@ def snapshot(cfg, context, triggers, identity, memory, now, *, window=None):
 
 
 def extract(cfg, value):
-    from wxbridge.ai.client import DeepSeekClient
+    from wxbridge.ai.client import ModelClient
     settings = cfg["memory"]
     from wxbridge.ai.roles import model_settings
     public = {k: value[k] for k in ("revision", "watermark", "messages", "existing")}
@@ -108,7 +108,7 @@ def extract(cfg, value):
         recovery = ('\n本批表达学习曾反复不满足来源校验，这次只整理人物事实、偏好、印象和关系；'
                     '必须返回learning=[]，不要输出任何表达学习条目。sources必须逐项从source_ids_by_member中本人的列表选择，'
                     '不能使用existing或旧对白的来源。下一批新任务可恢复表达学习。') if value.get('recovery') else ''
-        answer = DeepSeekClient(cfg, role='memory').complete([{"role": "system", "content": INSTRUCTIONS+LEARNING_PROTOCOL+'\n'+instructions+semantics_prompt()+recovery},
+        answer = ModelClient(cfg, role='memory').complete([{"role": "system", "content": INSTRUCTIONS+LEARNING_PROTOCOL+'\n'+instructions+semantics_prompt()+recovery},
             {"role": "user", "content": json.dumps(public, ensure_ascii=False)}],
             deadline=deadline, require_complete=True)
         content = answer.get("content") or ""

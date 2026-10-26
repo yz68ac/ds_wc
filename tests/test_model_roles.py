@@ -107,7 +107,7 @@ class ModelRoleTests(unittest.TestCase):
                                                          timeout_seconds=5, max_tokens=1200)
                 original = copy.deepcopy(self.cfg)
                 client = self.client('participation')
-                with patch('wxbridge.ai.client.DeepSeekClient', return_value=client), \
+                with patch('wxbridge.ai.client.ModelClient', return_value=client), \
                         patch.object(client, '_post', return_value={'choices': [{'message': {
                             'content': '{"speak":false,"reply_to":null}', 'reasoning_content': 'PRIVATE_REASONING'}}]}) as post:
                     self.assertEqual(evaluate(self.cfg, []), dict(speak=False, text='', reply_to=None))

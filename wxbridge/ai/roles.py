@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import math
 from urllib.parse import urlsplit
+from wxbridge.ai.providers import supported_providers
 
 ROLES = ('reply', 'participation', 'memory', 'avatar')
 FIELDS = {'provider', 'base_url', 'api_key_env', 'model', 'thinking', 'reasoning_effort',
@@ -35,8 +36,8 @@ def validate_models(cfg):
         if not isinstance(override, dict) or set(override)-FIELDS:
             raise ValueError('models.'+role+' 包含无效字段')
         settings = model_settings(cfg, role)
-        if settings.get('provider') not in ('deepseek', 'openai'):
-            raise ValueError('models.'+role+'.provider 必须为 deepseek 或 openai')
+        if settings.get('provider') not in supported_providers():
+            raise ValueError('models.'+role+'.provider 必须为 '+ '/'.join(supported_providers()))
         for key in ('base_url', 'api_key_env', 'model'):
             if not isinstance(settings.get(key), str) or not settings[key].strip():
                 raise ValueError('models.'+role+'.'+key+' 不能为空')

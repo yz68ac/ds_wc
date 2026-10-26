@@ -430,6 +430,8 @@ class ImageBindingTests(unittest.TestCase):
 class VisionClientTests(unittest.TestCase):
     def test_post_sends_openai_image_content_array_and_rejects_request_limit(self):
         client = DeepSeekClient.__new__(DeepSeekClient)
+        from wxbridge.ai.providers import get_adapter
+        client.adapter = get_adapter('deepseek')
         client.base_url, client.api_key = "https://example.invalid", "synthetic-key"
         payload = dict(messages=[dict(role="user", content=[dict(type="image_url", image_url=dict(url="data:image/png;base64,AAAA"))])])
         response = Mock()

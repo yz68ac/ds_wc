@@ -4,12 +4,14 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import ipaddress
 import json
+import os
+import re
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 
-from wxbridge.ai.client import DeepSeekError
+from wxbridge.ai.client import ModelError
 from wxbridge.ai.output import format_reply, response_prompt
 from wxbridge.config import deepseek_api_key
 
@@ -46,7 +48,13 @@ def public_url(value):
 class SearchClient:
     def __init__(self, cfg):
         self.settings = cfg.get("search", {})
-        self.api_key = deepseek_api_key(cfg)
+        key_env = self.settings.get('api_key_env')
+        if key_env is None:
+            self.api_key = deepseek_api_key(cfg)  # Legacy search configuration.
+        elif isinstance(key_env, str) and re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', key_env):
+            self.api_key = os.environ.get(key_env, '').strip()
+        else:
+            raise SearchError('invalid_api_key_env')
         self.base_url = self.settings.get("base_url", "https://api.deepseek.com").rstrip("/")
         if not self.api_key:
             raise SearchError("missing_api_key")
@@ -69,8 +77,10 @@ class SearchClient:
                     raise SearchError("invalid_search_response")
                 return result
             except urllib.error.HTTPError as exc:
-                code = "http_"+str(exc.code)
-                if attempt or exc.code not in (408, 429) and exc.code < 500:
+                status = exc.code
+                exc.close()
+                code = "http_"+str(status)
+                if attempt or status not in (408, 429) and status < 500:
                     raise SearchError(code) from None
             except (urllib.error.URLError, TimeoutError, OSError):
                 code = "search_connection_failed"
@@ -114,7 +124,7 @@ def answer_with_search(cfg, client, messages, on_search=None, *, search_client=N
     def finish(text):
         text = format_reply(text, cfg)
         if not text.strip():
-            raise DeepSeekError('empty_reply', retryable=True)
+            raise ModelError('empty_reply', retryable=True)
         if sources and sources[0]["url"] not in text:
             text += "\n参考："+sources[0]["url"]
         return text.strip(), metadata()
@@ -124,7 +134,7 @@ def answer_with_search(cfg, client, messages, on_search=None, *, search_client=N
         try:
             message = client.complete(conversation, tools=TOOLS, tool_choice="none" if exhausted else "auto", deadline=deadline,
                                       require_complete=True)
-        except DeepSeekError:
+        except ModelError:
             if not attempted:
                 raise
             errors.append("answer_generation_failed")
@@ -142,9 +152,7 @@ def answer_with_search(cfg, client, messages, on_search=None, *, search_client=N
         if exhausted:
             errors.append("tool_limit")
             return finish("这次搜索已到查询上限，还没得到足够可靠的结论。" if not sources else "查到的资料还不足以确定答案，我把可核对的来源放在下面。")
-        # 开启 thinking 时必须把模型的 reasoning_content 随 assistant 消息原样回传。
-        assistant = {key: message[key] for key in ("content", "tool_calls", "reasoning_content") if key in message}
-        conversation.append(dict(role="assistant", **assistant))
+        conversation.append(client.assistant_message(message))
         for tool in tool_calls:
             output = None
             try:

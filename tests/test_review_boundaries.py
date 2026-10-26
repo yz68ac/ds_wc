@@ -114,6 +114,6 @@ class ReviewBoundaryTests(unittest.TestCase):
     def test_named_handoff_uses_only_the_participation_call(self):
         cfg=copy.deepcopy(DEFAULTS)
         client=Mock();client.complete.return_value=dict(content='{"speak":true,"reply_to":7}')
-        with patch('wxbridge.ai.client.DeepSeekClient',return_value=client):
+        with patch('wxbridge.ai.client.ModelClient',return_value=client):
             decision=evaluate(cfg,[],source_ids=[7],judgment_only=True)
         self.assertTrue(decision['handoff']);self.assertEqual(client.complete.call_count,1)

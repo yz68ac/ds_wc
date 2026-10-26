@@ -241,7 +241,7 @@ class RelationshipTests(unittest.TestCase):
         self.turn(delta=1, trust=1)
         m = msg(2, NOW+1, '接着聊', 'wxid_a')
         value = snapshot(self.cfg, [], [m], IDENTITY, self.memory, NOW+1)
-        with patch('wxbridge.ai.client.DeepSeekClient') as client:
+        with patch('wxbridge.ai.client.ModelClient') as client:
             client.return_value.complete.return_value = dict(content='{"updates":[]}')
             extract(self.cfg, value)
         self.assertEqual(client.return_value.complete.call_count, 1)
@@ -271,7 +271,7 @@ class RelationshipTests(unittest.TestCase):
         old = msg(1, NOW, '旧发言', 'wxid_a')
         new = msg(2, NOW+1, '新发言', 'wxid_b')
         value = snapshot(self.cfg, [old], [new], IDENTITY, self.memory, NOW+1)
-        with patch('wxbridge.ai.client.DeepSeekClient') as client:
+        with patch('wxbridge.ai.client.ModelClient') as client:
             client.return_value.complete.return_value = dict(content='{"updates":[]}')
             extract(self.cfg, value)
         public = json.loads(client.return_value.complete.call_args.args[0][1]['content'])
@@ -283,7 +283,7 @@ class RelationshipTests(unittest.TestCase):
         value = snapshot(self.cfg, [], [m], IDENTITY, self.memory, NOW)
         value.update(learning_enabled=False, learning_source_ids=[], learning_existing=[],
                      recovery=dict(section='expression_learning', reason='memory_learning_expression_not_observed'))
-        with patch('wxbridge.ai.client.DeepSeekClient') as client:
+        with patch('wxbridge.ai.client.ModelClient') as client:
             client.return_value.complete.return_value = dict(content='{"updates":[],"learning":[]}')
             extract(self.cfg, value)
         self.assertEqual(client.return_value.complete.call_count, 1)

@@ -57,7 +57,7 @@ class DecisionTests(unittest.TestCase):
         client=Mock()
         client.complete.return_value={'content':'{"speak":false,"reply_to":null}','reasoning_content':'PRIVATE_REASONING'}
         original=copy.deepcopy(cfg)
-        with patch('wxbridge.ai.client.DeepSeekClient',return_value=client) as factory:
+        with patch('wxbridge.ai.client.ModelClient',return_value=client) as factory:
             self.assertFalse(evaluate(cfg,[])['speak'])
         request_cfg=factory.call_args.args[0]
         self.assertEqual(factory.call_args.kwargs['role'], 'participation')

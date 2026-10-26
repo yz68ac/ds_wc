@@ -166,7 +166,7 @@ class MemoryTests(unittest.TestCase):
         self.cfg["deepseek"]["reasoning_effort"] = "high"
         self.cfg["memory"].update(thinking="enabled", reasoning_effort="max")
         before = copy.deepcopy(self.cfg)
-        with patch("wxbridge.ai.client.DeepSeekClient") as client:
+        with patch("wxbridge.ai.client.ModelClient") as client:
             client.return_value.complete.return_value = dict(content='{"updates":[]}', reasoning_content="PRIVATE_REASONING")
             self.assertEqual(extract(self.cfg, self.snap()), dict(updates=[]))
             config = client.call_args.args[0]

@@ -185,12 +185,12 @@ def parse_decision(content, max_chars=30, cfg=None):
 
 def evaluate(cfg, prompt, *, source_ids=None, timeout_seconds=None, on_reply=None, reply_memory=None,
              reply_relationships=None, judgment_only=False):
-    from wxbridge.ai.client import DeepSeekClient, DeepSeekError
+    from wxbridge.ai.client import ModelClient, ModelError
     settings = cfg['proactive']
     from wxbridge.ai.roles import model_settings
     deadline = time.monotonic()+min(settings['reply_ttl_seconds'],
         timeout_seconds if timeout_seconds is not None else settings['reply_ttl_seconds'])
-    result = DeepSeekClient(cfg, role='participation').complete(prompt,
+    result = ModelClient(cfg, role='participation').complete(prompt,
         deadline=min(deadline, time.monotonic()+model_settings(cfg, 'participation')['timeout_seconds']))
     decision = parse_judgment(result.get('content'))
     if not decision['speak']:
@@ -211,14 +211,14 @@ def evaluate(cfg, prompt, *, source_ids=None, timeout_seconds=None, on_reply=Non
         if time.monotonic() >= deadline:
             raise ProactiveError('proactive_expired_before_reply')
         try:
-            reply = DeepSeekClient(cfg, role='reply').complete(reply_prompt, deadline=deadline,
+            reply = ModelClient(cfg, role='reply').complete(reply_prompt, deadline=deadline,
                                                              require_complete=True)
             return parse_decision(json.dumps(dict(speak=True, text=reply.get('content') or '',
                 reply_to=decision['reply_to']), ensure_ascii=False), settings['max_reply_chars'], cfg)
         except ProactiveError as exc:
             if exc.code != 'proactive_invalid_reply_length' or attempt:
                 raise
-        except DeepSeekError as exc:
+        except ModelError as exc:
             if exc.code not in ('output_limit', 'empty_reply') or attempt:
                 raise
         reply_prompt[0]['content'] += (f'\n【重新生成短答】上一条未满足输出要求。只保留最关键的一句，'
