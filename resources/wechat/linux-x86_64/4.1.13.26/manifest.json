@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "product": "WeChat",
+  "version": "4.1.13.26",
+  "os": "linux",
+  "architecture": "x86_64",
+  "deb_architecture": "amd64",
+  "captured_date": "2026-10-26",
+  "purpose": [
+    "analysis_sample",
+    "local_offline_backup"
+  ],
+  "profile": "../../../../wechat_linux/native/profile.json",
+  "native_backend": "service_v1",
+  "source": {
+    "kind": "user_provided_deb",
+    "original_filename": "WeChatLinux_x86_64.deb",
+    "official_authenticity_verified": false
+  },
+  "verification": {
+    "profile_matches_executable": true,
+    "deb_contains_same_executable": true,
+    "original_files_preserved": true
+  },
+  "runtime_autoload": false,
+  "artifacts": {
+    "executable": {
+      "path": "binary/wechat",
+      "bytes": 181208032,
+      "sha256": "2749535f299ba67feb8ef80cab898bb0531fa8f376b16f8a72db706811c84132"
+    },
+    "installer": {
+      "path": "installer/WeChatLinux_x86_64.deb",
+      "bytes": 231861976,
+      "sha256": "a0db8caeee8d1e6cfe0aa5ce58710270f8d74a90ff4920f53a3fc22aa0956fe9"
+    }
+  }
+}

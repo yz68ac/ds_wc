@@ -44,3 +44,7 @@ Thumbs.db
 *.AppImage
 *.gpr
 *.rep/
+
+# Local, version-pinned client backup; keep its manifest and checksums in Git.
+/resources/wechat/**/binary/
+/resources/wechat/**/installer/

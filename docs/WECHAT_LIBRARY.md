@@ -16,6 +16,8 @@ python3 -m pip install '.[database]'
 
 wheel 只包含 `wechat_linux` 和必要的 `agent.js`、`profile.json`；不包含机器人、模型提示词、配置、聊天记录、记忆、凭据或微信二进制。暂未选择许可证，发布或转授权前需要项目所有者明确许可。
 
+对应版本的微信主程序和原始 deb 已另存为 [本地备用资源](../resources/wechat/README.md)，附版本、来源及 SHA-256 清单；大文件不进入 wheel，运行时不会自动执行或替换它们。
+
 机器人仍从仓库运行 `python3 -m wxbridge`，直接使用库代码。旧 `wxbridge.wechat.*`、`wxbridge.native.*` 等入口保留兼容导入；它们不再各持一套微信实现。`wxbridge.ai.images` 只组装模型图片输入。
 
 ## 模块分工

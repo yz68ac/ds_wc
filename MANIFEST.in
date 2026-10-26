@@ -6,4 +6,5 @@ prune tests
 prune wxbridge
 prune scripts
 prune prompts
+prune resources
 global-exclude __pycache__ *.py[cod]
