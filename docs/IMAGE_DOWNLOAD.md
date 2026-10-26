@@ -2,6 +2,8 @@
 
 Linux微信有时只自动收到缩略图。手机能看清不代表Linux本地已有完整缓存；本轮实际引用曾只附送67×144的JPEG。打开相同图片后，本账号对应缓存变为498×1080，经现有wxgf解码链路转为可读PNG。此处称为清晰微信缓存，不保证是发送者上传的原始文件。
 
+不经过桌面点击的后续研究见 [原生图片下载接口定位](NATIVE_IMAGE_ANALYSIS.md)。已定位下层异步启动与服务对象，尚未实测原生下载；本页描述的兼容实现继续使用。
+
 ## 配置
 
 `vision.download_enabled`默认false；Linux实际配置可设true。`vision.download_timeout_seconds`默认20秒，允许5–30秒。修改JSON后重启监听。
