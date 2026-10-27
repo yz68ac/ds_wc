@@ -59,6 +59,17 @@ def load_config(path: str | Path = "config.json") -> dict[str, Any]:
     data: dict[str, Any] = {}
     if p.exists():
         data = json.loads(p.read_text(encoding="utf-8"))
+    cfg = resolve_config(data, p)
+    from wxbridge.instances import compile_instances
+    cfg['instances'] = compile_instances(cfg, data.get('instances', []), p)
+    return cfg
+
+
+def resolve_config(data: dict, path: str | Path, *, environment=True) -> dict[str, Any]:
+    """Resolve one effective configuration without loading credentials again."""
+    if not isinstance(data, dict):
+        raise ValueError('配置必须为 JSON 对象')
+    p = Path(path)
     cfg = _deep_merge(DEFAULTS, data)
     from wxbridge.wechat.transport import backend
     backend(cfg)
@@ -136,13 +147,13 @@ def load_config(path: str | Path = "config.json") -> dict[str, Any]:
         raise ValueError('proactive.opportunities.address_names 必须为最多10个非空短称呼')
 
     # 环境变量覆盖常用项
-    if os.environ.get("WX_DB_DIR"):
+    if environment and os.environ.get("WX_DB_DIR"):
         cfg["db_dir"] = os.environ["WX_DB_DIR"]
-    if os.environ.get("DEEPSEEK_BASE_URL"):
+    if environment and os.environ.get("DEEPSEEK_BASE_URL"):
         cfg["deepseek"]["base_url"] = os.environ["DEEPSEEK_BASE_URL"]
-    if os.environ.get("DEEPSEEK_MODEL"):
+    if environment and os.environ.get("DEEPSEEK_MODEL"):
         cfg["deepseek"]["model"] = os.environ["DEEPSEEK_MODEL"]
-    if os.environ.get("WX_GROUP"):
+    if environment and os.environ.get("WX_GROUP"):
         cfg["target"]["chat"] = os.environ["WX_GROUP"]
 
     # 统一转成绝对路径（相对于配置文件所在目录）
@@ -212,10 +223,14 @@ def load_config(path: str | Path = "config.json") -> dict[str, Any]:
         raise ValueError("vision.cache_wait_seconds 必须为 0 到 10 秒")
     if type(vision.get('download_enabled')) is not bool:
         raise ValueError('vision.download_enabled 必须为布尔值')
+    if vision.get('download_backend', 'desktop') not in ('desktop', 'native'):
+        raise ValueError('vision.download_backend 必须为 desktop 或 native')
     download_timeout = vision.get('download_timeout_seconds')
     if (type(download_timeout) not in (int, float) or not math.isfinite(download_timeout)
             or not 5 <= download_timeout <= 30):
         raise ValueError('vision.download_timeout_seconds 必须为5到30秒')
+    if vision.get('download_backend') == 'native' and type(download_timeout) is not int:
+        raise ValueError('原生图片下载超时必须为5到30秒的整数')
     search = cfg["search"]
     if not isinstance(search["enabled"], bool) or not isinstance(search["feedback_enabled"], bool):
         raise ValueError("search 开关必须为布尔值")

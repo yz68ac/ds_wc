@@ -17,6 +17,7 @@ log = logging.getLogger('wxbridge')
 class ProactiveController:
     def __init__(self, bot):
         self.bot, self.cfg, self.job = bot, bot.cfg['proactive'], None
+        self.log = getattr(bot, 'log', log)
         self.pending, self.dialogue = None, []
         self.latest_own_id = 0
         if bot.journal.get('proactive') is None:
@@ -67,7 +68,7 @@ class ProactiveController:
         chars = result.get('reply_chars')
         self.update(outcome='error', error=code,
                     reply_chars=chars if type(chars) is int and 0 <= chars <= 1000000 else None)
-        log.warning('主动接话跳过 category=%s', code)
+        self.log.warning('主动接话跳过 category=%s', code)
 
     def foreground(self):
         return any(t.get('trigger_kind') != 'proactive' for t in self.bot.journal.tasks())
@@ -317,6 +318,8 @@ class ProactiveController:
             limit = int(self.bot.cfg['queue']['generation_concurrency'])
             if len(self.bot.generators)+int(self.bot.memory_job is not None) >= limit:
                 return
+            if not self.bot.model_slot('proactive'):
+                return
             state = self.state()
             if (self.bot.last_local_id <= state['last_checked_id']
                     or now-state['last_checked_at'] < self.cfg['check_interval_seconds']):
@@ -360,7 +363,7 @@ class ProactiveController:
             worker = self.bot.job_factory('proactive', (self.bot.cfg, prompt, options), timeout=timeout)
             self.pending = candidate
             self.job = (worker, through, candidate['expires_at'])
-            log.info('主动接话判断 mode=%s reason=%s messages=%s', candidate['mode'], candidate['reason'], len(rows))
+            self.log.info('主动接话判断 mode=%s reason=%s messages=%s', candidate['mode'], candidate['reason'], len(rows))
         except Exception as exc:
             self.fail(dict(error=getattr(exc, 'code', type(exc).__name__),
                            reply_chars=exc.reply_chars if isinstance(exc, ProactiveError) else None))

@@ -83,8 +83,13 @@ def runtime():
     safe_status('runtime_ready')
 
 
-def checkpoint():
-    path = RUN/'queue.sqlite3'
+def configured_groups():
+    sys.path.insert(0, str(APP))
+    from wxbridge.app.operations import configured_groups as groups
+    return groups(APP, RUN)
+
+
+def checkpoint_one(path, output):
     if not path.exists():
         return dict(saved=False, reason='queue_not_created')
     db = sqlite3.connect(path.as_uri()+'?mode=ro', uri=True)
@@ -99,9 +104,28 @@ def checkpoint():
     value = dict(schema=1, identity=meta['identity'], cursor=meta['cursor'], updated_at=int(time.time()),
                  pending_at_shutdown=pending, memory_pending_at_shutdown=memory_pending)
     # The subsequent probe runs as wxbridge, including after a root maintenance checkpoint.
-    atomic_json(PERSIST/'cursor.json', value,
-                owner=owner() if getattr(os, 'geteuid', lambda: None)() == 0 else None)
+    account = owner() if getattr(os, 'geteuid', lambda: None)() == 0 else None
+    if output.parent != PERSIST:
+        for directory in (output.parent.parent, output.parent):
+            if directory.is_symlink():
+                raise ValueError('checkpoint_directory_symlink')
+            directory.mkdir(exist_ok=True, mode=0o700)
+            if account:
+                os.chown(directory, account.pw_uid, account.pw_gid)
+    atomic_json(output, value, owner=account)
     return dict(saved=True, cursor=value['cursor'], pending=pending, memory_pending=memory_pending)
+
+
+def checkpoint():
+    groups = configured_groups()
+    results = {}
+    for identifier, cfg, reuse in groups:
+        output = PERSIST/'cursor.json' if reuse else PERSIST/'instances'/identifier/'cursor.json'
+        result = checkpoint_one(Path(cfg['queue']['file']), output)
+        if identifier is None:
+            return result
+        results[identifier] = result
+    return dict(saved=all(r['saved'] for r in results.values()), instances=results)
 
 
 def restored_state(checkpoint_value, identity, maximum):
@@ -123,11 +147,20 @@ def probe(keys=None, *, verify=False):
         cfg['keys_file'] = str(keys)
     with open(os.devnull, 'w') as sink, contextlib.redirect_stdout(sink):
         store = WeChatStore(cfg['db_dir'], cfg['keys_file'], cfg['decrypted_dir'])
-        chat, title = store.resolve_chat(cfg['target']['chat'])
-        identity = dict(account=store.self_wxid, chat=chat)
-        if not identity['account'] or not chat.endswith('@chatroom'):
-            raise ValueError('wechat_account_not_ready')
-        maximum = store.last_local_id(chat)
+        groups = ([(e['id'], e['config'], e['reuse_legacy_state']) for e in cfg['instances'] if e['enabled']]
+                  if cfg.get('instances') else [(None, cfg, True)])
+        states = []
+        for identifier, active_cfg, reuse in groups:
+            chat, title = store.resolve_chat(active_cfg['target']['chat'])
+            identity = dict(account=store.self_wxid, chat=chat)
+            if not identity['account'] or not chat.endswith('@chatroom'):
+                raise ValueError('wechat_account_not_ready')
+            if identifier is not None and chat != active_cfg['target']['chat']:
+                raise ValueError('instance_chat_identity_mismatch')
+            if identifier is not None and reuse and store.resolve_chat(cfg['target']['chat'])[0] != chat:
+                raise ValueError('legacy_state_chat_mismatch')
+            maximum = store.last_local_id(chat)
+            states.append((identifier, active_cfg, reuse, identity, maximum))
         if cfg['ui']['backend']=='native_service':
             from wxbridge.native.sender import readiness
             readiness(cfg)
@@ -137,20 +170,29 @@ def probe(keys=None, *, verify=False):
             ui = A11y(cfg['ui'])
             if ui.chat_is_selected(title) is not True and ui.find_chat_item(title) is None:
                 raise ValueError('wechat_login_or_target_chat_not_visible')
-    cursor_file = PERSIST/'cursor.json'
-    if cursor_file.exists():
-        state = restored_state(json.loads(cursor_file.read_text()), identity, maximum)
-        if not verify and not (RUN/'queue.sqlite3').exists():
-            atomic_json(Path(cfg['state_file']), state)
-    if (RUN/'queue.sqlite3').exists():
-        db = sqlite3.connect((RUN/'queue.sqlite3').as_uri()+'?mode=ro', uri=True)
-        try:
-            row = db.execute("SELECT value FROM meta WHERE key='identity'").fetchone()
-            if row and json.loads(row[0]) != identity:
-                raise ValueError('existing_queue_identity_mismatch')
-        finally:
-            db.close()
-    return dict(ready=True, checkpoint_restored=cursor_file.exists(), latest_local_id=maximum)
+    results = {}
+    for identifier, active_cfg, reuse, identity, maximum in states:
+        cursor_file = PERSIST/'cursor.json' if reuse else PERSIST/'instances'/identifier/'cursor.json'
+        queue_file = Path(active_cfg['queue']['file'])
+        if cursor_file.exists():
+            state = restored_state(json.loads(cursor_file.read_text()), identity, maximum)
+            if not verify and not queue_file.exists():
+                from wechat_linux.runtime.memoryfs import require_memory_directory
+                require_memory_directory(str(Path(active_cfg['state_file']).parent))
+                atomic_json(Path(active_cfg['state_file']), state)
+        if queue_file.exists():
+            db = sqlite3.connect(queue_file.as_uri()+'?mode=ro', uri=True)
+            try:
+                row = db.execute("SELECT value FROM meta WHERE key='identity'").fetchone()
+                if row and json.loads(row[0]) != identity:
+                    raise ValueError('existing_queue_identity_mismatch')
+            finally:
+                db.close()
+        result = dict(ready=True, checkpoint_restored=cursor_file.exists(), latest_local_id=maximum)
+        if identifier is None:
+            return result
+        results[identifier] = result
+    return dict(ready=True, instances=results)
 
 
 def as_user(args):

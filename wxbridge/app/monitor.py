@@ -123,7 +123,7 @@ def read_services():
         return {}, 'unavailable'
 
 
-def safe_events(path):
+def safe_events(path, *, instance=None):
     """只投影已知事件和字段；未知日志、正文、凭据和终端控制字符不透传。"""
     try:
         lines = read_bytes(path, 65536, tail=True).decode('utf-8', errors='replace').splitlines()
@@ -139,11 +139,13 @@ def safe_events(path):
         if not match:
             continue
         stamp, level, message = match.groups()
+        if instance is not None and not re.search(r'\binstance='+re.escape(instance)+r'(?:\s|$)', message):
+            continue
         name = next((name for name in EVENTS if message == name or message.startswith(name+' ')
                      or message.startswith(name+'，')), None)
         if name is None:
             continue
-        fields = re.findall(r'\b(task|version|chunks|images|questions|references|part|local_id|revision|attempt|messages|kind|mode|reason|category|error|retryable)=([A-Za-z0-9_.:-]+)', message)
+        fields = re.findall(r'\b(instance|task|version|chunks|images|questions|references|part|local_id|revision|attempt|messages|kind|mode|reason|category|error|retryable)=([A-Za-z0-9_.:-]+)', message)
         parts = [f'{key}={code(value)}' for key, value in fields]
         if 'metadata=' in message:
             try:
@@ -170,7 +172,10 @@ class StatusReader:
         tick = time.monotonic()
         if force or tick-self.last_details >= 5:
             self.services, self.service_error = read_services()
-            self.events, self.log_error = safe_events(self.cfg['log_file'])
+            if self.cfg.get('_instance_id'):
+                self.events, self.log_error = safe_events(self.cfg['log_file'], instance=self.cfg['_instance_id'])
+            else:
+                self.events, self.log_error = safe_events(self.cfg['log_file'])
             self.last_details = tick
         return dict(live=live, boot=boot, file_error=failure, services=self.services,
                     service_error=self.service_error, events=self.events, log_error=self.log_error,

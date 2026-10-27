@@ -39,3 +39,7 @@ Linux 运行依赖为系统库 libde265、libswscale、libavutil（当前 Debian
 离线检查：`python3 scripts/test-offline.py`。显式 API 检查：`python3 scripts/diagnostics/verify-vision-api.py --synthetic-api`，用合成红/蓝色块核对当前模型能否观察图片，不读取微信、不发送群消息，但会产生少量 API 费用。其他辅助入口见 [脚本地图](../scripts/README.md)。
 
 当前模型 `deepseek-flash` 支持图片输入，仍走 `/chat/completions`。官方能力与格式依据：[DeepSeek 图像理解](https://api-docs.deepseek.com/zh-cn/guides/vision/)（2026-10-20 核对）。
+
+## 原生图片下载
+
+设置 `vision.download_backend="native"` 且 `download_enabled=true` 后，机器人在生成工作进程内调用 `NativeImageDownloader`，不操作图片窗口。须先显式部署图片 helper；见 [SDK 与停止策略](NATIVE_IMAGE_SDK.md)。主进程仍独占来源读库，下载请求意图先写入现有内存队列；重启/重试只查询旧请求或缓存。原生失败不自动改走桌面；仍有已验证缩略图时保留它并标注真实质量和下载错误，否则明确图片不可读。

@@ -2,6 +2,8 @@
 
 主进程统一读取微信数据库、刷新解密副本和提交队列事务。模型及发送工作进程只接收快照，不自行读库。队列、模型角色和发送状态分别管理，真实 @ 不依赖主动参与判断。
 
+多群模式由 `AccountRuntime` 拥有唯一 `WeChatStore`、账号级 API 额度和发送门闩；`Coordinator` 将消息按稳定群 ID 分给多个 `GroupSession`。每群独立配置、Journal、记忆、参与窗口和状态文件。`WeChatDeepSeekBot` 保留为 `GroupSession` 的兼容名；`instances=[]` 继续运行原单群入口。配置、恢复和运行命令见[多群实例](MULTI_GROUP.md)。
+
 `ui.backend=native_service` 时，全部文字任务由同一队列进入后台服务发送器：明确 chat_id → 私有 helper → 新文本源及批次任务 → 微信原有调度器。该工作进程不读取或操作桌面；主进程仍核对发出记录，未知提交不重试、不回退桌面。登录与客户端运行继续使用现有显示环境。分析过程见[两轮微信分析总结](NATIVE_ANALYSIS.md)，调用和配置见[后台发送](NATIVE_API.md)。
 
 ```mermaid

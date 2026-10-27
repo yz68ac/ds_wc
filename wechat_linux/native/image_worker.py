@@ -97,7 +97,7 @@ def run(config, value, stop, find_client):
     options = config['image_download']
     contract.validate(value, config['allowed_chat_ids'], options['expected_account'])
     # Shared across helper instances for this Linux UID; never unlink a live lock.
-    fd = os.open('/run/wechat-linux-image-'+str(config['uid'])+'.lock',
+    fd = os.open('/run/wechat-linux-images/'+str(config['uid'])+'.lock',
                  os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     try:
         info = os.fstat(fd)

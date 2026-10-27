@@ -51,12 +51,18 @@ def setup_logging(cfg, verbose=True):
         pass
 
 
-class WeChatDeepSeekBot:
-    def __init__(self, cfg, echo=False):
+class GroupSession:
+    def __init__(self, cfg, echo=False, *, store=None, account=None, instance_id=None, start_gateway=True):
+        from wxbridge.instances import INSTANCE_ID
+        if instance_id is not None and (not isinstance(instance_id, str) or not INSTANCE_ID.fullmatch(instance_id)):
+            raise ValueError('invalid_instance_id')
         from wechat_linux.native.protocol import settings as native_settings
         native_options = native_settings(cfg)
         self.cfg, self.echo = cfg, echo
-        self.store = WeChatStore(cfg["db_dir"], cfg["keys_file"], cfg["decrypted_dir"])
+        self.account, self.instance_id = account, instance_id
+        from wxbridge.app.logging_context import InstanceLog
+        self.log = InstanceLog(log, dict(instance=instance_id)) if instance_id else log
+        self.store = store if store is not None else WeChatStore(cfg["db_dir"], cfg["keys_file"], cfg["decrypted_dir"])
         self.chat_id, self.chat_title = self.store.resolve_chat(cfg["target"]["chat"])
         if not self.chat_id.endswith("@chatroom") or not self.store.self_wxid:
             raise StoreError("必须确认当前微信账号及目标普通群聊")
@@ -73,8 +79,15 @@ class WeChatDeepSeekBot:
             baseline = self.store.last_local_id(self.chat_id)
         self.journal = Journal(cfg["queue"]["file"],
                                {"account": self.store.self_wxid, "chat": self.chat_id}, int(baseline))
+        if instance_id is not None:
+            saved = self.journal.get('instance_id')
+            if saved is not None and saved != instance_id:
+                self.journal.close()
+                raise ValueError('queue_instance_identity_mismatch')
+            with self.journal.db:
+                self.journal.set('instance_id', instance_id)
         self.journal.recover(time.time())
-        self.delivery = DeliveryController(cfg, self.journal, self.store, self.chat_id, self.chat_title)
+        self.delivery = DeliveryController(cfg, self.journal, self.store, self.chat_id, self.chat_title, logger=self.log)
         self.generators = {}
         self.ui_job = None
         self.memory, self.memory_job, self.memory_error = None, None, ""
@@ -97,7 +110,7 @@ class WeChatDeepSeekBot:
                     self.journal.set('passive_learning', state)
             except Exception as exc:
                 self.memory_error = type(exc).__name__
-                log.error("记忆初始化失败 category=%s", self.memory_error)
+                self.log.error("记忆初始化失败 category=%s", self.memory_error)
         self.started_at = time.time()
         self.job_factory = ProcessJob
         self.status_path = Path(cfg["state_file"]).parent / "live-status.json"
@@ -107,7 +120,7 @@ class WeChatDeepSeekBot:
         self.status_signature, self.status_written_at = None, 0
         self.next_poll_at = 0
         self.native_api = None
-        if native_options['enabled'] and not cfg['ui'].get('dry_run'):
+        if start_gateway and native_options['enabled'] and not cfg['ui'].get('dry_run'):
             from wechat_linux.transport.server import NativeServer
             from wxbridge.app.native_gateway import BotNativeService
             self.native_api = NativeServer(native_options, BotNativeService(self, native_options))
@@ -175,7 +188,7 @@ class WeChatDeepSeekBot:
                                          if self.proactive else None, limits=self.cfg['queue'])
             for event in events:
                 if event["real_mention"] or event["text_has_at"] or event["kind"] == "pat":
-                    log.info("接收判定 metadata=%s", json.dumps(event, ensure_ascii=False))
+                    self.log.info("接收判定 metadata=%s", json.dumps(event, ensure_ascii=False))
             if len(rows) < 100:
                 return
             if self.journal.get('backpressure'):
@@ -194,16 +207,23 @@ class WeChatDeepSeekBot:
         return True
 
     def _refresh_before_send(self):
+        if self.account is not None:
+            self.account.refresh_before_send()
+            return
         self._poll_messages(force=True)
         if self.proactive:
             self.proactive.priority(time.time())
 
     def _generation_step(self):
+        self._poll_generation_results()
+        self._start_generations()
+
+    def _poll_generation_results(self):
         for task_id, (version, job) in list(self.generators.items()):
             if self.journal.task(task_id)["version"] != version:
                 job.close()
                 del self.generators[task_id]
-                log.info("废弃生成 task=%s version=%s", task_id, version)
+                self.log.info("废弃生成 task=%s version=%s", task_id, version)
                 continue
             result = job.poll()
             if result is None:
@@ -215,7 +235,7 @@ class WeChatDeepSeekBot:
                     phrases = settings.get("feedback_phrases") or ["我上网搜搜，核实一下。"]
                     notice = format_reply(phrases[(task_id-1) % len(phrases)], self.cfg)
                     if self.journal.request_notice(task_id, version, notice):
-                        log.info("搜索提示待发送 task=%s version=%s", task_id, version)
+                        self.log.info("搜索提示待发送 task=%s version=%s", task_id, version)
                 continue
             job.close()
             del self.generators[task_id]
@@ -225,8 +245,14 @@ class WeChatDeepSeekBot:
             if error:
                 self._generation_failed(task_id, version, result)
             elif self.journal.generated(task_id, version, chunks, vision=result.get("vision"), search=result.get("search")):
-                log.info("生成结束 task=%s version=%s chunks=%s images=%s error=%s", task_id, version,
+                self.log.info("生成结束 task=%s version=%s chunks=%s images=%s error=%s", task_id, version,
                          len(chunks), (result.get("vision") or {}).get("images", 0), error or "none")
+    def model_slot(self, kind):
+        account = getattr(self, 'account', None)
+        return account is None or account.can_start(self, kind)
+
+    def _start_generations(self, *, max_new=None):
+        started = 0
         for task in sorted(self.journal.tasks(), key=lambda t: (t["deadline"], t["id"])):
             head = self.journal.head()
             if head and head.get('blocked_reason'):
@@ -238,6 +264,8 @@ class WeChatDeepSeekBot:
                 break
             if task["generation"] != "pending" or time.time() < task.get('generation_retry_at', 0):
                 continue
+            if (max_new is not None and started >= max_new) or not self.model_slot('generate'):
+                break
             if task.get('generation_attempts', 0) > self.cfg['queue']['generation_retries']:
                 self._generation_failed(task['id'], task['version'], dict(error='WorkerExited', retryable=False))
                 continue
@@ -264,7 +292,7 @@ class WeChatDeepSeekBot:
                                       relationship_for=trigger['sender'])
                     except Exception as exc:
                         self.memory_error = type(exc).__name__
-                        log.warning("跳过记忆背景 category=%s", self.memory_error)
+                        self.log.warning("跳过记忆背景 category=%s", self.memory_error)
                 prompt = build_prompt(self.cfg, context, trigger, self.chat_title, task["triggers"],
                                       memory=memory, account=self.store.self_wxid)
                 echo = "[echo] " + "\n".join(m["text"] for m in task["triggers"]) if self.echo else None
@@ -286,6 +314,9 @@ class WeChatDeepSeekBot:
                 if images:
                     if self.cfg['vision'].get('download_enabled', False):
                         timeout += self.cfg['vision'].get('download_timeout_seconds', 20)
+                        if self.cfg['vision'].get('download_backend', 'desktop') == 'native':
+                            task = self.journal.reserve_native_images(task_id, version,
+                                images[:self.cfg['vision']['max_images']])
                     payload += (dict(context=context, triggers=task["triggers"], chat_title=self.chat_title, images=images,
                                      memory=memory, account=self.store.self_wxid),)
                 job = self.job_factory("generate", payload, timeout=timeout)
@@ -295,11 +326,13 @@ class WeChatDeepSeekBot:
                                                chars=len((memory or {}).get("text", "")))
                     self.journal.put(task)
                 self.generators[task_id] = (version, job)
-                log.info("开始生成 task=%s version=%s questions=%s references=%s", task_id, version,
+                started += 1
+                self.log.info("开始生成 task=%s version=%s questions=%s references=%s", task_id, version,
                          len(task["triggers"]), sum(isinstance(m.get("reference"), dict) for m in task["triggers"]))
             except Exception as exc:
                 self._generation_failed(task_id, version, dict(error=type(exc).__name__))
-                log.error("生成未启动 task=%s category=%s", task_id, type(exc).__name__)
+                self.log.error("生成未启动 task=%s category=%s", task_id, type(exc).__name__)
+        return started
 
     def _generation_failed(self, task_id, version, result):
         failure = GenerationFailure.from_result(result)
@@ -308,7 +341,7 @@ class WeChatDeepSeekBot:
             retryable=failure.retryable, retries=settings['generation_retries'],
             delay=settings['generation_retry_delay_seconds'],
             fallback=format_reply('刚才没接上，等会儿再问我一下。', self.cfg))
-        log.warning('生成失败 task=%s version=%s category=%s retryable=%s',
+        self.log.warning('生成失败 task=%s version=%s category=%s retryable=%s',
                     task_id, version, failure.code, failure.retryable)
 
     @property
@@ -326,8 +359,16 @@ class WeChatDeepSeekBot:
         self.delivery.confirm(memory=self.memory is not None)
 
     def _send_step(self):
-        self.delivery.send(self.job_factory, self.proactive.validate if self.proactive else None,
+        account = getattr(self, 'account', None)
+        if account is not None and not account.can_send(self):
+            return
+        self.delivery.send(self.job_factory, self._validate_delivery,
                            refresh=self._refresh_before_send)
+
+    def _validate_delivery(self, task, now):
+        if self.account is not None and not self.account.can_send(self):
+            return False
+        return self.proactive.validate(task, now) if self.proactive else True
 
     def _pause_memory(self):
         if self.memory_job:
@@ -361,7 +402,7 @@ class WeChatDeepSeekBot:
                     with self.journal.db:
                         self.journal.set('memory_recovery', dict(task_id=record['id'], section='expression_learning',
                             reason=record['recovery_reason'], stage='completed'))
-                log.info("记忆更新 task=%s revision=%s", record["id"], self.memory.data["revision"])
+                self.log.info("记忆更新 task=%s revision=%s", record["id"], self.memory.data["revision"])
             enqueue_if_active(self, now)
             jobs = self.journal.memory_jobs()
             if now-self.memory_pruned_at >= 60:
@@ -388,6 +429,8 @@ class WeChatDeepSeekBot:
             if now < record["retry_at"] or now-self.journal.get("memory_last_update", 0) < self.cfg["memory"]["min_interval_seconds"]:
                 return
             if any(t["generation"] == "pending" for t in self.journal.tasks()):
+                return
+            if not self.model_slot('memory'):
                 return
             pointers = record["triggers"]
             start, end = record.get('window') or context_bounds(self.cfg, pointers[-1])
@@ -464,7 +507,7 @@ class WeChatDeepSeekBot:
                         record.update(state='quarantined', quarantined_at=now)
                     self.journal.put_memory(record)
                 self.journal.set("memory_error", code)
-            log.warning("记忆延后 category=%s", code)
+            self.log.warning("记忆延后 category=%s", code)
 
     def tick(self):
         self._poll_messages()
@@ -485,6 +528,9 @@ class WeChatDeepSeekBot:
             self._send_step()
         with self.metrics.measure('memory'):
             self._memory_step()
+        self.maintain()
+
+    def maintain(self):
         if time.time()-self.maintenance_at >= 60:
             protected = [*self.generators, *([self.ui_job[0]] if self.ui_job else [])]
             self.journal.prune_completed(self.cfg['queue']['completed_retention'], protected)
@@ -521,6 +567,8 @@ class WeChatDeepSeekBot:
                                 error=self.memory_error, **(self.memory.status(time.time()) if self.memory else {}))
         status['reply_style'] = {key:self.cfg.get('reply_style', {}).get(key, default)
             for key, default in (('wechat_emoticons_enabled', False), ('omit_trailing_period', True))}
+        if self.instance_id is not None:
+            status['instance_id'] = self.instance_id
         if stopped:
             status["phase"] = "stopped"
         signature = json.dumps({k: v for k, v in status.items() if k not in ('updated_at', 'metrics')}, sort_keys=True)
@@ -559,4 +607,8 @@ class WeChatDeepSeekBot:
                 # 队列、工作进程与发送确认每秒调度；消息查询另由 next_poll_at 限流。
                 time.sleep(min(float(self.cfg.get("poll_interval_seconds", 2)), 1.0))
         except KeyboardInterrupt:
-            log.info("停止监听，未完成任务保留在内存队列")
+            self.log.info("停止监听，未完成任务保留在内存队列")
+
+
+# Existing callers and offline fixtures keep their import and constructor contract.
+WeChatDeepSeekBot = GroupSession

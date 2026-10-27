@@ -32,7 +32,8 @@ class CitationOutputTests(unittest.TestCase):
 
     def test_requested_links_are_not_truncated_or_removed_as_citations(self):
         for text in (URL,'官网地址:'+URL,'下载地址:('+URL+')','看这个:[资料]('+URL+')',
-                     '官网地址:https://example.com/download\n后面还有安装条件','array[0][1]'):
+                     '官网地址:https://example.com/download\n后面还有安装条件','array[0][1]',
+                     '不同网址('+URL+'(extra))'):
             with self.subTest(text=text):self.assertEqual(without_citations(text,SOURCES),text)
 
     def test_code_and_verbatim_quotes_keep_the_original_source_text(self):
@@ -73,3 +74,54 @@ class CitationOutputTests(unittest.TestCase):
                 dict(type='url_citation',url=URL,start_index=3,end_index=3+len(link))])])])
         result=get_adapter('openai_responses').decode(data)
         self.assertEqual(without_citations(result.message['content'],SOURCES,result.search['citations']),'第一段事实\n第二段')
+
+    def test_nested_and_spaced_annotation_shells_do_not_leave_empty_parentheses(self):
+        link = '[来源]('+URL+')'
+        for left, right in (('(', ')'), ('（', '）'), ('(（(', ')）)')):
+            for padding in ('', ' ', '\t'):
+                text = '结论'+left+padding+link+padding+right
+                start = text.index(link)
+                annotation = dict(url=URL, start_index=start, end_index=start+len(link))
+                with self.subTest(left=left, padding=padding):
+                    self.assertEqual(without_citations(text, SOURCES, [annotation]), '结论')
+
+    def test_unannotated_nested_references_and_multiple_sources_drop_only_their_shells(self):
+        other = 'https://other.example/news'
+        a, b = '[来源]('+URL+')', '[source]('+other+')'
+        for suffix in ('(('+a+'))', '（('+a+')）', '( ( '+a+' ; '+b+' ) )',
+                       '(('+URL+'))', '((\ue200cite\ue202turn0search0\ue201))'):
+            with self.subTest(suffix=suffix):
+                self.assertEqual(without_citations('结论'+suffix, SOURCES+[dict(url=other)]), '结论')
+
+    def test_original_empty_calls_and_parentheses_survive_near_removed_sources(self):
+        link = '[来源]('+URL+')'
+        for original in ('f()', '原文()', '原文（ ）', 'array[0]()', '下载:'+URL,
+                         '`f()`', '原话“保留()”', '```python\nf()\n```'):
+            with self.subTest(original=original):
+                self.assertEqual(without_citations(original+'(('+link+'))', SOURCES), original)
+
+    def test_meaningful_parentheticals_are_retained_after_citation_removal(self):
+        link = '[来源]('+URL+')'
+        self.assertEqual(without_citations('结论(仅适用于测试; '+link+')', SOURCES), '结论(仅适用于测试; )')
+        text = '结论(('+link+'))\n\n后面的事实(保留条件)'
+        self.assertEqual(without_citations(text, SOURCES), '结论\n\n后面的事实(保留条件)')
+
+    def test_verbatim_citation_examples_remain_exact(self):
+        link = '[来源]('+URL+')'
+        for text in ('`(('+link+'))`', '原话“(('+link+'))”', '```text\n(('+link+'))\n```'):
+            with self.subTest(text=text):
+                self.assertEqual(without_citations(text, SOURCES), text)
+
+    def test_deep_nesting_and_marker_collision_preserve_original_data(self):
+        link = '[来源]('+URL+')'
+        self.assertEqual(without_citations('结论'+'('*1000+link+')'*1000, SOURCES), '结论')
+        original = '\x00CITATION_REMOVED\x00'
+        self.assertEqual(without_citations(original+'(('+link+'))', SOURCES), original)
+
+    def test_common_output_formatter_does_not_reintroduce_the_shell(self):
+        from wxbridge.ai.output import format_reply
+        link = '[来源]('+URL+')'
+        text = '合成回答(('+link+'))'
+        start = text.index(link)
+        annotation = dict(url=URL, start_index=start, end_index=start+len(link))
+        self.assertEqual(format_reply(without_citations(text, SOURCES, [annotation])), '合成回答')

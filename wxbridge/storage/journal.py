@@ -6,6 +6,7 @@ import hashlib
 import os
 from pathlib import Path
 import sqlite3
+import uuid
 from typing import Any, Callable
 
 from wechat_linux.runtime.memoryfs import require_memory_directory
@@ -120,6 +121,32 @@ class Journal:
         if task.get('external_request_id') and task['phase'] == 'done':
             self.db.execute('UPDATE native_requests SET result=? WHERE request_id=? AND task_id=?',
                 (json.dumps(task_status(task)), task['external_request_id'], task['id']))
+
+    def reserve_native_images(self, task_id, version, images):
+        """Commit download intent BEFORE spawning a disposable generation worker.
+
+        A restarted worker can query its old request or inspect cache, never infer
+        a missing helper history means a previous download did not happen.
+        Only source digests and random request IDs are added to the journal.
+        """
+        with self.db:
+            task = self.task(task_id)
+            if not task or task['version'] != version or task['phase'] == 'done':
+                raise ValueError('native_image_task_changed')
+            intents = task.setdefault('native_image_intents', {})
+            for binding in images:
+                proof = binding.get('download') or {}
+                if binding.get('error') or proof.get('verified') is not True:
+                    continue
+                source = [binding.get('account'), *[proof.get(k) for k in
+                          ('chat_id', 'server_id', 'sender', 'image_md5')]]
+                digest = hashlib.sha256(json.dumps(source, ensure_ascii=True).encode()).hexdigest()
+                resume = digest in intents
+                if not resume:
+                    intents[digest] = 'bot-image:'+uuid.uuid4().hex
+                binding['native_request'] = dict(request_id=intents[digest], resume_only=resume)
+            self.put(task)
+        return task
 
     @staticmethod
     def _external_hash(value):
@@ -482,7 +509,7 @@ class Journal:
                                 intent_kind=(t.get("intent") or {}).get("kind", "reply") if t.get("intent") else None) for t in tasks])
 
 
-def read_status(path: str) -> dict:
+def open_readonly(path: str) -> Journal:
     path = checked_path(path, existing=True)
     db = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)
     db.execute("PRAGMA query_only=ON")
@@ -491,6 +518,15 @@ def read_status(path: str) -> dict:
     journal.db = db
     try:
         journal.legacy_readonly = 'phase' not in {r[1] for r in db.execute('PRAGMA table_xinfo(tasks)')}
+    except BaseException:
+        db.close()
+        raise
+    return journal
+
+
+def read_status(path: str) -> dict:
+    journal = open_readonly(path)
+    try:
         return journal.status()
     finally:
-        db.close()
+        journal.close()

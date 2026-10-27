@@ -14,6 +14,15 @@ spec.loader.exec_module(boot)
 
 
 class BootRecoveryTests(unittest.TestCase):
+    def setUp(self):
+        parent = Path(__file__).resolve().parents[1]/'.test-tmp'
+        parent.mkdir(exist_ok=True)
+        temporary = tempfile.TemporaryDirectory(dir=parent)
+        self.addCleanup(temporary.cleanup)
+        application = patch.object(boot, 'APP', Path(temporary.name))
+        application.start()
+        self.addCleanup(application.stop)
+
     def test_restore_only_known_account_group_and_nonfuture_cursor(self):
         identity = dict(account='synthetic_bot',chat='synthetic@chatroom')
         value = dict(schema=1,identity=identity,cursor=7)

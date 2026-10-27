@@ -6,12 +6,51 @@ LITERAL = re.compile(r"""```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`|"(?:\\.|[^"\\\n
 LINK = re.compile(r'\[([^\]\n]*)\]\((<?(?:[^\s()]|\([^\n()]*\))+>?)(?:\s+"[^"\n]*")?\)')
 
 
+def _clear_removed_wrappers(value, removed):
+    """Drop empty shells proven to contain removed citations, including nesting.
+
+    Original empty parentheses are significant. Track spans instead of repeatedly
+    rewriting nested strings, so deep nesting cannot cause quadratic rescans.
+    """
+    stack, spans, index = [], [], 0
+    while index < len(value):
+        if value.startswith(removed, index):
+            if stack:
+                stack[-1]['removed'] = True
+            index += len(removed)
+            continue
+        char = value[index]
+        if char in '(（':
+            stack.append(dict(start=index, opening=char, removed=False, significant=False))
+        elif stack and (stack[-1]['opening'], char) in (('(', ')'), ('（', '）')):
+            frame = stack.pop()
+            empty = frame['removed'] and not frame['significant']
+            if empty:
+                spans.append((frame['start'], index+1))
+            if stack:
+                stack[-1]['removed'] |= empty
+                stack[-1]['significant'] |= not empty
+        elif stack and not (char.isspace() or char in ',:;，；、.'):
+            stack[-1]['significant'] = True
+        index += 1
+    parts, cursor = [], 0
+    for start, end in sorted(spans):
+        if start >= cursor:
+            parts.append(value[cursor:start])
+            cursor = end
+    parts.append(value[cursor:])
+    return ''.join(parts).replace(removed, '')
+
+
 def without_citations(text, sources, annotations=()):
     urls = {r['url'] for r in list(sources)[:128] if isinstance(r, dict) and isinstance(r.get('url'), str)}
     if not urls:
         return text
+    removed = '\x00CITATION_REMOVED\x00'
+    while removed in text:
+        removed += '\x00'
     def drop_links(value, selected):
-        return LINK.sub(lambda m: '' if m[2].strip('<>') in selected else m[0], value)
+        return LINK.sub(lambda m: removed if m[2].strip('<>') in selected else m[0], value)
     protected = [(m.start(), m.end()) for m in LITERAL.finditer(text)]
     edits = []
     for row in list(annotations)[:128]:
@@ -25,12 +64,9 @@ def without_citations(text, sources, annotations=()):
         fragment = text[start:end]
         replacement = drop_links(fragment, {row['url']})
         if re.fullmatch(r'\s*(?:\[\d+(?:[, -]\d+)*\]|\ue200cite\ue202[^\ue201]*\ue201)\s*', fragment):
-            replacement = ''
+            replacement = removed
         if replacement == fragment:
             continue  # A citation over a factual sentence never means deleting that sentence.
-        if not replacement.strip() and start and end < len(text) and (text[start-1], text[end]) in (('(', ')'), ('（', '）')):
-            start -= 1
-            end += 1
         edits.append((start, end, replacement))
     boundary = len(text)
     for start, end, replacement in sorted(edits, reverse=True):
@@ -45,6 +81,7 @@ def without_citations(text, sources, annotations=()):
                 continue
             if reference_block and 'http' in line.lower():
                 header = ''
+                lines.append(removed)
                 continue
             if reference_block:
                 if header:
@@ -54,19 +91,19 @@ def without_citations(text, sources, annotations=()):
         if header:
             lines.append(header)
         value = ''.join(lines)
-        value = re.sub(r'(?im)^[ \t]*(?:[-*]\s*)?(?:参考(?:资料|来源|链接)?|来源|sources?|references?)\s*[:：][^\n]*https?://[^\n]*', '', value)
+        value = re.sub(r'(?im)^[ \t]*(?:[-*]\s*)?(?:参考(?:资料|来源|链接)?|来源|sources?|references?)\s*[:：][^\n]*https?://[^\n]*', lambda m: removed, value)
         def group(match):
             prefix = value[max(0, match.start()-16):match.start()]
             if re.search(r'(?:官网|下载(?:地址|链接)?|地址|链接|url|link)\s*[:：]?\s*$', prefix, re.I):
                 return match[0]
             content = drop_links(match[1], urls)
             for url in sorted(urls, key=len, reverse=True):
-                content = re.sub(re.escape(url)+r'(?=$|[\s,;，；、])', '', content)
+                content = re.sub(re.escape(url)+r'(?=$|[\s,;，；、]|[)）]+(?=$|[\s,;，；、]))', lambda m: removed, content)
             if content == match[1]:
                 return match[0]
-            residue = re.sub(r'(?i)sources?|references?|来源|参考(?:资料|链接)?', '', content)
+            residue = re.sub(r'(?i)sources?|references?|来源|参考(?:资料|链接)?', '', content.replace(removed, ''))
             if re.fullmatch(r'[\s,:;，；、.]*', residue):
-                return ''
+                return removed
             return match[0][0]+content+match[0][-1]
         value = re.sub(r'(?<!\])[（(]((?:[^()（）\n]|\([^()\n]*\))*)[)）]', group, value)
         def source_link(match):
@@ -75,10 +112,10 @@ def without_citations(text, sources, annotations=()):
                 return match[0]
             host = urlsplit(url).hostname or ''
             is_reference = re.fullmatch(r'(?:来源|参考(?:资料|链接)?|sources?|references?)(?:\s*\d+)?|\d+', label, re.I)
-            return '' if is_reference or label.lower() == host.lower() else match[0]
+            return removed if is_reference or label.lower() == host.lower() else match[0]
         value = LINK.sub(source_link, value)
-        value = re.sub(r'\ue200cite\ue202[^\ue201]*\ue201', '', value)
-        return value
+        value = re.sub(r'\ue200cite\ue202[^\ue201]*\ue201', lambda m: removed, value)
+        return _clear_removed_wrappers(value, removed)
     parts, cursor = [], 0
     for match in LITERAL.finditer(text):
         parts.extend((prose(text[cursor:match.start()]), match[0]))

@@ -16,6 +16,7 @@ from wxbridge.wechat.store import discover_db_dir
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="wxbridge", description="Linux 微信 + DeepSeek 群聊桥接")
     parser.add_argument("--config", default="config.json", help="配置文件路径")
+    parser.add_argument('--instance', help='选择群实例ID，用于 status/queue-status/memory/check')
     parser.add_argument("--version", action="version", version=__version__)
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("env", help="检查环境和依赖，不调用模型或发消息")
@@ -57,17 +58,37 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         cfg = load_config(args.config)
+        if args.instance:
+            if args.command not in ('status', 'queue-status', 'memory', 'check'):
+                raise ValueError('--instance 仅用于只读状态、检查和记忆维护；run 统一启动所有实例')
+            from wxbridge.instances import select_instance
+            cfg = select_instance(cfg, args.instance)
+        elif cfg.get('instances') and args.command in ('memory', 'check'):
+            raise ValueError('多群模式下此命令须指定 --instance')
         if args.command == 'native-api':
             from wxbridge.native.command import command
             return command(cfg,args)
         if args.command == 'status':
             if not 0.5 <= args.interval <= 30:
                 raise ValueError('status --interval 必须在0.5–30秒之间')
+            if cfg.get('instances'):
+                from wxbridge.app.coordinator import read_account_status
+                print(json.dumps(read_account_status(cfg), ensure_ascii=False, indent=2))
+                return 0
             from wxbridge.app.terminal import run_status
             return run_status(cfg, once=args.once, interval=args.interval)
         if args.command == "memory":
             return memory_command(cfg, args)
         if args.command == "queue-status":
+            if cfg.get('instances'):
+                from wxbridge.instances import enabled_instances
+                result = {}
+                for identifier, active in enabled_instances(cfg):
+                    from pathlib import Path
+                    path = active['queue']['file']
+                    result[identifier] = read_status(path) if Path(path).exists() else {'phase': 'not_started'}
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+                return 0
             print(json.dumps(read_status(cfg["queue"]["file"]), ensure_ascii=False, indent=2))
             return 0
         if args.command == "env":
@@ -115,9 +136,13 @@ def memory_command(cfg, args):
         path = checked_path(cfg["queue"]["file"], existing=True)
         db = sqlite3.connect(path.as_uri()+"?mode=ro", uri=True)
         try:
-            meta = {k: json.loads(v) for k, v in db.execute("SELECT key,value FROM meta WHERE key IN ('identity','cursor')")}
+            meta = {k: json.loads(v) for k, v in db.execute("SELECT key,value FROM meta WHERE key IN ('identity','cursor','instance_id')")}
         finally:
             db.close()
+        identifier = cfg.get('_instance_id')
+        if identifier and (meta['identity'].get('chat') != cfg['target']['chat']
+                           or meta.get('instance_id', identifier) != identifier):
+            raise ValueError('memory_instance_identity_mismatch')
         store = MemoryStore(cfg["memory"]["directory"], meta["identity"], create=mutating)
         now = time.time()
         if args.action == "status":

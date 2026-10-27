@@ -16,9 +16,10 @@ log = logging.getLogger('wxbridge')
 
 
 class DeliveryController:
-    def __init__(self, cfg, journal, store, chat_id, chat_title):
+    def __init__(self, cfg, journal, store, chat_id, chat_title, *, logger=None):
         self.cfg, self.journal, self.store = cfg, journal, store
         self.chat_id, self.chat_title, self.job = chat_id, chat_title, None
+        self.log = logger if logger is not None else log
 
     def poll_result(self):
         if self.job is None:
@@ -37,7 +38,7 @@ class DeliveryController:
             if metadata.get('timings_ms'):
                 self.journal.set('last_native_timings', metadata['timings_ms'])
             self.journal.put(task)
-        log.info("发送操作 task=%s part=%s metadata=%s", task_id, part,
+        self.log.info("发送操作 task=%s part=%s metadata=%s", task_id, part,
                  json.dumps(metadata, ensure_ascii=False))
         if not task["intent"] or task["intent"]["part"] != part:
             return
@@ -57,7 +58,7 @@ class DeliveryController:
                 task.update(intent=None, blocked_reason="", retry_at=time.time()+delay,
                             pre_submit_attempts=attempts+1)
                 self.journal.put(task)
-            log.info("提交前失败，安全等待重试 task=%s part=%s attempt=%s", task_id, part, task["pre_submit_attempts"])
+            self.log.info("提交前失败，安全等待重试 task=%s part=%s attempt=%s", task_id, part, task["pre_submit_attempts"])
             return
         if not result['ok'] and definite and metadata.get('error', '').startswith('native_'):
             # A proven non-submission cannot acquire an outbound confirmation.
@@ -69,7 +70,7 @@ class DeliveryController:
                             delivery_error=failure['error'], completed_at=time.time())
                 self.journal.set('last_delivery_failure', failure)
                 self.journal.put(task)
-            log.warning('发送明确失败 task=%s part=%s error=%s', task_id, part, failure['error'])
+            self.log.warning('发送明确失败 task=%s part=%s error=%s', task_id, part, failure['error'])
             return
         with self.journal.db:
             task["intent"]["deadline"] = time.time() + float(self.cfg["ui"]["send_confirm_timeout_seconds"])
@@ -92,7 +93,7 @@ class DeliveryController:
         if ack is not None:
             self.journal.acknowledge(task['id'], ack, now, memory=memory,
                 on_confirm=partial(confirmation_updates, settings=self.cfg.get('proactive')))
-            log.info('发送确认 task=%s part=%s local_id=%s', task['id'], intent['part'], ack)
+            self.log.info('发送确认 task=%s part=%s local_id=%s', task['id'], intent['part'], ack)
             return
         if intent["deadline"] is not None and time.time() >= intent["deadline"]:
             with self.journal.db:
@@ -148,7 +149,7 @@ class DeliveryController:
                 else:
                     task.update(phase="done", triggers=[], chunks=[])
                 self.journal.put(task)
-            log.info("模拟完成 task=%s version=%s", task["id"], task["version"])
+            self.log.info("模拟完成 task=%s version=%s", task["id"], task["version"])
             return
         native = native_transport(self.cfg, external=bool(task.get('external_request_id')))
         if native and not notice and not task.get('external_request_id'):
@@ -177,7 +178,7 @@ class DeliveryController:
             else:
                 job = job_factory("send", (self.cfg, self.chat_title, self.journal.outgoing_text(current)), timeout=30)
             self.job = (task["id"], current["intent"]["part"], job)
-            log.info("发送意图 task=%s version=%s kind=%s part=%s baseline=%s", task["id"], task["version"],
+            self.log.info("发送意图 task=%s version=%s kind=%s part=%s baseline=%s", task["id"], task["version"],
                      current["intent"]["kind"], current["intent"]["part"], baseline)
         except Exception as exc:
             with self.journal.db:

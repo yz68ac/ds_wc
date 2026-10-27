@@ -17,7 +17,7 @@ MOODS = {'happy': '开心', 'amused': '被逗乐', 'shy': '有点害羞',
          'helpless': '有些无奈', 'upset': '有点不悦', 'neutral': '平静'}
 AFFINITY_PROFILES = (
     (10, '明显疏远', '平静简短、只答眼前内容、不主动延续',
-     '平静客气地答眼前必要内容，答完即止，不主动接梗、追问或关心。不用叹气、敷衍词、阴阳怪气或宣告没兴趣来表演疏远。'),
+     '平静简短地答眼前必要内容，可以自然表达自己的看法，答完即止，不主动接梗、追问或关心。不用叹气、敷衍词、阴阳怪气或宣告没兴趣来表演疏远。'),
     (20, '保持距离', '礼貌确认、少情绪投入、自然结束',
      '对方分享结果或说明处境时，可以给简短礼貌的确认；问事就答事，回应后自然结束。保留距离，不主动逗弄、关心或另开话题。'),
     (30, '有所保留', '愿意回应观点、表达克制、就事交流',
@@ -59,6 +59,7 @@ def with_reply_policy(system, relationship):
     _, name, _, detail = affinity_profile(relationship['affinity'])
     policy = ('只适用于当前回复对象；对话中你对别人的语气，不代表对这个人的语气。'
         '人格决定说话气质，本档决定亲疏与投入，落实为这一句选择回应事实、接住感受、调侃或关心。'
+        '保持当前人格的独立态度和自然语气；适合时可流露自信、嘴硬或俏皮，但不为展示人格硬加调侃，也不因关系分数改变事实。'
         '普通闲聊沿用短答要求，不靠加长或固定口头禅体现差别；相邻档自然过渡，不要求每句话都刻意表现档位。'
         f'\n当前档位：{name}。{detail}'
         '\n专业问题的事实、步骤和条件不随亲疏缩减；问排查方法就给可操作检查，不能只用一句提示或反问代替。不得答错、漏关键内容或静默丢任务。'
@@ -72,7 +73,7 @@ def with_reply_policy(system, relationship):
     mood = relationship.get('mood')
     if (isinstance(mood,dict) and type(mood.get('state')) is str and mood['state'] in MOODS and type(mood.get('intensity')) is int
             and mood['state'] != 'neutral' and 1 <= mood['intensity'] <= 2):
-        policy += f"\n近期情绪：{MOODS[mood['state']]}，只轻微影响眼前反应，不覆盖长期亲疏；随当前情境和澄清缓和，不机械延续到新话题。"
+        policy += f"\n近期情绪：{MOODS[mood['state']]}，可在相关情境中自然影响眼前反应，但不改变长期亲疏或事实判断；随当前情境和澄清缓和，不机械延续到新话题。"
     return system+REPLY_POLICY_START+policy+REPLY_POLICY_END
 
 

@@ -15,6 +15,10 @@
   "log_file": "/run/wxbridge-trial/bot.log",
   "wechat_process": "wechat",
   "source": "db",
+  "account": {
+    "send_interval_seconds": 1
+  },
+  "instances": [],
   "poll_interval_seconds": 2,
   "reply_to_backlog": false,
   "persona": null,
@@ -161,6 +165,7 @@
     "max_image_bytes": 8388608,
     "cache_wait_seconds": 3,
     "download_enabled": false,
+    "download_backend": "desktop",
     "download_timeout_seconds": 20
   },
   "memory": {

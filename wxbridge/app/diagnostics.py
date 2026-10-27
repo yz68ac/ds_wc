@@ -12,6 +12,16 @@ from wechat_linux.desktop.ui import A11y, Sender, UIError
 
 
 def check(cfg: dict, group: str = "") -> int:
+    from contextlib import ExitStack
+    from wechat_linux.runtime.locking import instance_lock
+    from wxbridge.instances import runtime_locks
+    with ExitStack() as stack:
+        for path in runtime_locks(cfg):
+            stack.enter_context(instance_lock(path))
+        return _check_locked(cfg, group)
+
+
+def _check_locked(cfg: dict, group: str = "") -> int:
     store = WeChatStore(cfg["db_dir"], cfg["keys_file"], cfg["decrypted_dir"])
     print(store.describe())
     chat_id, title = store.resolve_chat(group or cfg["target"]["chat"])

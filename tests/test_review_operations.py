@@ -26,6 +26,8 @@ class ReviewOperationTests(unittest.TestCase):
         store.last_local_id.return_value=10
         with tempfile.TemporaryDirectory(dir=Path(__file__).parent.parent/'.test-tmp') as folder:
             root=Path(folder)
+            cfg['queue']['file'] = str(root/'queue.sqlite3')
+            cfg['state_file'] = str(root/'state.json')
             with patch.object(recovery_tests.boot,'RUN',root),patch.object(recovery_tests.boot,'PERSIST',root/'saved'),\
                  patch('wxbridge.config.load_config',return_value=cfg),patch('wxbridge.wechat.store.WeChatStore',return_value=store),\
                  patch('wxbridge.wechat.ui.A11y') as gui,patch('wxbridge.native.sender.readiness',return_value={'ready':True}) as ready:

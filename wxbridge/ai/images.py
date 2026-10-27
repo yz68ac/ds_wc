@@ -5,6 +5,36 @@ from wechat_linux.media import images as _media
 from wechat_linux.media.images import (MediaError, V1, V2, HEX32, image_format, validate_image, decode_dat, key_candidates, read_local_image)
 
 
+def _native_image(binding, cfg, account, deadline):
+    from wechat_linux import NativeImageDownloader, ImageDownloadError
+    from wechat_linux.native.image_contract import ERRORS
+    source, intent = binding.get('download') or {}, binding.get('native_request') or {}
+    options = cfg.get('native_api') or {}
+    remaining = min(int(deadline-time.monotonic()), cfg['vision']['download_timeout_seconds'])
+    started = time.monotonic()
+    try:
+        if not intent.get('request_id') or not source.get('chat_id') or not account:
+            raise ImageDownloadError('native_image_source_unverified', requested=False)
+        if remaining < 5:
+            raise ImageDownloadError('native_image_timeout', requested=False)
+        allowed = [c for c in options.get('allowed_chat_ids', []) if c.endswith('@chatroom')]
+        downloader = NativeImageDownloader(options['helper_socket'], allowed, account)
+        image = downloader.download(binding, chat_id=source['chat_id'], request_id=intent['request_id'],
+            resume_only=intent.get('resume_only', True), timeout=remaining,
+            max_bytes=cfg['vision']['max_image_bytes'])
+        return image.data, image.info
+    except ImageDownloadError as exc:
+        # Never submit a new request, switch to desktop or mislabel a thumbnail
+        # as clear. A source-bound existing image remains useful to the model.
+        try:
+            data, info = _media.read_local_image(binding, cfg)
+        except MediaError:
+            raise exc
+        safe = exc.code if exc.code in ERRORS else 'native_image_failed'
+        return data, dict(info, download=dict(backend='native', outcome=safe, requested=exc.requested,
+                                             elapsed_ms=round((time.monotonic()-started)*1000)))
+
+
 def prepare_multimodal(cfg, base_prompt, generation):
     """工作进程内取图并重建提示词；只传明确引用图片，不含历史其他图片。"""
     import base64
@@ -28,17 +58,20 @@ def prepare_multimodal(cfg, base_prompt, generation):
                 raise MediaError(binding["error"])
             if image_count >= int(settings.get("max_images", 4)):
                 raise MediaError("image_count_limit")
-            while True:
-                try:
-                    data, info = _media.read_local_image(binding, cfg)
-                    break
-                except MediaError as exc:
-                    if str(exc) not in ("local_image_not_cached", "local_image_pending", "invalid_encrypted_image", "invalid_image") or time.monotonic() >= deadline:
-                        raise
-                    time.sleep(.2)
-            if settings.get('download_enabled', False) and info['quality'] in ('thumbnail', 'preview'):
-                from wechat_linux.desktop.image_download import improve_image
-                data, info = improve_image(binding, cfg, data, info, download_deadline)
+            if settings.get('download_enabled', False) and settings.get('download_backend', 'desktop') == 'native':
+                data, info = _native_image(binding, cfg, generation.get('account'), download_deadline)
+            else:
+                while True:
+                    try:
+                        data, info = _media.read_local_image(binding, cfg)
+                        break
+                    except MediaError as exc:
+                        if str(exc) not in ("local_image_not_cached", "local_image_pending", "invalid_encrypted_image", "invalid_image") or time.monotonic() >= deadline:
+                            raise
+                        time.sleep(.2)
+                if settings.get('download_enabled', False) and info['quality'] in ('thumbnail', 'preview'):
+                    from wechat_linux.desktop.image_download import improve_image
+                    data, info = improve_image(binding, cfg, data, info, download_deadline)
             quality = {"original": "本地原图", "cached": "本地微信缓存图（不保证原图）", "preview": "本地预览图", "thumbnail": "本地缩略图"}[info["quality"]]
             reference.update(available=True, text=f"{label}随本条请求附送，来源为{quality}。请直接观察；小字不可辨时请说明，不要补造。", image_label=label,
                              image_quality=info["quality"], image_width=info["width"], image_height=info["height"])

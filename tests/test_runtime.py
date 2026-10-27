@@ -23,6 +23,9 @@ class RuntimeTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.cfg = _deep_merge(DEFAULTS, {})
         self.cfg["state_file"] = str(Path(self.temp.name) / "state.json")
+        self.cfg['queue']['file'] = str(Path(self.temp.name)/'queue.sqlite3')
+        self.cfg['decrypted_dir'] = str(Path(self.temp.name)/'decrypted')
+        self.cfg['log_file'] = str(Path(self.temp.name)/'bot.log')
         self.cfg["target"]["chat"] = "合成群"
         p = patch("wxbridge.app.runtime.instance_lock", side_effect=lambda path: nullcontext())
         p.start()

@@ -21,6 +21,11 @@
   "state_file": "/run/wxbridge-trial/state.json",
   "log_file": "/run/wxbridge-trial/bot.log",
   "source": "db",
+  // 同一账号的发送最小间隔；另有各群自己的 target.cooldown_seconds。
+  "account": {"send_interval_seconds": 1},
+  // 空列表保持原有单群模式。多群只使用一个监听服务；完整示例见 docs/MULTI_GROUP.md。
+  // 每项：id（稳定实例名）、chat（稳定群ID）、enabled、reuse_legacy_state、overrides。
+  "instances": [],
   "poll_interval_seconds": 2.0, // 新消息常规查询间隔（秒）；发送就绪时补读，工作进程与发送确认仍及时调度。
   "reply_to_backlog": false, // 生产入口强制关闭，避免新部署补答旧消息。
   // 集中配置身份：可改为 {"name":"ds", "aliases":["小D", "DeepSeek"], "prompt_file":"prompts/system.md"}。
@@ -34,7 +39,7 @@
   // @ 回复队列：合并默认关闭，每次真实 @ 独立排队。
   "queue": {
     "debounce_seconds": 0, // 0 不合并；正数为同一人连续 @ 的合并静默窗口（秒）。
-    "generation_concurrency": 2, // 有效 API 任务上限，只能为 1 或 2。
+    "generation_concurrency": 2, // 整个账号的有效 API 任务上限，只能为 1 或 2，各群共享。
     "max_pending": 32, // 普通触发达到容量时保留接收游标，等待队列腾出位置。
     "max_pending_per_sender": 8, // 同一成员的待处理任务上限。
     "generation_lookahead": 4, // 只预生成队列前几项；发送阻塞时暂停新生成。
@@ -183,8 +188,9 @@
     "max_images": 4,
     "max_image_bytes": 8388608,
     "cache_wait_seconds": 3,
-    // 需要原生发送后台及可用AT-SPI；唯一匹配引用缩略图后触发微信下载清晰缓存
+    // desktop 需要 AT-SPI；native 需要显式启用图片 helper，按绑定来源下载，不操作窗口。
     "download_enabled": false,
+    "download_backend": "desktop", // 可选 native；共享 native_api.helper_socket 和群允许列表，失败不回退桌面。
     "download_timeout_seconds": 20
   },
   // 按机器人账号、群和成员 wxid 隔离的持久摘要；完整说明见 docs/MEMORY.md。

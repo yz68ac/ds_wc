@@ -1,5 +1,7 @@
 # 配置项说明
 
+`instances=[]` 为原单群配置；需要每群独立人格、模型和记忆时，使用[多群实例配置](MULTI_GROUP.md)。共享运行参数仍只在当前 `config.json` 维护，各群通过 `overrides` 覆盖需要不同的字段。
+
 ## 角色名称与称呼
 
 可以在实际 `config.json` 中集中设置，例如 `"persona": {"name": "ds", "aliases": ["小D", "DeepSeek"], "prompt_file": "prompts/system.md"}`。`name` 用于人格中的 `{bot_name}`，名称与 `aliases` 一起参与文字点名；`prompt_file` 相对配置文件所在目录解析。

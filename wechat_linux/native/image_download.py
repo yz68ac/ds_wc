@@ -57,9 +57,9 @@ class NativeImageDownloader:
             raise ValueError('invalid_native_image_options')
         return self._call({'op': 'image_status', 'request_id': request_id}, timeout)
 
-    def download(self, binding, *, chat_id, request_id, timeout=30, max_bytes=8*1024*1024):
+    def download(self, binding, *, chat_id, request_id, timeout=30, max_bytes=8*1024*1024, resume_only=False):
         if (type(timeout) is not int or not 5 <= timeout <= 30 or type(max_bytes) is not int
-                or not 1 <= max_bytes <= 8*1024*1024):
+                or not 1 <= max_bytes <= 8*1024*1024 or type(resume_only) is not bool):
             raise ValueError('invalid_native_image_options')
         source = binding.get('download') if isinstance(binding, dict) else None
         if (not isinstance(source, dict) or source.get('verified') is not True
@@ -95,6 +95,12 @@ class NativeImageDownloader:
             found = None
         if found is not None:
             return found
+        if resume_only and request_id not in self._requests:
+            # A durable caller has already reserved this intent. A missing helper
+            # history after restart is unknown, never permission to submit again.
+            if len(self._requests) >= 4096:
+                raise ImageDownloadError('native_image_history_full', requested=False)
+            self._requests[request_id] = digest
         if request_id not in self._requests:
             if len(self._requests) >= 4096:
                 raise ImageDownloadError('native_image_history_full', requested=False)

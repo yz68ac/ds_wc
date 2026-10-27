@@ -100,7 +100,7 @@ with WeChatSession(cfg, submitter=sender) as wechat:
 
 使用从 `Message.reference` 取得的原始引用，调用 `wechat.fetch_image(chat_id, reference, download=False)`；返回 `Image.data` 与 `Image.info`，后者明确区分 original、cached、preview、thumbnail。默认只读缓存；`download=True` 才允许在受锁保护的桌面环境中打开绑定图片。若下载失败会返回原缓存和失败原因，不能把缩略图当成原图。详细实现见 [图片下载说明](IMAGE_DOWNLOAD.md)。
 
-原生图片下载已独立封装为 `NativeImageDownloader`。注入会话后，显式传入 `download=True, download_backend="native", request_id=...` 调用；失败抛出 `ImageDownloadError`，不自动降级或重试。它要求独立启用的可信 helper 资源及安全排空策略，当前 bot 和线上 helper 尚未接入。完整示例和边界见 [原生图片 SDK](NATIVE_IMAGE_SDK.md)。
+原生图片下载已独立封装为 `NativeImageDownloader`。注入会话后，显式传入 `download=True, download_backend="native", request_id=...` 调用；失败抛出 `ImageDownloadError`，不自动降级或重试。它要求独立启用的可信 helper 资源及安全排空策略，bot 已支持显式选择 native 下载，helper 需通过受控发布显式安装图片资源和开启开关。完整示例和边界见 [原生图片 SDK](NATIVE_IMAGE_SDK.md)。
 
 `capabilities()` 只读取随包的声明，不连接微信。当前 native profile 为 Linux 微信 4.1.13.26、x86_64；helper 会校验 ELF SHA-256 与指令签名。客户端更新后必须重新分析和测试，不能直接沿用偏移。声明的支持不等于当前已登录或依赖已安装。
 
