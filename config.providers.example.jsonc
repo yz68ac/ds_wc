@@ -1,4 +1,5 @@
-// 模型连接示例：把所需内容合并到实际 config.json，不用 JSONC 文件直接启动。
+// 模型切换示例：默认配置已内置连接，实际 config.json 可直接填写 model_profile。
+// 本文件保留完整展开示例，不用 JSONC 文件直接启动。
 // 只需切换 model_profile；search.backend=auto 按所选协议预先决定搜索路线。
 // 所有密钥只放 .env，未选中的连接不要求提供密钥。
 {

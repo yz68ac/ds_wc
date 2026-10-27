@@ -88,6 +88,41 @@
     "max_tokens": 1200,
     "system_prompt_file": "prompts/system.md"
   },
+  "model_profile": null,
+  "model_profiles": {
+    "deepseek_chat": {
+      "provider": "deepseek",
+      "base_url": "https://api.deepseek.com",
+      "api_key_env": "DEEPSEEK_API_KEY",
+      "model": "deepseek-flash",
+      "thinking": "enabled",
+      "reasoning_effort": "max"
+    },
+    "openai_terra": {
+      "provider": "openai_responses",
+      "base_url": "https://api.openai.com/v1",
+      "api_key_env": "OPENAI_API_KEY",
+      "model": "gpt-6.1-terra",
+      "native_search_supported": true,
+      "thinking": "enabled",
+      "reasoning_effort": "max",
+      "temperature": null
+    },
+    "claude_messages": {
+      "provider": "anthropic",
+      "base_url": "https://api.anthropic.com/v1",
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "model": "claude-opus-4-6",
+      "native_search_supported": true,
+      "thinking": "enabled",
+      "thinking_mode": "adaptive",
+      "reasoning_effort": "max",
+      "temperature": null,
+      "anthropic_version": "2026-10-21",
+      "anthropic_auth": "api_key",
+      "anthropic_web_search_version": "web_search_20250305"
+    }
+  },
   "models": {
     "reply": {},
     "participation": {
@@ -104,6 +139,7 @@
   },
   "search": {
     "enabled": true,
+    "backend": "external",
     "base_url": "https://api.deepseek.com",
     "timeout_seconds": 15,
     "total_timeout_seconds": 120,

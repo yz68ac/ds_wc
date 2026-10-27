@@ -28,7 +28,8 @@ def model_settings(cfg, role='reply'):
     if role == 'avatar':
         result.update(thinking='enabled', reasoning_effort='max', max_tokens=1200)
     override = cfg.get('models', {}).get(role, {})
-    profile = override.get('profile', cfg.get('model_profile'))
+    profile = override.get('profile')
+    if profile is None:profile = cfg.get('model_profile')
     if profile is not None:
         profiles = cfg.get('model_profiles', {})
         if not isinstance(profile, str) or not isinstance(profiles, dict) or profile not in profiles:
@@ -58,7 +59,7 @@ def validate_models(cfg):
         override = overrides.get(role, {})
         if not isinstance(override, dict) or set(override)-FIELDS:
             raise ValueError('models.'+role+' 包含无效字段')
-        if 'profile' in override and (not isinstance(override['profile'], str) or override['profile'] not in profiles):
+        if override.get('profile') is not None and (not isinstance(override['profile'], str) or override['profile'] not in profiles):
             raise ValueError('models.'+role+'.profile 不存在')
         _validate_settings(model_settings(cfg, role), 'models.'+role)
     if model_settings(cfg, 'participation')['timeout_seconds'] > cfg['proactive']['reply_ttl_seconds']:

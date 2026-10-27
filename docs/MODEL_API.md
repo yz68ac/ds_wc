@@ -52,15 +52,17 @@ except ModelError as exc:
 
 ## 3. 通过命名连接选择供应商
 
-完整片段在项目根目录 [config.providers.example.jsonc](../config.providers.example.jsonc)。这是带注释的合并示例；实际启动配置仍为 `config.json`，不能把 JSONC 文件直接传给现有配置加载器。
+默认配置已内置三套连接：[config.defaults.json](../config.defaults.json)。完整带注释示例在 [config.example.jsonc](../config.example.jsonc)，另保留 [切换示例](../config.providers.example.jsonc)。实际启动配置仍为 `config.json`，不能把 JSONC 文件直接传给现有配置加载器。
 
-先将示例的 `model_profiles` 合并进实际配置，以后只需选择：
+无需再手工合并连接。直接在实际 `config.json` 中选择：
 
 ```json
 "model_profile": "openai_terra"
 ```
 
-示例提供 `deepseek_chat`、`openai_terra`、`claude_messages` 三个连接。未选中的连接不要求提供密钥。对应密钥环境变量分别为 `DEEPSEEK_API_KEY`、`OPENAI_API_KEY`、`ANTHROPIC_API_KEY`，只写项目根目录 `.env`，不要写进 JSON 或 Git。代码不会自动替你选择或调用新供应商。
+内置 `deepseek_chat`、`openai_terra`、`claude_messages` 三个连接。默认 `model_profile=null` 沿用原来的 DeepSeek/记忆配置，不切换接口；各角色的 `profile=null` 表示继承全局选择。未选中的连接不要求提供密钥。对应密钥环境变量分别为 `DEEPSEEK_API_KEY`、`OPENAI_API_KEY`、`ANTHROPIC_API_KEY`，只写项目根目录 `.env`，不要写进 JSON 或 Git。
+
+本地新建的 `config.json` 已展开连接和各角色选择项，便于直接查看和修改；这是本地模型覆盖配置，Linux 的群、路径、密钥和运行配置没有更新。连接地址或模型需要自定义时，可直接编辑其中的 `model_profiles`；未覆盖的字段继续继承默认配置。
 
 若希望主回复用 Terra、记忆继续用 DeepSeek：
 

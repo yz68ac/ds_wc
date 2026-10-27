@@ -272,6 +272,30 @@ class NativeSearchTests(unittest.TestCase):
 
 
 class ProfileTests(unittest.TestCase):
+    def test_builtin_connections_can_be_selected_without_copying_profiles(self):
+        self.assertIsNone(DEFAULTS['model_profile'])
+        expected={'deepseek_chat':'deepseek','openai_terra':'openai_responses','claude_messages':'anthropic'}
+        for name,provider in expected.items():
+            cfg=deepcopy(DEFAULTS);cfg['model_profile']=name
+            with self.subTest(profile=name):validate_models(cfg)
+            self.assertEqual(model_settings(cfg)['provider'],provider)
+
+    def test_null_role_profile_inherits_selection_and_explicit_memory_stays_separate(self):
+        cfg=deepcopy(DEFAULTS);cfg['model_profile']='openai_terra'
+        for role in cfg['models']:cfg['models'][role]['profile']=None
+        validate_models(cfg)
+        self.assertEqual(model_settings(cfg,'reply')['provider'],'openai_responses')
+        self.assertEqual(model_settings(cfg,'memory')['provider'],'openai_responses')
+        cfg['models']['memory']['profile']='deepseek_chat';validate_models(cfg)
+        self.assertEqual(model_settings(cfg,'memory')['provider'],'deepseek')
+        self.assertEqual(model_settings(cfg,'participation')['thinking'],'disabled')
+
+    def test_builtin_presets_do_not_change_legacy_settings_when_unselected(self):
+        cfg=deepcopy(DEFAULTS);legacy=deepcopy(cfg)
+        legacy.pop('model_profile');legacy.pop('model_profiles')
+        for role in cfg['models']:
+            self.assertEqual(model_settings(cfg,role),model_settings(legacy,role))
+
     def test_jsonc_example_loads_and_all_three_selections_validate(self):
         root=Path(__file__).resolve().parents[1]
         text=(root/'config.providers.example.jsonc').read_text(encoding='utf-8')

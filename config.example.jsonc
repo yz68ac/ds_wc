@@ -94,27 +94,68 @@
     "max_tokens": 1200, // 输出 token 预算，不是中文字数。
     "system_prompt_file": "prompts/system.md" // 每次生成重读，同一路径下改人格无需重启。
   },
-  // 模型角色覆盖。未填写的字段沿用默认配置；可独立指定 model/base_url/api_key_env/thinking 等。
-  // provider: deepseek 发送 DeepSeek thinking 参数；openai 仅为 Chat Completions 兼容协议。
+  // null 沿用已有 deepseek/memory 设置；填连接名称即可切换默认供应商。
+  // 可选 deepseek_chat / openai_terra / claude_messages；默认配置已内置，不必手工合并连接。
+  "model_profile": null,
+  "model_profiles": {
+    "deepseek_chat": {
+      "provider": "deepseek",
+      "base_url": "https://api.deepseek.com",
+      "api_key_env": "DEEPSEEK_API_KEY",
+      "model": "deepseek-flash",
+      "thinking": "enabled",
+      "reasoning_effort": "max"
+    },
+    "openai_terra": {
+      "provider": "openai_responses",
+      "base_url": "https://api.openai.com/v1",
+      "api_key_env": "OPENAI_API_KEY",
+      "model": "gpt-6.1-terra",
+      "native_search_supported": true,
+      "thinking": "enabled",
+      "reasoning_effort": "max",
+      "temperature": null
+    },
+    "claude_messages": {
+      "provider": "anthropic",
+      "base_url": "https://api.anthropic.com/v1",
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "model": "claude-opus-4-6", // 可替换为账户可用的 Claude 型号。
+      "native_search_supported": true, // 网关没有内置搜索时设为 false。
+      "thinking": "enabled",
+      "thinking_mode": "adaptive",
+      "reasoning_effort": "max",
+      "temperature": null,
+      "anthropic_version": "2026-10-21", // 旧兼容网关可改为 2023-06-01。
+      "anthropic_auth": "api_key", // 要求 Authorization 的网关可改为 bearer。
+      "anthropic_web_search_version": "web_search_20250305"
+    }
+  },
+  // profile=null 继承 model_profile；给某个角色填连接名即可独立选择 API。
+  // 例如 memory.profile="deepseek_chat" 可让记忆继续使用 DeepSeek。
+  // provider: deepseek / openai_compatible / openai_responses / anthropic。
   // participation 的思考独立于普通 @ 回复；下面可设 enabled/disabled 和 low/high/max。
   // 主动接话先由 participation 判断；决定开口才调用 reply 生成正文。真实 @ 直接用 reply。
   "models": {
-    "reply": {}, // 所有实际回复（含关键词/自主入场/窗口接话）共用；当前沿用 deepseek 的 max。
+    "reply": {"profile": null}, // 所有实际回复共用这个角色。
     "participation": {
+      "profile": null,
       "thinking": "disabled", // 仅判断是否介入、回应哪条新消息；不生成正文。
       "reasoning_effort": "high", // 当前不发送此参数；将来开启思考时才使用，不影响普通 @ 的 max。
       "max_tokens": 256 // 判断JSON预算；正文另用 reply 的预算，实际发送仍最多30字。
     },
-    "memory": {},
+    "memory": {"profile": null},
     "avatar": {
+      "profile": null,
       "thinking": "enabled", // 头像分析也开启思考，与文字记忆独立。
       "reasoning_effort": "max",
       "max_tokens": 1200
     }
   },
-  // 按需联网，默认只发最终回答。搜索仍使用独立的 DeepSeek Search/Fetch 服务。
+  // 按需联网，默认只发最终回答。external 保留现有 DeepSeek Search/Fetch。
   "search": {
     "enabled": true,
+    "backend": "external", // auto 按所选连接预选原生/外部搜索；native 强制原生搜索。
     "base_url": "https://api.deepseek.com",
     "timeout_seconds": 15,
     "total_timeout_seconds": 120, // 一整轮搜索回答的总时限。
