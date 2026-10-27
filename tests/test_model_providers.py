@@ -22,7 +22,7 @@ class SyntheticWireAdapter:
     def endpoint(self, base_url):
         return base_url+'/synthetic/generate'
 
-    def headers(self, key):
+    def headers(self, key, settings=None):
         return {'Content-Type':'application/json','X-Synthetic-Key':key}
 
     def encode(self, settings, request):
@@ -82,7 +82,8 @@ class ProviderTests(unittest.TestCase):
             self.assertEqual((messages,tools),original)
 
     def test_alternative_wire_protocol_can_run_the_existing_search_loop(self):
-        cfg=deepcopy(DEFAULTS);client=self.client(cfg,adapter=SyntheticWireAdapter())
+        cfg=deepcopy(DEFAULTS);cfg['search']['backend']='auto'
+        client=self.client(cfg,adapter=SyntheticWireAdapter())
         tool=dict(id='call-1',type='function',function=dict(name='web_search',arguments='{"query":"synthetic"}'))
         replies=[response(dict(answer='',operations=[tool],wire_state='PRIVATE_CONTINUATION')),
                  response(dict(answer='合成结论'))]

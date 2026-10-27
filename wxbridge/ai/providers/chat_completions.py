@@ -7,16 +7,22 @@ from .base import ModelError, ModelRequest, ModelResult
 
 
 class ChatCompletionsAdapter:
+    native_search_supported = False
     def endpoint(self, base_url):
         return base_url.rstrip('/')+'/chat/completions'
 
-    def headers(self, api_key):
+    def headers(self, api_key, settings=None):
         return {'Content-Type': 'application/json', 'Authorization': 'Bearer '+api_key}
 
     def encode(self, settings, request: ModelRequest):
+        if request.native_search is not None:
+            raise ModelError('unsupported_native_search')
+        if any(isinstance(m, dict) and '_provider_state' in m for m in request.messages):
+            raise ModelError('continuation_provider_mismatch')
         payload = dict(model=settings['model'], messages=deepcopy(request.messages),
-                       temperature=settings.get('temperature', 1.0),
                        max_tokens=settings.get('max_tokens', 1200), stream=False)
+        if settings.get('temperature', 1.0) is not None:
+            payload['temperature'] = settings.get('temperature', 1.0)
         if settings.get('thinking') != 'disabled' and settings.get('reasoning_effort') in ('low', 'high', 'max'):
             payload['reasoning_effort'] = settings['reasoning_effort']
         if request.tools:

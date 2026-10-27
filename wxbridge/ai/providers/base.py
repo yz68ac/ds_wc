@@ -18,6 +18,7 @@ class ModelRequest:
     messages: list[dict] = field(repr=False)
     tools: list[dict] | None = field(default=None, repr=False)
     tool_choice: str | dict | None = field(default=None, repr=False)
+    native_search: dict | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True)
@@ -25,11 +26,13 @@ class ModelResult:
     message: dict = field(repr=False)
     finish_reason: str | None
     usage: dict
+    search: dict = field(default_factory=dict, repr=False)
 
 
 class ProviderAdapter(Protocol):
+    native_search_supported: bool
     def endpoint(self, base_url: str) -> str: ...
-    def headers(self, api_key: str) -> dict[str, str]: ...
+    def headers(self, api_key: str, settings: dict | None = None) -> dict[str, str]: ...
     def encode(self, settings: dict, request: ModelRequest) -> dict: ...
     def decode(self, response: object) -> ModelResult: ...
     def assistant_message(self, message: dict) -> dict: ...

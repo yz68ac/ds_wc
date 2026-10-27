@@ -1,0 +1,77 @@
+// 模型连接示例：把所需内容合并到实际 config.json，不用 JSONC 文件直接启动。
+// 只需切换 model_profile；search.backend=auto 按所选协议预先决定搜索路线。
+// 所有密钥只放 .env，未选中的连接不要求提供密钥。
+{
+  "model_profile": "openai_terra",
+  "model_profiles": {
+    "deepseek_chat": {
+      "provider": "deepseek",
+      "base_url": "https://api.deepseek.com",
+      "api_key_env": "DEEPSEEK_API_KEY",
+      "model": "deepseek-flash",
+      "thinking": "enabled",
+      "reasoning_effort": "max"
+    },
+    "openai_terra": {
+      "provider": "openai_responses",
+      "base_url": "https://api.openai.com/v1",
+      "api_key_env": "OPENAI_API_KEY",
+      "model": "gpt-6.1-terra",
+      "native_search_supported": true,
+      "thinking": "enabled",
+      "reasoning_effort": "max",
+      "temperature": null
+    },
+    // 这里只是可编辑的 Claude 型号示例，访问权限由供应商决定。
+    "claude_messages": {
+      "provider": "anthropic",
+      "base_url": "https://api.anthropic.com/v1",
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "model": "claude-opus-4-6",
+      // 如果是只兼容 Messages、没有内置搜索的网关，改为 false。
+      "native_search_supported": true,
+      "thinking": "enabled",
+      "thinking_mode": "adaptive",
+      "reasoning_effort": "max",
+      "temperature": null,
+      "anthropic_version": "2026-10-21",
+      // 标准 API 使用 api_key；要求 Authorization 的兼容网关可改为 bearer。
+      "anthropic_auth": "api_key",
+      "anthropic_web_search_version": "web_search_20250305"
+    }
+  },
+  "models": {
+    // 不填 profile 就继承 model_profile；已有角色覆盖值仍然优先，合并时检查旧值。
+    "reply": {
+      "max_tokens": 8192,
+      "timeout_seconds": 90
+    },
+    "participation": {
+      "thinking": "disabled",
+      "reasoning_effort": null,
+      "max_tokens": 256,
+      "timeout_seconds": 15
+    },
+    // 如需记忆继续使用 DeepSeek，可在这里加 "profile": "deepseek_chat"。
+    "memory": {
+      "max_tokens": 16384,
+      "timeout_seconds": 90
+    },
+    "avatar": {
+      "max_tokens": 4096
+    }
+  },
+  "search": {
+    "enabled": true,
+    // auto：Responses/Anthropic 用原生搜索，Chat Completions/DeepSeek 用外部搜索。
+    // external 固定使用现有 DeepSeek Search/Fetch；native 固定使用供应商原生搜索。
+    // 根据协议预选，不会在请求失败后自动切换供应商或搜索后端。
+    "backend": "auto",
+    "max_requests": 3,
+    "max_tool_rounds": 2,
+    "total_timeout_seconds": 120,
+    "feedback_enabled": false,
+    // 只有外部搜索会用到此变量；原生搜索直接使用所选模型的密钥。
+    "api_key_env": "DEEPSEEK_SEARCH_API_KEY"
+  }
+}

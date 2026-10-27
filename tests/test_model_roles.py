@@ -91,7 +91,7 @@ class ModelRoleTests(unittest.TestCase):
         self.assertNotIn('PRIVATE', json.dumps(metrics))
 
     def test_invalid_role_overrides_are_rejected_before_startup(self):
-        for override in ({'provider': 'anthropic'}, {'api_key_env': ''}, {'timeout_seconds': True},
+        for override in ({'provider': 'unsupported'}, {'api_key_env': ''}, {'timeout_seconds': True},
                          {'timeout_seconds': float('nan')}, {'max_tokens': 1.5}, {'thinking': 'auto'},
                          {'base_url': 'https://user:secret@example.com'}, {'extra': 'field'}):
             with self.subTest(override=override):

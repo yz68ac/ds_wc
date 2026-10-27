@@ -31,10 +31,10 @@ class Metrics:
             elapsed = item.get('elapsed_ms', 0)
             if type(elapsed) in (int, float) and 0 <= elapsed <= 3600000:
                 entry['elapsed_ms'] = round(entry['elapsed_ms']+elapsed, 2)
-            for key in ('prompt_tokens', 'completion_tokens'):
+            for key in ('prompt_tokens', 'completion_tokens', 'cache_read_tokens', 'cache_write_tokens', 'reasoning_tokens'):
                 value = (item.get('usage') or {}).get(key, 0)
                 if type(value) is int and 0 <= value <= 10**9:
-                    entry[key] += value
+                    if key in entry or value:entry[key] = entry.get(key, 0)+value
 
     def snapshot(self):
         return deepcopy(dict(stages=self.stages, models=self.models))

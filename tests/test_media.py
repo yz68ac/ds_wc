@@ -432,6 +432,7 @@ class VisionClientTests(unittest.TestCase):
         client = DeepSeekClient.__new__(DeepSeekClient)
         from wxbridge.ai.providers import get_adapter
         client.adapter = get_adapter('deepseek')
+        client.cfg = {}
         client.base_url, client.api_key = "https://example.invalid", "synthetic-key"
         payload = dict(messages=[dict(role="user", content=[dict(type="image_url", image_url=dict(url="data:image/png;base64,AAAA"))])])
         response = Mock()

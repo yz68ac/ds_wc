@@ -24,6 +24,8 @@ def proactive_failure_code(result):
              'proactive_invalid_reply_target', 'proactive_expired_before_reply',
              'output_limit', 'connection_failed', 'deadline_exceeded', 'missing_api_key',
              'invalid_response', 'request_too_large', 'response_too_large', 'WorkerTimeout', 'WorkerExited',
+             'provider_failed', 'incomplete_response', 'unsupported_response_item', 'unsupported_native_search',
+             'invalid_native_search_result', 'invalid_tool_result', 'continuation_provider_mismatch',
              'ValueError', 'JSONDecodeError', 'ContextError'}
     if isinstance(code, str) and (code in known or re.fullmatch(r'http_[0-9]{3}', code)):
         return code
@@ -36,6 +38,8 @@ def memory_failure_code(result):
              'WorkerTimeout': 'memory_worker_timeout', 'WorkerExited': 'memory_worker_exited',
              'connection_failed': 'memory_connection_failed', 'deadline_exceeded': 'memory_deadline_exceeded',
              'missing_api_key': 'memory_missing_api_key', 'invalid_response': 'memory_invalid_response'}
+    known.update(incomplete_response='memory_incomplete_response', provider_failed='memory_provider_failed',
+                 unsupported_response_item='memory_invalid_response')
     if isinstance(code, str) and re.fullmatch(r'http_[0-9]{3}', code):
         return 'memory_'+code
     return known.get(code, 'memory_worker_failed') if isinstance(code, str) else 'memory_worker_failed'
