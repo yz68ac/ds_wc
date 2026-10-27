@@ -64,23 +64,26 @@ class ReplyStyleTests(unittest.TestCase):
             with self.subTest(source=source):
                 self.assertEqual(format_reply(source,settings()),expected)
 
-    def test_other_punctuation_standalone_emoticon_and_mid_sentence_period_unchanged(self):
-        for source in ('真的吗？','这也行！','行，知道了','嗯……','[偷笑]',
-                       '知道啦。你先忙','好。[未核实]','Okay.','v1.2.3','好[旺柴][偷笑]'):
+    def test_prose_uses_ascii_punctuation_without_losing_sentences_or_tokens(self):
+        cases={'真的吗？':'真的吗?','这也行！':'这也行!','行，知道了':'行,知道了','嗯……':'嗯...',
+               '[偷笑]':'[偷笑]','知道啦。你先忙':'知道啦.你先忙','好。[未核实]':'好.[未核实]',
+               'Okay.':'Okay.','v1.2.3':'v1.2.3','好[旺柴][偷笑]':'好[旺柴][偷笑]'}
+        for source,expected in cases.items():
             with self.subTest(source=source):
-                self.assertEqual(format_reply(source,settings()),source)
+                self.assertEqual(format_reply(source,settings()),expected)
 
     def test_quotes_decimals_urls_commands_and_long_professional_text_not_rewritten(self):
-        for source in ('原话“知道啦。”','预算3.5万元。','地址https://example.com/a。',
-                       'sudo echo 中文。','> 引用原文。',
-                       '这是第一步。\n这是第二步。','专业说明需要保持完整。'*6):
+        cases={'原话“知道啦。”':'原话"知道啦。"','预算3.5万元。':'预算3.5万元.',
+               '地址https://example.com/a。':'地址https://example.com/a。','sudo echo 中文。':'sudo echo 中文。',
+               '> 引用原文。':'引用原文。','这是第一步。\n这是第二步。':'这是第一步.\n这是第二步.',
+               '专业说明需要保持完整。'*6:'专业说明需要保持完整.'*6}
+        for source,expected in cases.items():
             with self.subTest(source=source):
-                expected=source[2:] if source.startswith('> ') else source
                 self.assertEqual(format_reply(source,settings()),expected)
 
     def test_period_switch_and_emoticon_switch_are_independent(self):
-        self.assertEqual(format_reply('知道啦。[偷笑]',settings(omit=False)),'知道啦。[偷笑]')
-        self.assertEqual(format_reply('引用“[微笑]”',settings(enabled=False)),'引用“[微笑]”')
+        self.assertEqual(format_reply('知道啦。[偷笑]',settings(omit=False)),'知道啦.[偷笑]')
+        self.assertEqual(format_reply('引用“[微笑]”',settings(enabled=False)),'引用"[微笑]"')
         enabled=reply_rules(settings())
         disabled=reply_rules(settings(enabled=False))
         self.assertIn('本轮微信表情已开启',enabled)
@@ -142,8 +145,30 @@ class ReplyStyleTests(unittest.TestCase):
         self.assertIn('本轮微信表情已开启',build_reply_prompt(cfg,prompt,1)[0]['content'])
         payload=json.dumps(dict(speak=True,text='知道啦。[偷笑]'),ensure_ascii=False)
         self.assertEqual(parse_decision(payload,30,cfg)['text'],'知道啦[偷笑]')
-        self.assertEqual(parse_decision(payload,30,settings(omit=False))['text'],'知道啦。[偷笑]')
+        self.assertEqual(parse_decision(payload,30,settings(omit=False))['text'],'知道啦.[偷笑]')
         self.assertEqual(parse_decision('{"speak":true,"text":"[旺柴]"}',30,cfg)['text'],'[旺柴]')
+
+    def test_observed_orphan_and_fullwidth_emoji_brackets_are_repaired(self):
+        cases={'要真便宜一半，价格优势确实挺明显了，】【得意】':'要真便宜一半,价格优势确实挺明显了[得意]',
+               '【得意】。':'[得意]','［捂脸］':'[捂脸]','【通知】[得意]':'[通知][得意]'}
+        for source,expected in cases.items():
+            with self.subTest(source=source):
+                self.assertEqual(format_reply(source,settings()),expected)
+                self.assertEqual(format_reply(expected,settings()),expected)
+
+    def test_ascii_conversion_keeps_protected_code_urls_and_quoted_contents(self):
+        source='说明：`print("中文，。")`，原话“保留，原文。”，链接 https://example.com/中文?q=1.2'
+        expected='说明:print("中文，。"),原话"保留，原文。",链接 https://example.com/中文?q=1.2'
+        self.assertEqual(format_reply(source,settings()),expected)
+        self.assertEqual(format_reply('```\nprint("，】【得意】")\n```',settings()),'print("，】【得意】")')
+        self.assertEqual(format_reply('引用“，】【得意】”',settings()),'引用"，】【得意】"')
+        self.assertNotIn('\x00',format_reply(source,settings()))
+
+    def test_prompt_explicitly_requires_ascii_punctuation_and_brackets(self):
+        rules=reply_rules(settings())
+        self.assertIn('英文半角标点',rules)
+        self.assertIn('英文半角方括号',rules)
+        self.assertNotIn('中文方括号表情',rules)
 
     def test_memory_uses_same_meanings_without_single_emoticon_personality_judgments(self):
         from wxbridge.ai.memory import extract

@@ -14,6 +14,8 @@
 
 两轮对象与后台链路分析、验证边界见[分析总结图](NATIVE_ANALYSIS.md)。
 
+`client.py`、主进程接口、隔离helper和进程内 `agent.js` 的职责，以及脚本如何加载到微信，见 [native代码地图](../wxbridge/native/README.md)。
+
 ## Linux CLI
 
 部署并开启后，在 SSH 中使用 `ds-native`；root 入口自动切换为 wxbridge 用户。正文来自 stdin 或 UTF-8 文件，不放进进程命令行参数。

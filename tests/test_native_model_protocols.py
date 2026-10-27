@@ -2,6 +2,7 @@
 from copy import deepcopy
 import json
 import os
+import re
 from pathlib import Path
 import unittest
 from unittest.mock import Mock, patch
@@ -175,7 +176,7 @@ class NativeSearchTests(unittest.TestCase):
                 with patch('wxbridge.ai.client.urllib.request.urlopen',side_effect=[http(first),http(second)]) as send:
                     text,meta=answer_with_search(cfg,c,MESSAGES,search_client=backend)
                 self.assertEqual(send.call_count,2);self.assertEqual(meta['calls'],1)
-                self.assertIn(URL,text);self.assertNotIn('PRIVATE',text)
+                self.assertNotIn(URL,text);self.assertNotIn('PRIVATE',text)
                 wire=json.loads(send.call_args.args[0].data)
                 if provider=='openai_responses':
                     self.assertEqual(wire['input'][-1]['type'],'function_call_output')
@@ -207,13 +208,13 @@ class NativeSearchTests(unittest.TestCase):
         self.addCleanup(patch.stopall)
         return answer_with_search(cfg,c,MESSAGES)
 
-    def test_responses_native_search_budget_and_plain_inline_citations(self):
+    def test_responses_native_search_keeps_evidence_without_adding_citation_links(self):
         data=response([dict(type='web_search_call',id='w1',status='completed',action=dict(type='search',sources=[dict(url=URL)])),
                        dict(type='message',content=[dict(type='output_text',text='查到结果',annotations=[dict(type='url_citation',url=URL,title='来源',end_index=4)])])])
         text,meta=self.run_search('openai_responses',[data])
         wire=json.loads(self.http.call_args.args[0].data)
         self.assertEqual(wire['tools'],[{'type':'web_search'}]);self.assertEqual(wire['max_tool_calls'],3)
-        self.assertIn(URL,text);self.assertNotIn('](',text);self.assertNotIn('我去',text)
+        self.assertEqual(text,'查到结果');self.assertNotIn('](',text);self.assertNotIn('我去',text)
         self.assertTrue(meta['attempted']);self.assertEqual(meta['calls'],1);self.assertEqual(meta['results'],1)
         self.assertNotIn('PRIVATE',json.dumps(meta))
 
@@ -235,7 +236,7 @@ class NativeSearchTests(unittest.TestCase):
         wire=json.loads(self.http.call_args.args[0].data)
         self.assertEqual(wire['messages'][-1]['content'],first['content'])
         self.assertEqual(wire['tools'][0]['max_uses'],2)
-        self.assertIn(URL,text);self.assertNotIn('PRIVATE',text);self.assertEqual(meta['calls'],1)
+        self.assertNotIn(URL,text);self.assertNotIn('PRIVATE',text);self.assertEqual(meta['calls'],1)
 
     def test_budget_exhaustion_does_not_restart_a_paused_search(self):
         data=claude([dict(type='server_tool_use',id='s1',name='web_search',input={'query':'synthetic'})],'pause_turn')
@@ -274,14 +275,14 @@ class NativeSearchTests(unittest.TestCase):
 class ProfileTests(unittest.TestCase):
     def test_builtin_connections_can_be_selected_without_copying_profiles(self):
         self.assertIsNone(DEFAULTS['model_profile'])
-        expected={'deepseek_chat':'deepseek','openai_terra':'openai_responses','claude_messages':'anthropic'}
+        expected={'deepseek_chat':'deepseek','openai':'openai_responses','claude_messages':'anthropic'}
         for name,provider in expected.items():
             cfg=deepcopy(DEFAULTS);cfg['model_profile']=name
             with self.subTest(profile=name):validate_models(cfg)
             self.assertEqual(model_settings(cfg)['provider'],provider)
 
     def test_null_role_profile_inherits_selection_and_explicit_memory_stays_separate(self):
-        cfg=deepcopy(DEFAULTS);cfg['model_profile']='openai_terra'
+        cfg=deepcopy(DEFAULTS);cfg['model_profile']='openai'
         for role in cfg['models']:cfg['models'][role]['profile']=None
         validate_models(cfg)
         self.assertEqual(model_settings(cfg,'reply')['provider'],'openai_responses')
@@ -298,10 +299,28 @@ class ProfileTests(unittest.TestCase):
 
     def test_jsonc_example_loads_and_all_three_selections_validate(self):
         root=Path(__file__).resolve().parents[1]
-        text=(root/'config.providers.example.jsonc').read_text(encoding='utf-8')
-        example=json.loads('\n'.join(line for line in text.splitlines() if not line.lstrip().startswith('//')))
+        text=(root/'config.example.jsonc').read_text(encoding='utf-8')
+        # Test-only removal of // comments; preserve quoted URLs and escaped strings.
+        example=json.loads(re.sub(r'("(?:\\.|[^"\\])*")|//[^\r\n]*',lambda m:m.group(1) or '',text))
+        baseline=_deep_merge(DEFAULTS,example);validate_models(baseline)
+        self.assertEqual(baseline['search']['backend'],'external')
+        for role in ('reply','participation','memory','avatar'):
+            self.assertEqual(model_settings(baseline,role),model_settings(DEFAULTS,role))
+            self.assertEqual(model_settings(baseline,role)['provider'],'deepseek')
+        selected=_deep_merge(baseline,{'models':{'reply':{'profile':'openai','max_tokens':8192,'timeout_seconds':90}},
+                                       'search':{'backend':'native'}})
+        validate_models(selected)
+        for role in ('participation','memory','avatar'):
+            self.assertEqual(model_settings(selected,role),model_settings(baseline,role))
+        c=client(selected)
+        with patch.object(c,'_post',return_value=response()) as post,patch('wxbridge.ai.search.SearchClient') as external:
+            _,meta=answer_with_search(selected,c,MESSAGES)
+        self.assertEqual(post.call_args.args[0]['model'],'gpt-6-luna')
+        self.assertEqual(post.call_args.args[0]['tools'],[dict(type='web_search')])
+        self.assertEqual(meta['backend'],'native');external.assert_not_called()
         for name in example['model_profiles']:
             cfg=_deep_merge(DEFAULTS,example);cfg['model_profile']=name
+            cfg['models']['reply']['profile']=None;cfg['search']['backend']='auto'
             with self.subTest(profile=name):validate_models(cfg)
             self.assertEqual(model_settings(cfg)['model'],example['model_profiles'][name]['model'])
         # Parsing the example and selecting profiles never consumes credentials.

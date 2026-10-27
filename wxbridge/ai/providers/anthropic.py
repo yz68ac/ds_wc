@@ -3,7 +3,7 @@ from copy import deepcopy
 import json
 
 from .base import ModelError, ModelResult
-from .common import (assistant_state, cited_text, conversion, data_image, image_source, integer, search_limit,
+from .common import (assistant_state, conversion, data_image, image_source, integer, search_limit,
                      source, state_items, tool_call, tool_definition)
 
 
@@ -120,8 +120,7 @@ class AnthropicAdapter:
             kind = block.get('type')
             if kind == 'text':
                 if not isinstance(block.get('text'), str):raise ModelError('invalid_response')
-                annotations = [a for a in block.get('citations', []) if a.get('type') == 'web_search_result_location']
-                texts.append(cited_text(block['text'], annotations))
+                texts.append(block['text'])
                 for citation in block.get('citations', []):
                     if citation.get('type') == 'web_search_result_location':
                         found = source(citation)

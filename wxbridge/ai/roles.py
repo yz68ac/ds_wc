@@ -10,7 +10,7 @@ ROLES = ('reply', 'participation', 'memory', 'avatar')
 FIELDS = {'provider', 'base_url', 'api_key_env', 'model', 'thinking', 'reasoning_effort',
           'temperature', 'timeout_seconds', 'max_tokens', 'profile', 'thinking_mode',
           'thinking_budget_tokens', 'anthropic_version', 'anthropic_auth', 'anthropic_web_search_version',
-          'native_search_supported'}
+          'native_search_supported', 'proxy_url'}
 PROFILE_NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z')
 
 
@@ -84,6 +84,19 @@ def _validate_settings(settings, path):
     url = urlsplit(settings['base_url'])
     if url.scheme not in ('http', 'https') or not url.hostname or url.username or url.password or url.query or url.fragment:
         raise ValueError(path+'.base_url 无效')
+    proxy = settings.get('proxy_url')
+    if proxy is not None:
+        valid = False
+        if isinstance(proxy, str) and proxy and not any(ord(c) <= 32 for c in proxy):
+            try:
+                parsed = urlsplit(proxy)
+                valid = (parsed.scheme == 'http' and bool(parsed.hostname) and parsed.username is None
+                         and parsed.password is None and parsed.path in ('', '/')
+                         and not parsed.query and not parsed.fragment
+                         and (parsed.port is None or 1 <= parsed.port <= 65535))
+            except ValueError:
+                pass
+        if not valid:raise ValueError(path+'.proxy_url 必须为无凭据的 HTTP 代理地址或 null')
     if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', settings['api_key_env']):raise ValueError(path+'.api_key_env 无效')
     if settings.get('thinking') not in ('enabled', 'disabled'):raise ValueError(path+'.thinking 无效')
     efforts = (None, 'none', 'low', 'medium', 'high', 'xhigh', 'max')

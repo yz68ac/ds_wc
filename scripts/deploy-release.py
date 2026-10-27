@@ -28,7 +28,7 @@ def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def changes(old, new):
+def changes(old, new, *, allow_removed=(), update_prompts=False):
     private_path = runpy.run_path(str(Path(__file__).with_name('check-repository.py')))['private_path']
     result = []
     for name, info in new['files'].items():
@@ -36,10 +36,10 @@ def changes(old, new):
         if (path.is_absolute() or '..' in path.parts or '\\' in name or ':' in name
                 or not name or private_path(name) or info.get('mode') not in ('100644', '100755')):
             raise ValueError('invalid_release_path')
-        if not (name in PRESERVE and name in old['files']) and old['files'].get(name) != info:
+        if not (name in PRESERVE and name in old['files'] and not update_prompts) and old['files'].get(name) != info:
             result.append(name)
     removed = set(old['files'])-set(new['files'])
-    if removed:
+    if removed != set(allow_removed) or removed & PRESERVE:
         raise ValueError('removed_files_require_review')
     return sorted(result)
 
@@ -91,18 +91,21 @@ def atomic(path, data, mode, uid, gid):
     os.replace(temporary, path)
 
 
-def deploy(stage, backup, *, apply=False, update_helper=False, allow_pending_memory=False):
+def deploy(stage, backup, *, apply=False, update_helper=False, allow_pending_memory=False,
+           allow_removed=(), update_prompts=False):
     old = json.loads((APP/'release-manifest.json').read_text())
     new = json.loads((stage/'release-manifest.json').read_text())
-    planned = changes(old, new)
-    planned = [n for n in planned if n not in PRESERVE or not (APP/n).exists()]
+    planned = changes(old, new, allow_removed=allow_removed, update_prompts=update_prompts)
+    planned = [n for n in planned if update_prompts or n not in PRESERVE or not (APP/n).exists()]
+    removed = sorted(set(old['files'])-set(new['files']))
     for name, info in new['files'].items():
         target = stage/name
         if not target.resolve().is_relative_to(stage.resolve()) or sha(target) != info['sha256']:
             raise ValueError('staged_hash_mismatch')
     helper_changed = helper_changes(old, new)
     report = dict(commit=new['commit'], base=old['commit'], changed_files=planned,
-                  helper_assets=helper_changed, applied=False)
+                  helper_assets=helper_changed, removed_files=removed,
+                  update_prompts=update_prompts, applied=False)
     if not apply:
         return report
     import fcntl
@@ -155,10 +158,12 @@ def deploy(stage, backup, *, apply=False, update_helper=False, allow_pending_mem
             before = queue()
             if before['pending'] or (before['memory_pending'] and not allow_pending_memory):
                 raise ValueError('queue_changed_before_switch')
-            private = {n: sha(APP/n) for n in ('config.json', '.env', *sorted(PRESERVE)) if (APP/n).is_file()}
+            preserved_prompts = PRESERVE-set(planned)
+            private = {n: sha(APP/n) for n in ('config.json', '.env', *sorted(preserved_prompts)) if (APP/n).is_file()}
             memory = {str(p.relative_to(APP)): sha(p) for p in (APP/'memory').rglob('*') if p.is_file()}
             backup.mkdir(parents=True, mode=0o700);backup.chmod(0o700)
             updates = {APP/n: ((stage/n).read_bytes(), 0o755 if new['files'][n]['mode']=='100755' else 0o644, user.pw_uid, user.pw_gid) for n in planned}
+            updates.update({APP/n: (None, 0, user.pw_uid, user.pw_gid) for n in removed})
             updates[APP/'release-manifest.json'] = ((stage/'release-manifest.json').read_bytes(), 0o644, user.pw_uid, user.pw_gid)
             if helper_changed:
                 installation = json.loads((HELPER/'installation.json').read_text())
@@ -171,6 +176,8 @@ def deploy(stage, backup, *, apply=False, update_helper=False, allow_pending_mem
             for path in updates:
                 if not (path.resolve().is_relative_to(APP) or path.resolve().is_relative_to(HELPER)):
                     raise ValueError('install_path_outside_root')
+                if any(p.is_symlink() for p in (path, *path.parents)):
+                    raise ValueError('unsafe_install_path')
                 info = path.stat() if path.exists() else None
                 record = dict(existed=info is not None)
                 if info:
@@ -182,7 +189,10 @@ def deploy(stage, backup, *, apply=False, update_helper=False, allow_pending_mem
             (backup/'restore.json').write_text(json.dumps(records));(backup/'restore.json').chmod(0o600)
             mutated = True
             for path, (data, mode, uid, gid) in updates.items():
-                atomic(path, data, mode, uid, gid)
+                if data is None:
+                    path.unlink()
+                else:
+                    atomic(path, data, mode, uid, gid)
             if private != {n: sha(APP/n) for n in private} or memory != {str(p.relative_to(APP)): sha(p) for p in (APP/'memory').rglob('*') if p.is_file()} or queue() != before:
                 raise ValueError('private_state_changed')
             report.update(cursor_before=before['cursor'], private_state_preserved=True,
@@ -229,12 +239,15 @@ def main():
     parser.add_argument('--backup', type=Path, required=True)
     parser.add_argument('--apply', action='store_true')
     parser.add_argument('--update-native-helper', action='store_true')
+    parser.add_argument('--update-prompts', action='store_true', help='Explicitly update versioned prompts with backups')
+    parser.add_argument('--allow-removed', action='append', default=[], help='Exact reviewed old manifest path to remove; repeat for every removal')
     parser.add_argument('--allow-pending-memory', action='store_true',
                         help='Preserve durable pending memory jobs; no running workers or send tasks allowed')
     args = parser.parse_args()
     try:
         print(json.dumps(deploy(args.stage, args.backup, apply=args.apply, update_helper=args.update_native_helper,
-                               allow_pending_memory=args.allow_pending_memory), ensure_ascii=False, indent=2))
+                               allow_pending_memory=args.allow_pending_memory, allow_removed=args.allow_removed,
+                               update_prompts=args.update_prompts), ensure_ascii=False, indent=2))
         return 0
     except Exception as exc:
         print(json.dumps(dict(applied=False, error=type(exc).__name__, reason=str(exc) if isinstance(exc, ValueError) else 'deployment_failed')))

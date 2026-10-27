@@ -36,6 +36,6 @@ Linux 运行依赖为系统库 libde265、libswscale、libavutil（当前 Debian
 
 `queue-status` / `live-status.json` 的 `last_vision` 记录最近图片任务、实际附送张数、引用数和各图的格式/尺寸/质量或错误码；不包含账号、本地路径、图片内容或密钥。`images=0` 表示没有实际附送图片，即使生成了文本回复也不能算图片识别成功。
 
-离线检查：`python3 scripts/test-offline.py`。显式 API 检查：`python3 scripts/verify-vision-api.py --synthetic-api`，用合成红/蓝色块核对当前模型能否观察图片，不读取微信、不发送群消息，但会产生少量 API 费用。
+离线检查：`python3 scripts/test-offline.py`。显式 API 检查：`python3 scripts/diagnostics/verify-vision-api.py --synthetic-api`，用合成红/蓝色块核对当前模型能否观察图片，不读取微信、不发送群消息，但会产生少量 API 费用。其他辅助入口见 [脚本地图](../scripts/README.md)。
 
 当前模型 `deepseek-flash` 支持图片输入，仍走 `/chat/completions`。官方能力与格式依据：[DeepSeek 图像理解](https://api-docs.deepseek.com/zh-cn/guides/vision/)（2026-10-20 核对）。

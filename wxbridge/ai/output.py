@@ -29,6 +29,8 @@ REPLY_RULES = (
     "只发给群友看的正文，不加‘回复：’‘助手：’等前缀。"
     "务必只输出纯文本，不使用Markdown：不用标题标记、加粗、斜体、反引号、代码围栏、引用块、表格或项目符号。"
     "需要给链接时直接写网址，不用Markdown链接；需要代码时写普通文本。"
+    "自己写的正文统一使用英文半角标点，如 , . ! ? : ; ( ) 和英文引号；不用中文逗号、顿号、句号或书名号。"
+    "代码、命令、真实网址和明确引用的原文保持准确，不改写其中的字符。"
     "自然分句或换行即可，不把整条回复挤成长段，也不机械套用‘首先、其次、最后’。"
 )
 
@@ -37,7 +39,8 @@ def reply_rules(cfg=None):
     settings = (cfg or {}).get('reply_style', {})
     rules = REPLY_RULES
     if settings.get('wechat_emoticons_enabled', False):
-        rules += ('\n【本轮微信表情已开启】闲聊按语境偶尔用下方清单里的中文方括号表情，通常不用，每条最多一个。'
+        rules += ('\n【本轮微信表情已开启】闲聊按语境偶尔用下方清单里的微信表情，通常不用，每条最多一个。'
+                  '表情严格使用英文半角方括号，如[得意]、[偷笑]；不写成【得意】，不在前面拼接多余的闭括号或逗号。'
                   '适合接梗或简单回应时可以只回一个；需要事实、操作或安慰时不要只用表情敷衍。'
                   '不机械追加、不连续刷屏、不自造名称，不把[微笑]用于示好、感谢、安慰或友好收尾。'
                   '微信表情标记属于正文，不是Markdown。用户明确要求解释、引用或列出表情时可原样给出多个。')
@@ -45,7 +48,7 @@ def reply_rules(cfg=None):
         rules += ('\n【本轮自动微信表情已关闭】不要为装饰主动添加微信表情或单回微信表情。'
                   '群友原文、引用、代码、用户明确要求的表情解释或原样输出仍可保留，不机械删除方括号。')
     if settings.get('omit_trailing_period', True):
-        rules += ('\n【日常标点】普通短句末尾不加中文句号“。”，表情前也不加句号。'
+        rules += ('\n【日常标点】普通短句末尾省略句号，表情前也不加句号，正文使用英文半角标点。'
                   '问号、感叹号、逗号和省略号按语气保留；代码、命令、链接、小数、引用原文及专业长答保持准确。')
     return rules+semantics_prompt()
 
@@ -60,7 +63,7 @@ def response_prompt(messages, cfg=None):
     return conversation
 
 
-def plain_text(text):
+def plain_text(text, *, prose_transform=None):
     """模型偶尔漏出 Markdown 时转为可读正文，保留代码、数字和真实 URL。"""
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     definitions = {}
@@ -88,6 +91,7 @@ def plain_text(text):
         if code:
             rendered.append(line)
             continue
+        literal_line = bool(re.match(r'^\s*(?:>|(?:sudo|echo|printf|python[\d.]*|git|curl|systemctl|ss|lsof|export)\s)', line))
         literals = []
         def keep_code(match):
             literals.append(match[2])
@@ -113,6 +117,14 @@ def plain_text(text):
                       lambda m: label(m[1])+" "+definitions[(m[2] or m[1]).casefold()]
                       if (m[2] or m[1]).casefold() in definitions else m[0], line)
         line = re.sub(r'<(https?://[^<>\s]+)>', r'\1', line)
+        if prose_transform and not literal_line:
+            for opening, closing, quote in (('"','"','"'), ("'","'","'"), ('“','”','"'),
+                                             ('‘','’',"'"), ('「','」','"'), ('『','』',"'")):
+                pattern = re.escape(opening)+r'((?:\\.|[^\\\x00\n'+re.escape(closing)+r'])*)'+re.escape(closing)
+                def keep_quote(match):
+                    literals.append(match[1])
+                    return quote+"\x00"+str(len(literals)-1)+"\x00"+quote
+                line = re.sub(pattern, keep_quote, line)
         def keep_url(match):
             literals.append(match[0])
             return "\x00"+str(len(literals)-1)+"\x00"
@@ -120,18 +132,15 @@ def plain_text(text):
         for delimiter in ("**", "__", "~~", "*", "_"):
             escaped = re.escape(delimiter)
             line = re.sub(r'(?<![A-Za-z0-9_*~])'+escaped+r'(?=\S)(.+?\S|\S)'+escaped+r'(?![A-Za-z0-9_*~])', r'\1', line)
+        if prose_transform and not literal_line:
+            line = prose_transform(line)
         line = re.sub(r'\x00(\d+)\x00', lambda m: literals[int(m[1])] if int(m[1]) < len(literals) else m[0], line)
         rendered.append(line)
     return re.sub(r"\n{3,}", "\n\n", "\n".join(rendered)).strip()
 
 
-def format_reply(text, cfg=None):
-    """同一出口：保留原文/技术结构，只为保守识别的普通短句去中文尾句号。"""
-    original = text
-    result = plain_text(text)
-    if not (cfg or {}).get('reply_style', {}).get('omit_trailing_period', True):
-        return result
-    if not result or len(result) > 30 or '\n' in result:
+def _omit_short_period(result, original):
+    if not result or len(result) > 30 or '\n' in original:
         return result
     # 引用和代码在去 Markdown 前识别，避免去掉原样字符串的内容。
     if (re.search(r"[`'\"“”‘’=<>\\{}]|https?://|\d\.\d", original)
@@ -148,3 +157,36 @@ def format_reply(text, cfg=None):
     for _ in range(2):
         result = re.sub(r'。+\s*('+token_pattern()+r')?$', lambda m: m[1] or '', result)
     return result
+
+
+ASCII_PUNCTUATION = str.maketrans({
+    '，': ',', '。': '.', '！': '!', '？': '?', '；': ';', '：': ':', '、': ',',
+    '（': '(', '）': ')', '【': '[', '】': ']', '［': '[', '］': ']',
+    '｛': '{', '｝': '}', '“': '"', '”': '"', '‘': "'", '’': "'",
+    '「': '"', '」': '"', '『': "'", '』': "'", '《': '"', '》': '"',
+    '〈': '<', '〉': '>', '〔': '[', '〕': ']', '—': '-', '～': '~',
+})
+
+
+def _repair_emoticon_brackets(line):
+    def canonical(match):
+        token = '['+match[1]+']'
+        return token if is_token(token) else match[0]
+    line = re.sub(r'【([^【】\n]{1,20})】', canonical, line)
+    line = re.sub(r'［([^［］\n]{1,20})］', canonical, line)
+    def orphan(match):
+        prefix = line[:match.start()]
+        return '' if prefix.count('【') <= prefix.count('】') else match[0]
+    # Only repair the observed orphan before a recognized emoji, never arbitrary code brackets.
+    return re.sub(r'[,，、]?】(?='+token_pattern()+r')', orphan, line)
+
+
+def format_reply(text, cfg=None):
+    """统一正文标点；代码、网址、引用内容在变换前保护，不修改待确认发送记录。"""
+    omit = (cfg or {}).get('reply_style', {}).get('omit_trailing_period', True)
+    def prose(line):
+        line = _repair_emoticon_brackets(line)
+        if omit:
+            line = _omit_short_period(line, text)
+        return re.sub(r'…+', '...', line).translate(ASCII_PUNCTUATION)
+    return plain_text(text, prose_transform=prose)

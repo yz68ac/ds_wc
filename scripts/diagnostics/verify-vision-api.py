@@ -6,7 +6,8 @@ import struct
 import sys
 import zlib
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
 from wxbridge.config import load_config
 from wxbridge.ai.client import DeepSeekClient
 
@@ -14,7 +15,7 @@ from wxbridge.ai.client import DeepSeekClient
 def main():
     if "--synthetic-api" not in sys.argv:
         raise SystemExit("请显式传入 --synthetic-api；将调用配置的 API 并产生少量费用")
-    cfg = load_config(Path(__file__).resolve().parents[1]/"config.json")
+    cfg = load_config(ROOT/"config.json")
     cfg["deepseek"]["max_tokens"] = 40
     def chunk(kind, data):
         return struct.pack(">I", len(data))+kind+data+struct.pack(">I", zlib.crc32(kind+data)&0xffffffff)

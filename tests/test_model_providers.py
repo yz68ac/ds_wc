@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import urllib.error
 import unittest
 from unittest.mock import Mock, patch
 
@@ -141,6 +142,42 @@ class ProviderTests(unittest.TestCase):
             with self.assertRaisesRegex(SearchError,'missing_api_key'):SearchClient(cfg)
         cfg['search']['api_key_env']=''
         with self.assertRaisesRegex(SearchError,'invalid_api_key_env'):SearchClient(cfg)
+
+    def test_role_proxy_is_local_to_its_client_and_keeps_background_transport(self):
+        cfg=deepcopy(DEFAULTS)
+        cfg['models']['reply']=dict(profile='openai',proxy_url='http://127.0.0.1:10808')
+        validate_models(cfg)
+        chat=self.client(cfg);memory=self.client(cfg,role='memory')
+        opener=Mock();opener.open.return_value=response({'ok':True})
+        original=deepcopy(dict(os.environ))
+        with patch('wxbridge.ai.client.urllib.request.ProxyHandler') as handler,\
+             patch('wxbridge.ai.client.urllib.request.build_opener',return_value=opener) as build,\
+             patch('wxbridge.ai.client.urllib.request.urlopen',return_value=response({'ok':True})) as direct,\
+             patch('wxbridge.ai.client.urllib.request.install_opener') as install:
+            chat._post({},2);memory._post({},2)
+        handler.assert_called_once_with({'http':'http://127.0.0.1:10808','https':'http://127.0.0.1:10808'})
+        build.assert_called_once_with(handler.return_value);install.assert_not_called()
+        self.assertEqual(opener.open.call_args.args[0].full_url,'https://api.openai.com/v1/responses')
+        self.assertEqual(direct.call_args.args[0].full_url,'https://api.deepseek.com/chat/completions')
+        self.assertEqual(dict(os.environ),original)
+
+    def test_proxy_failure_never_falls_back_or_exposes_error_contents(self):
+        cfg=deepcopy(DEFAULTS);cfg['models']['reply']={'proxy_url':'http://127.0.0.1:10808'}
+        client=self.client(cfg);opener=Mock()
+        opener.open.side_effect=urllib.error.URLError('PRIVATE_PROXY_DETAILS')
+        with patch('wxbridge.ai.client.urllib.request.build_opener',return_value=opener),\
+             patch('wxbridge.ai.client.urllib.request.urlopen') as direct:
+            with self.assertRaisesRegex(ModelError,'connection_failed') as caught:client._post({},2)
+        direct.assert_not_called();self.assertNotIn('PRIVATE',str(caught.exception))
+
+    def test_invalid_proxy_configuration_is_rejected_without_echoing_credentials(self):
+        for value in ('socks5://127.0.0.1:10808','https://proxy.example:443',
+                      'http://PRIVATE:SECRET@proxy.example:80','http://proxy.example/path',
+                      'http://proxy.example?PRIVATE','http://proxy.example:bad','http://proxy.example:0','',False,[],
+                      'http://proxy.example\n'):
+            cfg=deepcopy(DEFAULTS);cfg['models']['reply']={'proxy_url':value}
+            with self.subTest(value=value),self.assertRaises(ValueError) as caught:validate_models(cfg)
+            self.assertNotIn('PRIVATE',str(caught.exception));self.assertNotIn('SECRET',str(caught.exception))
 
     def test_provider_import_is_isolated_from_bot_config_and_runtime(self):
         code='''

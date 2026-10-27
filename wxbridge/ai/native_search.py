@@ -3,6 +3,7 @@ import time
 
 from .client import ModelError
 from .output import format_reply
+from .citations import without_citations
 from .providers.common import public_url
 
 
@@ -16,12 +17,9 @@ def answer_with_native_search(cfg, client, messages, on_search=None):
     attempted = notified = False
     calls = actions = 0
 
-    def finish(text):
-        text = format_reply(text, cfg)
+    def finish(text, annotations=()):
+        text = format_reply(without_citations(text, sources, annotations), cfg)
         if not text.strip():raise ModelError('empty_reply', retryable=True)
-        # Inline provider citations are already converted to plain URL text.
-        # If a provider supplied only source metadata, attach the verified URL.
-        if sources and not any(s['url'] in text for s in sources):text += '\n参考：'+sources[0]['url']
         return text, dict(attempted=attempted, calls=calls, results=len(sources),
                           errors=list(dict.fromkeys(errors)), backend='native', actions=actions)
 
@@ -50,6 +48,6 @@ def answer_with_native_search(cfg, client, messages, on_search=None):
         if result.message.get('tool_calls'):raise ModelError('unexpected_client_tool')
         if errors:return finish('这次联网查询没有完成，暂时核实不了')
         if attempted and not sources:return finish('这次没有查到可核对的来源，暂时核实不了')
-        return finish(result.message.get('content') or '')
+        return finish(result.message.get('content') or '', info.get('citations', []))
     errors.append('tool_limit')
     return finish('这次查询还没完成，先到这里')

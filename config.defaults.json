@@ -17,6 +17,7 @@
   "source": "db",
   "poll_interval_seconds": 2,
   "reply_to_backlog": false,
+  "persona": null,
   "reply_style": {
     "wechat_emoticons_enabled": false,
     "omit_trailing_period": true
@@ -98,11 +99,11 @@
       "thinking": "enabled",
       "reasoning_effort": "max"
     },
-    "openai_terra": {
+    "openai": {
       "provider": "openai_responses",
       "base_url": "https://api.openai.com/v1",
       "api_key_env": "OPENAI_API_KEY",
-      "model": "gpt-6.1-terra",
+      "model": "gpt-6-luna",
       "native_search_supported": true,
       "thinking": "enabled",
       "reasoning_effort": "max",
@@ -179,7 +180,7 @@
     },
     "min_interval_seconds": 60,
     "prompt_max_chars": 1200,
-    "max_tokens": 8192,
+    "max_tokens": 16384,
     "timeout_seconds": 90,
     "avatar": {
       "enabled": true,

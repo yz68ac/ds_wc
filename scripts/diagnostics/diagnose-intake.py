@@ -5,15 +5,15 @@ import json
 import sys
 import time
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
 from wxbridge.app.bot import WeChatDeepSeekBot
 from wxbridge.config import load_config
 from wxbridge.app.runtime import instance_lock
 
 
 def main():
-    root = Path(__file__).resolve().parents[1]
-    cfg = load_config(root/"config.json")
+    cfg = load_config(ROOT/"config.json")
     with ExitStack() as stack:
         for name in sorted({cfg["queue"]["file"]+".lock", str(Path(cfg["decrypted_dir"])/".listener.lock")}):
             stack.enter_context(instance_lock(name))

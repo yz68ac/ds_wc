@@ -103,4 +103,6 @@ python3 scripts/release.py verify ../wxbridge-release.zip
 
 更新时保留服务器 `config.json`、`.env`、`memory/`、`prompts/system.md`、`prompts/memory.md` 和全部 `/run/wxbridge-trial` 数据。包中的提示词是参考版本；明确要更新人格或整理规则时才单独合并。携带 `release-manifest.json`，`live-status.json` 就能报告运行提交号；有效配置另有哈希便于核对。没有清单的开发目录回退读取 Git 提交号。
 
+部署脚本默认拒绝删除旧发布文件、默认保留服务器提示词。确认目录迁移后，可为每个旧路径传入一次 `--allow-removed 路径`，清单必须与实际移除项完全一致；旧文件进入同一私有备份，失败可恢复。用户明确要求同步当前人格时，使用 `--update-prompts` 将版本化提示词一并备份和更新。两项都不改变密钥、记忆与队列的保护。
+
 本次队列迁移使用 SQLite 生成列与索引，旧版二列写入仍兼容。回滚时停止监听、恢复备份代码和相匹配的默认 JSON，保留当前队列；不要用旧队列快照覆盖已确认的新发送记录。内存队列的备份也必须留在同一私有内存挂载中，不能复制聊天任务到普通磁盘。发布工具负责构建与验证，不自动停止服务、覆盖生产文件或推送 GitHub。

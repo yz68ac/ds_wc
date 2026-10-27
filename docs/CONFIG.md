@@ -1,8 +1,16 @@
 # 配置项说明
 
+## 角色名称与称呼
+
+可以在实际 `config.json` 中集中设置，例如 `"persona": {"name": "ds", "aliases": ["小D", "DeepSeek"], "prompt_file": "prompts/system.md"}`。`name` 用于人格中的 `{bot_name}`，名称与 `aliases` 一起参与文字点名；`prompt_file` 相对配置文件所在目录解析。
+
+`persona` 缺失或为 `null` 时沿用原有配置。每个新字段只覆盖对应旧字段：`name` 覆盖 `target.bot_name`，`prompt_file` 覆盖 `deepseek.system_prompt_file`（包括旧的内联人格）；明确提供 `aliases` 时，它替换旧的文字点名别名列表，包括旧 `trigger.mentions` 推导的名称。未提供 `aliases` 时保留原来所有旧名称。真实微信 @ 仍以账号 ID 元数据识别，不依赖这些名称。修改配置后重启监听；修改同一路径下的人格文件下次生成时生效。
+
 2026-10-25新增的队列容量、生成背压、可选上下文降级与状态字段见[审阅修复](REVIEW_FIXES.md)。
 
-全部默认配置保存在源码根目录 [config.defaults.json](../config.defaults.json)，与 `wxbridge` 文件夹同级。[config.example.jsonc](../config.example.jsonc) 是带注释的自定义配置参考；实际运行使用标准 JSON 格式的 `config.json` 覆盖默认值。只需填写要覆盖的字段，无需复制全部示例；复制字段时去掉注释，程序不直接加载这个 JSONC 参考文件。真实 Linux 配置在 `/opt/wxbridge/config.json`，本地修改不会自动同步。
+根目录的配置文件按用途保留三份：`config.json` 是日常修改的本机实际配置；[config.defaults.json](../config.defaults.json) 是随代码分发的默认值；[config.example.jsonc](../config.example.jsonc) 是唯一的带注释完整参考，包含模型供应商、角色选择和联网设置。API Key 仍写 `.env`，不写在这三份配置里。
+
+实际运行用标准 JSON 的 `config.json` 覆盖默认值，只需填写要修改的字段，无需复制全部示例。默认值和完整示例全部使用 DeepSeek；`model_profiles` 中的其他供应商只是备用连接，未选中不会调用。此次临时 GPT 设置仅放本机 `config.json`，不改变项目默认行为，详见[模型供应商适配](MODEL_API.md)。复制字段时去掉注释，程序不直接加载 JSONC。真实 Linux 配置在 `/opt/wxbridge/config.json`，本地修改不会自动同步。
 
 ## 配置如何生效
 
@@ -16,7 +24,7 @@
 
 主动接话使用 `proactive` 配置段，默认关闭，可在实际配置中按需开启。保留近300秒十条文字、自然称呼/引用与低频多人聊天候选；默认取消小时入场与接话轮数上限（对应字段0）。新正文句中出现独立的ds/DS等称呼也可按上下文唤起，绕过随机入场的五分钟冷却、小时预算和六十秒判断间隔，仍遵守十秒检查节流和八秒发送间隔。真实@接纳时或自主首句确认发出后进入120秒参与窗口；成员新消息续期，机器人发言不续期，连续安静两分钟退出。沉默一次或换了聊天对象不退出，不增加旧版无人回应后的十分钟退让。未点名的独立重新入场保留五分钟冷却；真实@优先与30字短句上限继续生效。没有新的成员文字不请求判断模型。全部参数、重启与失效规则见 [主动接话说明](PROACTIVE.md)。
 
-人物记忆使用 `memory` 配置段：enabled（默认 true）、directory（源码根目录下 memory）、model（deepseek-flash）、thinking（enabled）、reasoning_effort（max）、min_interval_seconds（60）、prompt_max_chars（1200）、max_tokens（8192）、timeout_seconds（90）。thinking 可选 enabled/disabled，reasoning_effort 可选 low/high/max，关闭思考时不发送深度参数；记忆整理与主回答的思考配置各自独立，当前默认均为 max。规则、期限和维护命令见 [MEMORY.md](MEMORY.md)。
+人物记忆使用 `memory` 配置段：enabled（默认 true）、directory（源码根目录下 memory）、model（deepseek-flash）、thinking（enabled）、reasoning_effort（max）、min_interval_seconds（60）、prompt_max_chars（1200）、max_tokens（16384）、timeout_seconds（90）。thinking 可选 enabled/disabled，reasoning_effort 可选 low/high/max，关闭思考时不发送深度参数；记忆整理与主回答的思考配置各自独立，当前默认均为 max。规则、期限和维护命令见 [MEMORY.md](MEMORY.md)。
 
 `memory.avatar` 控制初见视觉参考：enabled（true）、max_per_batch（2）、max_bytes（524288）、retry_interval_seconds（3600）。只读取当前账号的头像缓存；文字印象及好感度请求看不到头像，视觉分类独立调用，失败不阻止文字整理。详见 [初见头像线索](MEMORY.md#初见头像线索)。
 
@@ -155,7 +163,7 @@ dry-run 使用独立的 `.dry-run` 队列及 `dry-run/live-status.json`，不消
 
 ## 按需联网搜索
 
-`search.enabled=true` 默认开启，继续使用当前模型和同一 DeepSeek Key。默认 `max_tool_rounds=2`、`max_requests=3`、`max_results=5`、单工具请求超时 15 秒、整体生成预算 120 秒。普通聊天、接梗不为了查出处自动搜索；明确问出处或含义且需要核实时可查。`feedback_enabled=false` 默认关闭“我去看看”等等待提示，只发送最终回答及必要来源。需要恢复提示时显式开启，它仍遵守冷却、队列及发送确认，不会消耗最终回答分片。完整范围、错误行为和费用说明见 [搜索说明](SEARCH.md)。
+`search.enabled=true` 默认开启，继续使用当前模型和同一 DeepSeek Key。默认 `max_tool_rounds=2`、`max_requests=3`、`max_results=5`、单工具请求超时 15 秒、整体生成预算 120 秒。普通聊天、接梗不为了查出处自动搜索；明确问出处或含义且需要核实时可查。`feedback_enabled=false` 默认关闭“我去看看”等等待提示，只发送最终回答，不自动附加引用链接；用户明确要求的官网或下载地址仍可提供。需要恢复提示时显式开启，它仍遵守冷却、队列及发送确认，不会消耗最终回答分片。完整范围、错误行为和费用说明见 [搜索说明](SEARCH.md)。
 
 ## 环境变量覆盖
 

@@ -64,7 +64,7 @@ class SearchTests(unittest.TestCase):
         text, meta = self.answer()
         self.assertNotIn('我去看看', text)
         self.assertIn('这次主要改了速度', text)
-        self.assertIn('https://example.com/release', text)
+        self.assertNotIn('https://example.com/release', text)
         self.assertTrue(meta['attempted'])
         self.assertEqual(meta['calls'], 1)
         # 此回调是内部事件，主进程开关控制是否加入群发送队列。
@@ -75,7 +75,7 @@ class SearchTests(unittest.TestCase):
         self.backend.search.side_effect = lambda *args: (self.notice.assert_called_once(), result())[1]
         text, meta = self.answer()
         self.assertIn("核实后的回答", text)
-        self.assertIn("https://example.com/release", text)
+        self.assertNotIn("https://example.com/release", text)
         self.assertNotIn("草稿", text)
         self.assertTrue(meta["attempted"])
         self.assertEqual(meta["calls"], 1)
@@ -102,12 +102,12 @@ class SearchTests(unittest.TestCase):
         self.backend.fetch.assert_called_once()
         self.notice.assert_called_once()
 
-    def test_short_plain_reply_attaches_only_primary_fetched_source(self):
+    def test_short_plain_reply_keeps_source_internal_without_attaching_a_url(self):
         self.backend.search.return_value = dict(results=[*result()['results'], *result('https://example.com/detail')['results']])
         self.client.complete.side_effect = [dict(tool_calls=[call(query='合成资料')]),
             dict(tool_calls=[call('web_fetch', url='https://example.com/detail')]), dict(content='**查到了**，这次主要改了速度。')]
         text, _ = self.answer()
-        self.assertEqual(text, '查到了，这次主要改了速度\n参考：https://example.com/detail')
+        self.assertEqual(text, '查到了,这次主要改了速度')
         rules = self.client.complete.call_args.args[0][0]['content']
         self.assertTrue(rules.startswith('合成人格'))
         self.assertIn('只发纯文本', rules)
@@ -161,7 +161,7 @@ class SearchTests(unittest.TestCase):
         self.client.complete.side_effect = [dict(tool_calls=[call(query="查询")]), DeepSeekError("synthetic")]
         text, meta = self.answer()
         self.assertIn("超时", text)
-        self.assertIn("https://example.com/release", text)
+        self.assertNotIn("https://example.com/release", text)
         self.assertIn("answer_generation_failed", meta["errors"])
 
     def test_initial_model_error_keeps_existing_failure_semantics(self):

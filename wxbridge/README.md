@@ -1,6 +1,6 @@
 # wxbridge 代码地图
 
-当前目录按四个职责组织，根目录只保留命令入口、版本和配置。Linux 环境准备见 [部署说明](../docs/DEPLOYMENT.md) 为准。
+当前目录按五个职责组织，根目录保留命令入口、版本和配置。Linux 环境准备以 [部署说明](../docs/DEPLOYMENT.md) 为准；文档分类见 [导航](../docs/README.md)。
 
 ```text
 wxbridge/
@@ -11,7 +11,7 @@ wxbridge/
 ├── app/                   应用调度
 │   ├── runtime.py         启动规则、单实例锁、退出清理
 │   ├── bot.py             接收、生成与后台调度、状态
-│   ├── delivery.py        发送提交、冷却、UI结果和发出记录确认
+│   ├── delivery.py        发送提交、冷却、原生/UI结果和发出记录确认
 │   ├── conversation.py    确认后的会话变化纯函数
 │   ├── task_policy.py     生成错误分类，不依赖具体传输
 │   ├── metrics.py         有界耗时和API用量统计
@@ -20,13 +20,14 @@ wxbridge/
 │   ├── build_info.py      运行提交号和有效配置哈希
 │   ├── proactive.py       主动接话判断、前台优先和发送前复核
 │   ├── learning.py        活跃闲聊学习、任务登记和去重
-│   ├── workers.py         可终止的 API/UI 工作进程
+│   ├── workers.py         可终止的 API、原生发送及UI工作进程
 │   └── diagnostics.py     环境、数据库和界面诊断
 ├── ai/                    生成回答
 │   ├── client.py          按角色调用HTTP、结构化结果、安全错误
 │   ├── roles.py           独立模型角色与旧配置兼容解析
 │   ├── prompts.py         人格读取与文本提示词构造
 │   ├── context.py         可配置历史窗口与去重，默认五分钟
+│   ├── identity.py        稳定成员编号、BOT标记与引用作者一致映射
 │   ├── memory.py          成员标签、带来源快照和后台结构化整理请求
 │   ├── avatars.py         独立头像视觉分类、有限枚举校验；不推测人格
 │   ├── search.py          按需搜索/抓取、工具循环与真实来源
@@ -43,16 +44,29 @@ wxbridge/
 │   ├── pats.py            拍一拍解析；实时同步尚未稳定验收
 │   ├── messages.py        文本触发兼容与回复分片
 │   └── ui.py              AT-SPI/X11 界面控制和发送保护
+├── native/                指定收件人的后台文本发送
+│   ├── command.py         native-api CLI入口
+│   ├── client.py          外部Python客户端
+│   ├── api.py             主进程私有接口、允许清单与请求去重
+│   ├── protocol.py        有界IPC、错误分类和UTF-8分片
+│   ├── sender.py          发送工作进程到helper的适配
+│   ├── helper.py          root隔离进程、版本校验与短时Frida连接
+│   ├── agent.js           微信进程内的后台服务调用
+│   └── profile.json       固定版本hash和函数指纹
 └── storage/               运行状态存储
     ├── journal.py         SQLite 队列、游标、意图与恢复
     ├── person_memory.py   人物记忆、来源校验、遗忘、分数和原子写入
+    ├── memory_selection.py 按当前话题检索记忆，避免旧话题干扰
+    ├── relationships.py   好感、信任、熟悉度与短期情绪校验
     ├── expression_memory.py 语境表达证据、成熟、反例、遗忘和提示词注入
     └── memoryfs.py        私有 tmpfs,noswap 检查
 ```
 
 建议先读 [cli.py](cli.py)，再读 [app/runtime.py](app/runtime.py) 和 [app/bot.py](app/bot.py)。想调整生成内容，查看 [ai/prompts.py](ai/prompts.py)、[ai/client.py](ai/client.py)；人格正文仍在上一级 [prompts/system.md](../prompts/system.md)。完整流程见 [代码导读](../docs/CODE_GUIDE.md)。
 
-主进程负责所有微信数据库查询；工作进程只调用模型或操作界面。`ai/images.py` 接收主进程给出的本地文件描述，不创建 `WeChatStore`，不保存图片明文。队列、冷却、真实 @、图片引用及确认策略保持原行为。
+主进程负责所有微信数据库查询；工作进程只调用模型或执行发送。`ui.backend=native_service` 经 `native/sender.py → root helper → 微信进程内 agent.js` 提交，不读取输入框或选择会话；桌面后端仍由 `wechat/ui.py` 执行。两者均由主进程核对新增发出记录。进程、权限和注入边界见 [native 地图](native/README.md)。
+
+`ai/images.py` 接收主进程给出的本地文件描述，不创建 `WeChatStore`，不保存图片明文。当前话题的记忆选择由 `storage/memory_selection.py` 处理，不修改权威人物记录；成员和引用作者由 `ai/identity.py` 统一编号。
 
 需要联网时，API 工作进程发送内部进度事件，默认只向群里发送最终回答。显式开启 `search.feedback_enabled` 才把一次性等待提示纳入同一确认流程；关闭后不补发未提交提示，已有意图仍核对发出记录。搜索详情见 [SEARCH.md](../docs/SEARCH.md)。
 

@@ -91,20 +91,6 @@ def public_url(value):
     except ValueError:return False
 
 
-def cited_text(text, annotations):
-    """Plain clickable URLs at citation locations, without Markdown or raw IDs."""
-    inserts, seen = {}, set()
-    for annotation in annotations:
-        found = source(annotation)
-        if found and found['url'] not in seen and found['url'] not in text:
-            end = annotation.get('end_index', len(text))
-            if type(end) is not int or not 0 <= end <= len(text):end = len(text)
-            inserts.setdefault(end, []).append(found['url']);seen.add(found['url'])
-    for end in sorted(inserts, reverse=True):
-        text = text[:end]+'（'+'；'.join(inserts[end])+'）'+text[end:]
-    return text
-
-
 def data_image(url):
     match = re.fullmatch(r'data:(image/(?:png|jpeg|gif|webp));base64,([A-Za-z0-9+/=\r\n]+)', url)
     if match:return dict(type='base64', media_type=match[1], data=match[2])

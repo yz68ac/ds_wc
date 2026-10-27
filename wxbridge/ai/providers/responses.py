@@ -3,7 +3,7 @@ from copy import deepcopy
 
 from .base import ModelError, ModelResult
 from .chat_completions import ChatCompletionsAdapter
-from .common import assistant_state, cited_text, conversion, image_source, integer, search_limit, source, state_items, tool_call, tool_definition
+from .common import assistant_state, conversion, image_source, integer, search_limit, source, state_items, tool_call, tool_definition
 
 
 class ResponsesAdapter(ChatCompletionsAdapter):
@@ -82,7 +82,7 @@ class ResponsesAdapter(ChatCompletionsAdapter):
             code = (response.get('error') or {}).get('code')
             raise ModelError('provider_failed', retryable=code in ('server_error', 'rate_limit_exceeded', 'timeout'))
         output = response['output'];texts, calls, citations, sources, errors = [], [], [], [], []
-        searched = actions = 0
+        searched = actions = text_offset = 0
         refused = False
         for item in output:
             if not isinstance(item, dict):raise ModelError('invalid_response')
@@ -92,12 +92,16 @@ class ResponsesAdapter(ChatCompletionsAdapter):
                     if block.get('type') == 'refusal':refused = True
                     elif block.get('type') == 'output_text':
                         if not isinstance(block.get('text'), str):raise ModelError('invalid_response')
-                        annotations = [a for a in block.get('annotations', []) if a.get('type') == 'url_citation']
-                        texts.append(cited_text(block['text'], annotations))
+                        texts.append(block['text'])
                         for annotation in block.get('annotations', []):
                             if annotation.get('type') == 'url_citation':
                                 citation = source(annotation)
-                                if citation:citations.append(citation)
+                                if citation:
+                                    start, end = annotation.get('start_index'), annotation.get('end_index')
+                                    if type(start) is int and type(end) is int and 0 <= start < end <= len(block['text']):
+                                        citation.update(start_index=text_offset+start, end_index=text_offset+end)
+                                    citations.append(citation)
+                        text_offset += len(block['text'])+1
             elif kind == 'function_call':
                 calls.append(tool_call(item.get('call_id'), item.get('name'), item.get('arguments')))
             elif kind == 'web_search_call':

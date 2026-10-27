@@ -1,5 +1,6 @@
-// 配置参考：这里的注释供阅读，实际运行使用标准 JSON 格式的 config.json。
-// 只需将要覆盖的字段写入 config.json；未填写项继承 config.defaults.json。
+// 唯一完整配置参考：含模型连接、角色选择和其他功能的注释；程序不直接加载此文件。
+// 日常只改 config.json 中需要覆盖的字段；未填写项继承 config.defaults.json。
+// 默认和本示例全部使用 DeepSeek；临时切换 GPT 只写在本机 config.json，不修改默认值。
 // API Key 放同目录的 .env，人格正文放 prompts/system.md。
 {
   // 原生发送外部入口：默认关闭；需要另行部署私有helper，普通机器人回复仍走桌面。
@@ -22,10 +23,13 @@
   "source": "db",
   "poll_interval_seconds": 2.0, // 新消息常规查询间隔（秒）；发送就绪时补读，工作进程与发送确认仍及时调度。
   "reply_to_backlog": false, // 生产入口强制关闭，避免新部署补答旧消息。
+  // 集中配置身份：可改为 {"name":"ds", "aliases":["小D", "DeepSeek"], "prompt_file":"prompts/system.md"}。
+  // null 或未设置时继续使用旧字段；按字段覆盖旧值。显式 aliases 替换旧名称列表，不改变真实 @。
+  "persona": null,
   // 输出语气：只控制机器人表达，不修改群友原文；改配置后重启监听。
   "reply_style": {
     "wechat_emoticons_enabled": false, // 开启后偶尔用一个微信表情，也可单发表情；按需在实际配置开启。
-    "omit_trailing_period": true // 普通短句去掉末尾“。”及表情前的句号；保留其他标点和技术内容。
+    "omit_trailing_period": true // 普通短句省略尾句号；自写正文统一英文半角标点，代码、链接及引用内容保留。
   },
   // @ 回复队列：合并默认关闭，每次真实 @ 独立排队。
   "queue": {
@@ -82,7 +86,7 @@
     "context_budget_strategy": "strict", // 可选 recent：超预算时省略完整旧消息并告知模型，保留当前提问及引用；默认不启用。
     "max_reply_chars": 1800 // 微信单条分片上限；日常短答偏好另由提示词控制。
   },
-  // 真实 @ 和正文关键词点名的回复模型；密钥不要直接写在这里。
+  // 历史基础连接与人格文件；未选择 profile 的角色沿用这里的连接，密钥不要写在 JSON。
   "deepseek": {
     "api_key_env": "DEEPSEEK_API_KEY", // 从项目根目录 .env 或已有环境变量读取。
     "base_url": "https://api.deepseek.com",
@@ -95,8 +99,10 @@
     "system_prompt_file": "prompts/system.md" // 每次生成重读，同一路径下改人格无需重启。
   },
   // null 沿用已有 deepseek/memory 设置；填连接名称即可切换默认供应商。
-  // 可选 deepseek_chat / openai_terra / claude_messages；默认配置已内置，不必手工合并连接。
+  // 可选 deepseek_chat / openai / claude_messages；默认配置已内置，不必手工合并连接。
+  // 连接名称只是别名，实际协议由 provider 决定，具体型号由 model 决定。
   "model_profile": null,
+  // 下面只是可选连接预设，不代表启用；只有被 model_profile 或 models.<角色>.profile 选中才使用。
   "model_profiles": {
     "deepseek_chat": {
       "provider": "deepseek",
@@ -106,12 +112,12 @@
       "thinking": "enabled",
       "reasoning_effort": "max"
     },
-    "openai_terra": {
+    "openai": {
       "provider": "openai_responses",
       "base_url": "https://api.openai.com/v1",
       "api_key_env": "OPENAI_API_KEY",
-      "model": "gpt-6.1-terra",
-      "native_search_supported": true,
+      "model": "gpt-6-luna",
+      "native_search_supported": true, // 网关不支持内置搜索时改为 false，并使用 external。
       "thinking": "enabled",
       "reasoning_effort": "max",
       "temperature": null
@@ -132,12 +138,15 @@
     }
   },
   // profile=null 继承 model_profile；给某个角色填连接名即可独立选择 API。
+  // 全局与各角色保持 null，全部沿用 DeepSeek；临时试用 GPT 只在 config.json 选择 reply=openai。
+  // 仅 OpenAI 需要代理时，在 config.json 的 models.reply 中加 proxy_url="http://127.0.0.1:10808"。
+  // 代理只影响该角色，不设置全局环境变量；填写 HTTP 代理入口，不要填 socks5://。
   // 例如 memory.profile="deepseek_chat" 可让记忆继续使用 DeepSeek。
   // provider: deepseek / openai_compatible / openai_responses / anthropic。
   // participation 的思考独立于普通 @ 回复；下面可设 enabled/disabled 和 low/high/max。
   // 主动接话先由 participation 判断；决定开口才调用 reply 生成正文。真实 @ 直接用 reply。
   "models": {
-    "reply": {"profile": null}, // 所有实际回复共用这个角色。
+    "reply": {"profile": null}, // 所有实际回复沿用 DeepSeek 的模型、预算和时限。
     "participation": {
       "profile": null,
       "thinking": "disabled", // 仅判断是否介入、回应哪条新消息；不生成正文。
@@ -152,11 +161,13 @@
       "max_tokens": 1200
     }
   },
-  // 按需联网，默认只发最终回答。external 保留现有 DeepSeek Search/Fetch。
+  // 默认使用 DeepSeek Search/Fetch，和 DeepSeek 聊天共用密钥，只发最终回答。
+  // 临时使用 OpenAI 时，在 config.json 把 reply 选为 openai、search.backend 选为 native。
+  // auto 按所选协议预选路线；失败不自动切换。外部搜索可用 api_key_env 另指定密钥。
   "search": {
     "enabled": true,
-    "backend": "external", // auto 按所选连接预选原生/外部搜索；native 强制原生搜索。
-    "base_url": "https://api.deepseek.com",
+    "backend": "external", // 默认 DeepSeek；native 仅适用于支持内置搜索的连接。
+    "base_url": "https://api.deepseek.com", // 仅 external 后端使用，native 忽略此地址。
     "timeout_seconds": 15,
     "total_timeout_seconds": 120, // 一整轮搜索回答的总时限。
     "max_tool_rounds": 2,
@@ -194,7 +205,7 @@
     },
     "min_interval_seconds": 60, // 后台整理最短间隔，前台回复优先。
     "prompt_max_chars": 1200, // 每轮注入的记忆字符预算。
-    "max_tokens": 8192, // 包含思考与结构化输出，max 思考时留足预算；并非固定用满。
+    "max_tokens": 16384, // 包含思考与结构化输出，max 思考时留足预算；并非固定用满。
     "timeout_seconds": 90, // 后台总时限，前台需要并发位置时仍可抢占。
     // 头像只提供私下的弱初见线索，不据此改变好感分数。
     "avatar": {

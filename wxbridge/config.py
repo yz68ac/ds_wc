@@ -69,6 +69,30 @@ def load_config(path: str | Path = "config.json") -> dict[str, Any]:
     deepseek_data = data.get("deepseek") or {}
     if "system_prompt" in deepseek_data and "system_prompt_file" not in deepseek_data:
         cfg["deepseek"]["system_prompt_file"] = ""
+    # Explicit persona fields override the legacy fields one by one; absent
+    # fields retain existing behavior, including legacy inline prompts.
+    persona = cfg.get('persona')
+    if persona is not None:
+        if not isinstance(persona, dict) or set(persona) - {'name', 'aliases', 'prompt_file'}:
+            raise ValueError('persona 必须为对象，仅支持 name、aliases 和 prompt_file')
+        if 'name' in persona:
+            name = persona['name']
+            if not isinstance(name, str) or not 1 <= len(name.strip()) <= 32 or any(ord(c) < 32 for c in name):
+                raise ValueError('persona.name 必须为非空短名称')
+            cfg['target']['bot_name'] = name.strip()
+        if 'aliases' in persona:
+            names = persona['aliases']
+            if (not isinstance(names, list) or len(names) > 10 or
+                    any(not isinstance(n, str) or not 1 <= len(n.strip()) <= 32 or
+                        any(ord(c) < 32 for c in n) for n in names)):
+                raise ValueError('persona.aliases 必须为最多10个非空短称呼')
+            persona['aliases'] = [n.strip() for n in names]
+            cfg['proactive']['opportunities']['address_names'] = persona['aliases'].copy()
+        if 'prompt_file' in persona:
+            prompt = persona['prompt_file']
+            if not isinstance(prompt, str) or not prompt.strip() or any(ord(c) < 32 for c in prompt):
+                raise ValueError('persona.prompt_file 必须为非空路径')
+            cfg['deepseek']['system_prompt_file'] = prompt.strip()
     if cfg["deepseek"].get("reasoning_effort") not in (None, "low", "high", "max"):
         raise ValueError("deepseek.reasoning_effort 必须为 low/high/max")
     window = cfg["target"]["context_window_seconds"]
@@ -167,7 +191,7 @@ def load_config(path: str | Path = "config.json") -> dict[str, Any]:
         if type(learning.get(key)) is not int or not minimum <= learning[key] <= maximum:
             raise ValueError('memory.learning.'+key+' 超出范围')
     for key, minimum, maximum in (("min_interval_seconds", 60, 86400), ("prompt_max_chars", 100, 1200),
-                                  ("max_tokens", 256, 8192), ("timeout_seconds", 1, 120)):
+                                  ("max_tokens", 256, 16384), ("timeout_seconds", 1, 120)):
         if type(memory[key]) is not int or not minimum <= memory[key] <= maximum:
             raise ValueError(f"memory.{key} 超出范围 {minimum}–{maximum}")
     avatar = memory["avatar"]

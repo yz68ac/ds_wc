@@ -652,7 +652,7 @@ class PipelineTests(unittest.TestCase):
         self.bot.tick()
         generator = self.search_started()
         notice = self.sends()[0].payload[2]
-        self.assertEqual(notice, self.cfg["search"]["feedback_phrases"][0].removesuffix("。"))
+        self.assertEqual(notice, "我去查查,等我一下")
         self.assertEqual(self.bot.journal.head()["intent"]["kind"], "notice")
         self.sends()[0].result = dict(ok=True, ui=dict(submitted=True))
         self.add(2, sender="wxid_self", text=notice, mention=False)
@@ -780,7 +780,7 @@ class WorkerTests(unittest.TestCase):
                 self.assertIn("只输出纯文本", prompt[0]["content"])
         finally:
             logging.disable(prior)
-        self.assertEqual(connection.send.call_args.args[0], dict(ok=True, reply="简单说，先这样"))
+        self.assertEqual(connection.send.call_args.args[0], dict(ok=True, reply="简单说,先这样"))
 
     def test_progress_event_does_not_replace_final_result(self):
         from wxbridge.app.workers import _work

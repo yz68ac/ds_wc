@@ -2,7 +2,7 @@
 
 业务统一使用 `ModelClient`、`ModelError`；供应商负责请求字段、HTTP 地址与认证、响应解析和工具续接。已实现 DeepSeek、Chat Completions 兼容、OpenAI Responses、Anthropic Messages。微信、人格、记忆来源校验、队列和并发调度保持原分工。
 
-没有新增常驻服务、第三方 SDK 或动态插件系统。代码仍在同一个仓库内，不单独发布模型包。本轮只修改本地源码，未更新 Linux 线上服务。
+没有新增常驻服务、第三方 SDK 或动态插件系统。代码仍在同一个仓库内，不单独发布模型包。代码与实际运行配置分别维护，部署时合并指定的模型覆盖项，不把密钥和本机配置打进发布包。
 
 ## 1. 文件分工
 
@@ -52,28 +52,46 @@ except ModelError as exc:
 
 ## 3. 通过命名连接选择供应商
 
-默认配置已内置三套连接：[config.defaults.json](../config.defaults.json)。完整带注释示例在 [config.example.jsonc](../config.example.jsonc)，另保留 [切换示例](../config.providers.example.jsonc)。实际启动配置仍为 `config.json`，不能把 JSONC 文件直接传给现有配置加载器。
+默认配置已内置三套连接：[config.defaults.json](../config.defaults.json)。供应商、角色和联网的说明统一放在 [config.example.jsonc](../config.example.jsonc)。默认值与完整示例全部使用 DeepSeek；其他供应商只是未启用的连接预设。临时切换只修改实际 `config.json`，程序不直接加载 JSONC 参考文件。
 
 无需再手工合并连接。直接在实际 `config.json` 中选择：
 
 ```json
-"model_profile": "openai_terra"
+"model_profile": "openai"
 ```
 
-内置 `deepseek_chat`、`openai_terra`、`claude_messages` 三个连接。默认 `model_profile=null` 沿用原来的 DeepSeek/记忆配置，不切换接口；各角色的 `profile=null` 表示继承全局选择。未选中的连接不要求提供密钥。对应密钥环境变量分别为 `DEEPSEEK_API_KEY`、`OPENAI_API_KEY`、`ANTHROPIC_API_KEY`，只写项目根目录 `.env`，不要写进 JSON 或 Git。
+内置 `deepseek_chat`、`openai`、`claude_messages` 三个连接。默认 `model_profile=null` 沿用原来的 DeepSeek/记忆配置，不切换接口；各角色的 `profile=null` 表示继承全局选择。未选中的连接不要求提供密钥。对应密钥环境变量分别为 `DEEPSEEK_API_KEY`、`OPENAI_API_KEY`、`ANTHROPIC_API_KEY`，只写项目根目录 `.env`，不要写进 JSON 或 Git。
 
-本地新建的 `config.json` 已展开连接和各角色选择项，便于直接查看和修改；这是本地模型覆盖配置，Linux 的群、路径、密钥和运行配置没有更新。连接地址或模型需要自定义时，可直接编辑其中的 `model_profiles`；未覆盖的字段继续继承默认配置。
+`config.defaults.json` 保存项目默认值，`config.example.jsonc` 提供带注释的参考，`config.json` 保存当前机器的实际覆盖项并由 Git 忽略。本地 `config.json` 只保留模型选择项，不重复展开内置连接；未填写的字段继承默认值。需要自定义地址或型号时，可在 `config.json` 的 `model_profiles` 下只填写对应连接需要覆盖的字段。Linux 上只合并指定的覆盖项，保留其群、路径和其他运行设置。
 
-若希望主回复用 Terra、记忆继续用 DeepSeek：
+`openai` 在 `model_profile` 中只是连接名称；实际协议由该连接的 `provider` 决定，当前为 `openai_responses`，具体型号由 `model` 决定。修改型号无需重命名连接。
+
+本次临时试用只在本机 `config.json` 覆盖：聊天和联网使用 GPT-6 Luna，参与判断、记忆和头像继续使用原来的 DeepSeek：
 
 ```json
 {
-  "model_profile": "openai_terra",
+  "model_profile": null,
   "models": {
-    "memory": { "profile": "deepseek_chat" }
+    "reply": { "profile": "openai", "max_tokens": 8192, "timeout_seconds": 90 },
+    "participation": { "profile": null },
+    "memory": { "profile": null },
+    "avatar": { "profile": null }
+  },
+  "search": {
+    "enabled": true,
+    "backend": "native",
+    "feedback_enabled": false
   }
 }
 ```
+
+内置 `openai` 连接使用 `gpt-6-luna`、Responses API 和 `OPENAI_API_KEY`。聊天回复与按需联网共用此连接；本地 `config.json` 已按上述方式选择。参与判断、记忆与头像没有选择该连接，不会因切换聊天模型而一起切换。所有实际回复（包括关键词触发与主动接话正文）都属于 `reply`。
+
+密钥由使用者写入项目根目录 `.env` 的 `OPENAI_API_KEY=`，不要填进 JSON。当前思考保持 `max`，输出预算为 8192 tokens（包含内部思考），超时 90 秒；人格、短答偏好和纯文本要求保持原配置。联网只启用 `web_search`，不启用其他 OpenAI 内置工具，也不发送等待提示。
+
+试用结束后，移除 `config.json` 中 `models.reply` 的临时覆盖，并把 `search.backend` 改回 `external`（或移除该字段），重启监听即可恢复默认全 DeepSeek。只把 `profile` 改为 `null` 不会清除同一角色里已有的 8192 token、90 秒覆盖值；完整移除临时角色配置才能恢复默认预算与时限。
+
+OpenAI 官方文档：[GPT-6 Luna](https://developers.openai.com/api/docs/models/gpt-6-luna)、[Web search](https://developers.openai.com/api/docs/guides/tools-web-search)（核对日期：2026-10-27）。
 
 继承顺序：旧 `deepseek/memory` 和角色默认值 → 当前角色选择的命名连接 → 当前角色的显式覆盖。角色 `profile` 替代全局选择；已有角色中的 `provider/base_url/model` 等显式字段仍然优先，合并时应检查这些旧值。主回复、参与判断、记忆、头像都支持独立选择。默认示例仍仅关闭参与判断的思考。
 
@@ -120,6 +138,12 @@ except ModelError as exc:
 
 `reply` 不改变 `participation`、`memory` 或 `avatar`。需要替换其它角色时，在对应覆盖对象设置连接、模型及思考参数；特别注意记忆和头像原本还继承 `memory` 的模型默认值，不能只换主回复就假定全部请求都已迁移。当前参与判断关闭思考、其它角色的原设置均保留。
 
+### 单独为模型连接配置代理
+
+Linux 的 OpenAI 请求需要代理时，只在实际 `config.json` 的 `models.reply` 中增加 `"proxy_url": "http://127.0.0.1:10808"`。也可放进某个命名连接，由选择该连接的角色使用。主回复与原生搜索共用此传输；记忆、头像和参与判断未选择它就不会跟随，不设置系统或进程全局代理。
+
+当前支持无账号密码的 HTTP CONNECT 代理；HTTPS API 的 TLS 校验保持启用。代理失败返回连接错误，不尝试绕过代理直连。未设置或为 `null` 时保留原有 urllib 网络行为（包括已有环境变量）；Linux 机器人没有配置全局代理。Xray 已有的本机 10808 入站经验证兼容 HTTP，无需新增服务或端口。代理地址按运行主机配置，不要把 Linux 的本机端口直接用于另一台电脑。
+
 ## 5. 搜索后端选择
 
 `search.enabled=false` 关闭联网。开启时可选择：
@@ -134,7 +158,7 @@ except ModelError as exc:
 
 原生搜索沿用 `max_requests`、`max_tool_rounds`、`total_timeout_seconds` 和反馈开关。OpenAI 将调用预算映射为 `max_tool_calls`；Anthropic 使用 `max_uses`，并在有界续接中减少剩余预算。达到预算、响应仍未完成、结果为空或工具错误时明确返回受限结果，不把草稿当最终答复。暂停续接只在原截止时间内进行，不独立重试。
 
-网页引用转成正文中的普通 URL，保留可点击的来源，不向群里发送 Markdown、原始引用编号、思考内容或签名。状态和日志只包含计数、阶段及安全错误码。当前仍为非流式请求；反馈开启时只能在收到已发生搜索的响应后产生进度事件，默认仍关闭反馈。
+联网引用和来源链接不自动出现在群聊回复中；用户明确索要的官网、下载等功能性链接仍可提供。来源仍用于内部核验，供应商原始续接状态保持不变。[OpenAI 联网文档](https://developers.openai.com/api/docs/guides/tools-web-search)要求展示清晰可点击的引用；本项目按用户选择隐藏引用。状态和日志只包含计数、阶段及安全错误码。当前仍为非流式请求；反馈开启时只能在收到已发生搜索的响应后产生进度事件，默认仍关闭反馈。
 
 Responses 的工具、输入 Items 和无状态续接依据 [OpenAI 官方迁移文档](https://developers.openai.com/api/docs/guides/migrate-to-responses)，搜索预算和引用依据 [Responses 参考](https://developers.openai.com/api/reference/resources/responses/methods/create) 与 [联网文档](https://developers.openai.com/api/docs/guides/tools-web-search)。Anthropic 的暂停、工具状态和原生搜索依据 [server tools](https://platform.claude.com/docs/en/agents-and-tools/tool-use/server-tools) 和 [web search](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool)。
 

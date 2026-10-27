@@ -67,3 +67,18 @@ class ReviewOperationTests(unittest.TestCase):
             with self.subTest(path=invalid),self.assertRaises(ValueError):
                 deployment.changes(old,dict(files={**incoming['files'],invalid:info}))
         with self.assertRaises(ValueError):deployment.changes(old,dict(files={}))
+
+    def test_release_removals_need_an_exact_list_and_prompt_updates_are_explicit(self):
+        info=dict(sha256='a'*64,mode='100644')
+        old=dict(files={'scripts/old.py':info,'prompts/system.md':info})
+        incoming=dict(files={'scripts/diagnostics/old.py':info,
+                             'prompts/system.md':dict(info,sha256='b'*64)})
+        for allow in ((),('scripts/other.py',),('scripts/old.py','extra.py')):
+            with self.subTest(allow=allow),self.assertRaises(ValueError):
+                deployment.changes(old,incoming,allow_removed=allow)
+        self.assertEqual(deployment.changes(old,incoming,allow_removed=['scripts/old.py']),
+                         ['scripts/diagnostics/old.py'])
+        self.assertEqual(deployment.changes(old,incoming,allow_removed=['scripts/old.py'],update_prompts=True),
+                         ['prompts/system.md','scripts/diagnostics/old.py'])
+        with self.assertRaises(ValueError):
+            deployment.changes(old,dict(files={}),allow_removed=list(old['files']),update_prompts=True)

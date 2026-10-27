@@ -45,7 +45,12 @@ class ModelClient:
         req = urllib.request.Request(self.adapter.endpoint(self.base_url), data=body,
             headers=self.adapter.headers(self.api_key, self.cfg), method='POST')
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
+            open_request = urllib.request.urlopen
+            if self.cfg.get('proxy_url'):
+                proxy = self.cfg['proxy_url']
+                open_request = urllib.request.build_opener(
+                    urllib.request.ProxyHandler({'http': proxy, 'https': proxy})).open
+            with open_request(req, timeout=timeout) as resp:
                 body = resp.read(8*1024*1024+1)
             if len(body) > 8*1024*1024:
                 raise ModelError('response_too_large')

@@ -5,7 +5,7 @@ from pathlib import Path
 import unittest
 from unittest.mock import MagicMock, Mock, patch
 
-spec = importlib.util.spec_from_file_location("recover_focus_only", Path(__file__).resolve().parents[1]/"scripts/recover-focus-only.py")
+spec = importlib.util.spec_from_file_location("recover_focus_only", Path(__file__).resolve().parents[1]/"scripts/maintenance/recover-focus-only.py")
 recovery = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(recovery)
 

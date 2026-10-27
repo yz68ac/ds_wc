@@ -34,6 +34,18 @@ def activity(rows, account, now, seconds):
     return sorted(texts, key=lambda m: (m['time'], m['local_id'])), own
 
 
+def address_names(cfg):
+    """Current identity names; explicit persona aliases replace legacy aliases."""
+    names = [cfg['target'].get('bot_name', '')]
+    persona = cfg.get('persona')
+    if isinstance(persona, dict) and 'aliases' in persona:
+        names += persona['aliases']
+    else:
+        names += cfg['proactive']['opportunities']['address_names']
+        names += [n.lstrip('@') for n in cfg['target']['trigger'].get('mentions', [])]
+    return list(dict.fromkeys(n.strip() for n in names if isinstance(n, str) and n.strip()))
+
+
 def addresses_bot(message, cfg, account, *, include_reference=True):
     """只用于候选筛选；称呼不等同真实@，是否开口仍由模型判断。"""
     mentioned = message.get('mentioned_users') or []
@@ -41,11 +53,9 @@ def addresses_bot(message, cfg, account, *, include_reference=True):
         return False
     if include_reference and (message.get('reference') or {}).get('sender') == account:
         return True
-    names = [cfg['target'].get('bot_name', ''), *cfg['proactive']['opportunities']['address_names']]
-    names += [n.lstrip('@') for n in cfg['target']['trigger'].get('mentions', [])]
     text = message.get('text') or ''
     return any(re.search(r'(?<![A-Za-z0-9_])'+re.escape(n.strip())+r'(?![A-Za-z0-9_])', text, re.I)
-               for n in names if n.strip())
+               for n in address_names(cfg))
 
 
 def _user_content(cfg, value, memory_text=''):
@@ -83,13 +93,13 @@ def build_prompt(cfg, rows, title, memory=None, *, opportunity=None, account='')
         '这是社交接话判断，不是审核有没有专业价值。自然搭一句、接梗、轻松调侃、回应情绪或表达贴合话题的看法，都足以成为接话理由。'
         '有自然接话点时倾向参与，不要求每次提供新知识或解决问题；没有接话点仍可沉默。'
         'entry时有人自然叫你、引用你的话，或几位群友聊到你有话可接，可以参与，不必等刷够十条。'
-        'opportunity.reason=addressed表示新消息点名或引用你：正文中出现ds、DS等自己的称呼，即使没有@、称呼在句中，也优先结合上下文自然回应一句。'
-        '例如“这事让ds来评评”“ds最近怎么不说话”都可以接话，不必再问是不是在叫你。'
+        'opportunity.reason=addressed表示新消息点名或引用你：正文中出现自己的称呼，即使没有@、称呼在句中，也优先结合上下文自然回应一句。'
+        '自己的有效称呼是'+json.dumps(address_names(cfg), ensure_ascii=False)+'；结合语境判断是否在叫你，不必机械追问。'
         'opportunity.response_path=full_reply表示获准后交给完整回复流程：引用图片会另行核验和读取，搜索与专业回答也由后续流程处理。'
         '这时只判断是不是在叫你，不判断眼下能不能回答。对方点名让你看引用图片、查资料或解释专业问题时，应选择回应；'
         '不能因为判断输入没有图片像素、reference.available=false、缺少最新知识或问题较难而选择沉默。'
         'reference.available是引用文字解析状态，不是图片文件能否读取的最终结论；你不需要在判断阶段看懂图片。'
-        '若上下文明显只是无关的技术缩写、网址、代码或重复刷词，则保持沉默；不把ds一律解释成某个技术术语。'
+        '若上下文明显只是无关的技术缩写、网址、代码或重复刷词，则保持沉默；不要把称呼一律解释成技术术语。'
         'followup时可以接任何成员的新话，不只盯着最初叫你的人；仍须是在回应你、明确叫你/引用你，或有贴合当前话题的自然接话点。'
         '参与窗口续期只代表你仍可参与，不表示每条都要回复；单纯时间相邻、同一人发言不代表在跟你说话。'
         '别人明确@其他人，或引用别人而没有在新正文中叫你，或只是嗯/哈哈且已无必要接话时，选择沉默。'
