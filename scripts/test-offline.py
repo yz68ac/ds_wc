@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import runpy
+import os
 import sys
 import tempfile
 import unittest
@@ -10,7 +11,8 @@ import unittest
 
 def main() -> int:
     root = Path(__file__).resolve().parents[1]
-    sys.path.insert(0, str(root))
+    sys.path.insert(0, str(root / 'src'))
+    os.environ['PYTHONPATH'] = os.pathsep.join(filter(None, (str(root / 'src'), os.environ.get('PYTHONPATH', ''))))
     tests = root / "tests"
     suite = unittest.defaultTestLoader.discover(str(tests), pattern="test_*.py")
     result = unittest.TextTestRunner(verbosity=2).run(suite)

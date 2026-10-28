@@ -164,7 +164,7 @@ class WorkerTests(unittest.TestCase):
         def drained(*args,**kwargs):
             events.append('drain');script.unload.assert_not_called()
             return DONE,True
-        cfg=dict(uid=995,assets=str(ROOT/'wechat_linux/native'),allowed_chat_ids=[CHAT],
+        cfg=dict(uid=995,assets=str(ROOT/'src/wechat_linux/native'),allowed_chat_ids=[CHAT],
                  image_download=dict(expected_account=ACCOUNT,account_root='/synthetic/account',timeout_seconds=5))
         with ExitStack() as stack:
             stack.enter_context(patch.dict(sys.modules,fcntl=fcntl,frida=SimpleNamespace(get_local_device=lambda:device)))
@@ -188,7 +188,7 @@ class WorkerTests(unittest.TestCase):
             self.assertEqual(events,['unload','detach'])
 
     def test_account_mismatch_stops_before_attach_or_native_query(self):
-        cfg=dict(uid=995,assets=str(ROOT/'wechat_linux/native'),allowed_chat_ids=[CHAT],
+        cfg=dict(uid=995,assets=str(ROOT/'src/wechat_linux/native'),allowed_chat_ids=[CHAT],
                  image_download=dict(expected_account=ACCOUNT,account_root='/synthetic/account',timeout_seconds=5))
         with ExitStack() as stack:
             stack.enter_context(patch.dict(sys.modules,fcntl=SimpleNamespace(LOCK_EX=1,LOCK_NB=2,flock=Mock())))

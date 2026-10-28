@@ -1,4 +1,7 @@
 """appmsg/62 合成拍一拍，覆盖实际身份、队列、上下文及记忆来源隔离。"""
+from model_support import default_config
+from contextlib import nullcontext
+from contextlib import nullcontext
 import copy
 import html
 import json
@@ -43,8 +46,9 @@ class PatTests(unittest.TestCase):
         root.mkdir(exist_ok=True)
         self.temp = tempfile.TemporaryDirectory(dir=root)
         self.addCleanup(self.temp.cleanup)
-        self.cfg = _deep_merge(DEFAULTS, {})
-        self.cfg["deepseek"].update(system_prompt_file="", system_prompt="合成人格")
+        self.cfg = default_config()
+
+        self.cfg['system_prompt_file'] = str(Path(__file__).resolve().parents[1]/'prompts/system.md')
         self.identity = dict(account="wxid_self", chat=CHAT)
         self.memory = MemoryStore(self.temp.name, self.identity)
 
@@ -88,7 +92,7 @@ class PatTests(unittest.TestCase):
         value = snapshot(self.cfg, [], [event], self.identity, self.memory, NOW)
         self.assertEqual(value["messages"], [])
         self.assertEqual(value["interactions"][0]["kind"], "pat")
-        with patch("wxbridge.ai.client.ModelClient") as client:
+        with patch("wxbridge.ai.client.client_for") as client:
             proposal = extract(self.cfg, value)
         client.assert_not_called()
         with self.assertRaisesRegex(ValueError, "memory_unknown_source"):
@@ -116,13 +120,13 @@ class PatTests(unittest.TestCase):
         path = Path(self.temp.name)/"config.json"
         for target in [dict(context_window_seconds=600), dict(context_window_seconds=300, trigger=dict(pat_enabled=False))]:
             path.write_text(json.dumps(dict(target=target)))
-            with patch("wxbridge.config.load_dotenv"):
+            with nullcontext():
                 cfg = load_config(path)
             self.assertEqual(cfg["target"]["context_window_seconds"], target["context_window_seconds"])
         for target in [dict(context_window_seconds=True), dict(context_window_seconds=0), dict(context_window_seconds="300"),
                        dict(trigger=dict(pat_enabled="true"))]:
             path.write_text(json.dumps(dict(target=target)))
-            with patch("wxbridge.config.load_dotenv"), self.assertRaises(ValueError):
+            with nullcontext(), self.assertRaises(ValueError):
                 load_config(path)
 
 

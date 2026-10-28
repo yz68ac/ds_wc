@@ -1,4 +1,7 @@
 """可控时钟验证成员活动续期、静默退出、重启和收发事务；全部数据为合成。"""
+from model_support import default_config
+from contextlib import nullcontext
+from contextlib import nullcontext
 import copy
 import unittest
 from unittest.mock import patch
@@ -237,10 +240,10 @@ class ParticipationWindowTests(unittest.TestCase):
 class WindowConfigurationTests(unittest.TestCase):
     def test_zero_limits_are_valid_but_negative_and_boolean_limits_are_rejected(self):
         for value in (0, 1, 2, -1, True):
-            defaults = copy.deepcopy(DEFAULTS)
+            defaults = default_config()
             defaults['proactive']['max_entries_per_hour'] = value
             defaults['proactive']['conversation']['max_followups'] = value
-            with self.subTest(value=value), patch('wxbridge.config.DEFAULTS', defaults), patch('wxbridge.config.load_dotenv'):
+            with self.subTest(value=value), patch('wxbridge.config.DEFAULTS', defaults), nullcontext():
                 if type(value) is int and value >= 0:
                     cfg = load_config('__missing_synthetic_config__.json')
                     self.assertEqual(cfg['proactive']['conversation']['max_followups'], value)

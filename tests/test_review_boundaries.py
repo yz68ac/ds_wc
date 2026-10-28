@@ -1,4 +1,7 @@
 """Synthetic regressions for review R3-R10; no network or production data."""
+from model_support import default_config
+from contextlib import nullcontext
+from contextlib import nullcontext
 import copy
 import importlib.util
 import json
@@ -93,7 +96,7 @@ class ReviewBoundaryTests(unittest.TestCase):
                 self.assertEqual(info['binding_source'],'verified_message_cache')
 
     def test_invalid_backend_and_nonfinite_deadlines_are_rejected(self):
-        with tempfile.TemporaryDirectory(dir=Path(__file__).parent.parent/'.test-tmp') as name,patch('wxbridge.config.load_dotenv'):
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parent.parent/'.test-tmp') as name,nullcontext():
             path=Path(name)/'config.json'
             for value in (dict(ui=dict(backend='native-service')),
                           dict(ui=dict(send_confirm_timeout_seconds=float('nan'))),
@@ -112,8 +115,8 @@ class ReviewBoundaryTests(unittest.TestCase):
         self.assertIsNone(case.journal.enqueue_addressed(source,NOW))
 
     def test_named_handoff_uses_only_the_participation_call(self):
-        cfg=copy.deepcopy(DEFAULTS)
+        cfg=default_config()
         client=Mock();client.complete.return_value=dict(content='{"speak":true,"reply_to":7}')
-        with patch('wxbridge.ai.client.ModelClient',return_value=client):
+        with patch('wxbridge.ai.client.client_for',return_value=client):
             decision=evaluate(cfg,[],source_ids=[7],judgment_only=True)
         self.assertTrue(decision['handoff']);self.assertEqual(client.complete.call_count,1)

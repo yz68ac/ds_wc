@@ -1,4 +1,6 @@
 """Synthetic regressions for topic drift, selected recipients and quoted identity."""
+from model_support import default_config
+from contextlib import nullcontext
 import copy
 import json
 import unittest
@@ -109,8 +111,9 @@ class RetrievalTests(unittest.TestCase):
 
 class IdentityAndFocusTests(unittest.TestCase):
     def setUp(self):
-        self.cfg = copy.deepcopy(DEFAULTS)
-        self.cfg['deepseek'].update(system_prompt_file='', system_prompt='合成人格')
+        self.cfg = default_config()
+
+        self.cfg['system_prompt_file'] = str(Path(__file__).resolve().parents[1]/'prompts/system.md')
         self.account = 'wxid_synthetic_bot'
         self.rows = [{**msg(1, NOW-2, '先前的话', self.account), 'sender_name': '同名'},
                      {**msg(2, NOW-1, 'ds这怎么看', 'person_a'), 'sender_name': '同名'},
@@ -144,7 +147,7 @@ class IdentityAndFocusTests(unittest.TestCase):
         p = build_prompt(self.cfg, self.rows, '合成群', account=self.account)
         client = Mock()
         client.complete.side_effect = [dict(content='{"speak":true,"reply_to":2}'), dict(content='接上这句了')]
-        with patch('wxbridge.ai.client.ModelClient', return_value=client):
+        with patch('wxbridge.ai.client.client_for', return_value=client):
             result = evaluate(self.cfg, p, source_ids=[2,3],
                 reply_memory={'2':'SELECTED_MEMBER_MEMORY', '3':'OTHER_MEMBER_MEMORY'})
         self.assertEqual(client.complete.call_count, 2)
@@ -203,15 +206,19 @@ class FrozenMemoryPipelineTests(unittest.TestCase):
             self.bot.journal.set('cursor', 2)
         memory = Mock()
         memory.status.return_value = {}
-        memory.prompt.side_effect = lambda labels, asker, *a, **kw: 'MEMORY_FOR_'+asker
+        view = memory.view.return_value
+        view.prompt.side_effect = lambda labels, asker, *a, **kw: 'MEMORY_FOR_'+asker
+        view.reply_relationship.return_value = None
         self.bot.memory = memory
         self.bot.proactive.step(self.now)
         job = self.bot.proactive.job[0]
         prompt, options = job.payload[1:]
         self.assertNotIn('MEMORY_FOR_', prompt[1]['content'])
         self.assertEqual(options['reply_memory'], {'1':'MEMORY_FOR_member_a','2':'MEMORY_FOR_member_b'})
+        memory.view.assert_called_once()
         self.rows.append(msg(3, NOW, 'LATE_MESSAGE', 'member_b'))
-        memory.prompt.side_effect = AssertionError('worker must not reread memory')
+        memory.view.side_effect = AssertionError('worker must not reread memory')
+        view.prompt.side_effect = AssertionError('worker must not reread memory')
         reply = build_reply_prompt(self.cfg, prompt, 1, reply_memory=options['reply_memory'])
         self.assertNotIn('LATE_MESSAGE', reply[1]['content'])
         self.assertIn('MEMORY_FOR_member_a', reply[1]['content'])

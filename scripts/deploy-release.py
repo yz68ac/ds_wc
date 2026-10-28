@@ -3,14 +3,13 @@
 The stage is an already verified/extracted release, tested as wxbridge. Default
 mode only prints a plan. Applying preserves credentials, prompts, memory and queue.
 """
-from contextlib import ExitStack, closing
+from contextlib import ExitStack
 import argparse
 import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath
 import shutil
-import sqlite3
 import stat
 import subprocess
 import time
@@ -52,7 +51,7 @@ def changes(old, new, *, allow_removed=(), update_prompts=False):
 
 
 def helper_asset(manifest, name):
-    for prefix in ('wechat_linux/native/', 'wxbridge/native/'):
+    for prefix in ('src/wechat_linux/native/', 'wechat_linux/native/', 'wxbridge/native/'):
         if prefix+name in manifest['files']:
             return prefix+name
     raise ValueError('helper_asset_missing')
@@ -111,8 +110,8 @@ def wait_native_ready():
     deadline = time.monotonic()+10
     while True:
         try:
-            return run('runuser', '-u', 'wxbridge', '--', '/usr/bin/python3', '-c',
-                "from wxbridge.config import load_config; from wxbridge.native.sender import readiness; c=load_config('config.json'); readiness(c) if c['ui']['backend']=='native_service' else None", cwd=APP)
+            return run('runuser', '-u', 'wxbridge', '--', '/usr/bin/env', 'PYTHONPATH='+str(APP/'src'), '/usr/bin/python3', '-c',
+                "from wxbridge.config import load_config; from wxbridge.native.sender import readiness; c=load_config('config.json'); readiness(c) if c['ui']['backend']=='native_service' else None", cwd=APP, env={**os.environ, 'PYTHONPATH': str(APP/'src')})
         except subprocess.CalledProcessError:
             if time.monotonic() >= deadline:
                 raise
@@ -120,23 +119,21 @@ def wait_native_ready():
 
 
 def configured_groups():
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
     from wxbridge.app.operations import configured_groups as groups
     return groups(APP, RUN)
 
 
 def live_status():
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
     from wxbridge.app.operations import live_status_path
     return json.loads(live_status_path(APP, RUN).read_text())
 
 
 def queue_one(path):
-    with closing(sqlite3.connect(path.as_uri()+'?mode=ro', uri=True)) as db:
-        meta = dict(db.execute("SELECT key,value FROM meta WHERE key IN ('cursor','identity')"))
-        return dict(cursor=json.loads(meta['cursor']), identity=json.loads(meta['identity']),
-                    pending=db.execute("SELECT count(*) FROM tasks WHERE phase!='done'").fetchone()[0],
-                    memory_pending=db.execute("SELECT count(*) FROM memory_jobs WHERE json_extract(data,'$.state')!='quarantined'").fetchone()[0])
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
+    from wxbridge.storage.inspection import inspect_queue
+    return inspect_queue(path).release_summary()
 
 
 def queue():

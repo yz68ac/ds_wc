@@ -35,7 +35,7 @@ dialog{border:0;border-radius:14px;width:95vw;max-width:1700px;padding:20px;back
 <p>本文所有十六进制函数地址默认都是 <strong>RVA，即相对实际模块加载基址的偏移</strong>。本次 Ghidra 工程的显示地址另外包含 <code>0x100000</code>，不能直接把显示地址当运行时地址。</p>
 <div class="codebox"><div class="code-label">text</div><pre><code>运行时函数地址 = 微信主模块本次加载基址 + RVA
 本次 Ghidra 显示地址 = RVA + 0x100000</code></pre></div>
-<p>即使版本号相同，只要程序 hash 或关键指令指纹不匹配，当前 helper 也应拒绝提交。资源定义见 <a href="../wechat_linux/native/profile.json">profile.json</a>。</p>
+<p>即使版本号相同，只要程序 hash 或关键指令指纹不匹配，当前 helper 也应拒绝提交。资源定义见 <a href="../src/wechat_linux/native/profile.json">profile.json</a>。</p>
 <h3 id="heading-24">从 deb 到候选函数，具体怎样缩小范围</h3>
 <p>deb 是安装包容器；解开后才能分别看程序、资源和安装元数据。本次真正反编译的是其中的 x86_64 ELF，不是把 deb 直接“还原成原项目源码”。工作按以下顺序推进：</p>
 <ol><li><strong>固定输入。</strong> 核对包架构、主程序 ELF 架构和 hash，使本机静态样本与服务器运行程序一致。</li><li><strong>找线索，而不是通读整个二进制。</strong> 使用字符串、Qt 元数据、日志或类型资料缩小候选。字符串出现只能说明存在这个数据，还要寻找使用它的代码。</li><li><strong>复核交叉引用。</strong> 本地静态工具按 ELF 的加载段在文件偏移与程序地址间转换，寻找 RIP 相对 LEA 引用，并用反汇编器核对指令。该扫描只覆盖一种直接引用模式，不代表找到了全部调用者。</li><li><strong>限定函数边界再反编译。</strong> 利用本样本的 <code>.eh_frame_hdr</code> 信息辅助确定范围，交给 Ghidra 生成限定函数的伪 C；关键字段、参数和析构再回看汇编。研究脚本以只读、不保存项目改动的方式运行，未把临时类型推断写回微信程序。</li><li><strong>让正常行为提供证据。</strong> 早期以本账号文件助手的固定测试标记观察正常桌面发送，在候选 dispatch 处记录线程、容器、虚表和标记字段偏移。没有把任意指针或所有群消息正文导出。</li><li><strong>再做最小原生调用。</strong> 先只构造和释放，核对对象字段与引用关系；能解释生命周期之后，才进入明确授权的一次发送与独立确认。</li></ol>
@@ -79,7 +79,7 @@ dialog{border:0;border-radius:14px;width:95vw;max-width:1700px;padding:20px;back
 <h3 id="heading-36">为什么主进程独占读库</h3>
 <p>数据库读取可能包括更新解密副本和回放 WAL，不是单纯对一个永远不变的 SQLite 文件做 SELECT。如果几个进程同时刷新同一副本，就可能互相覆盖或读到不一致的中间状态。</p>
 <p>因此当前约束是：<strong>一个账号的共享解密目录只有一个读库所有者</strong>。主进程查询消息、引用和附件索引；模型与图片工作进程只收到已经核验的文本或本地文件绑定，不反向打开微信数据库。</p>
-<p>公共库会话使用同一 <code>decrypted_dir/.listener.lock</code>，现有机器人也使用该锁。不能为同一账号再建一套解密目录来绕过所有者约定。<a href="../wechat_linux/runtime/locking.py">锁实现</a> · <a href="../wechat_linux/session.py">会话接口</a></p>
+<p>公共库会话使用同一 <code>decrypted_dir/.listener.lock</code>，现有机器人也使用该锁。不能为同一账号再建一套解密目录来绕过所有者约定。<a href="../src/wechat_linux/runtime/locking.py">锁实现</a> · <a href="../src/wechat_linux/session.py">会话接口</a></p>
 <h3 id="heading-40">为什么采用受控工作进程</h3>
 <p>慢 API、桌面等待、解码或原生提交都可能耗时。把它们放到受控子进程，主进程就能继续接收、调度与核对结果；在本地任务被取消或超时时，也可以结束对应工作进程。</p>
 <p>结束本地 API 进程不等于取消服务端请求；结束原生调用进程也不等于证明消息未发出。任务取消和发送幂等必须分别处理。</p>
@@ -90,7 +90,7 @@ dialog{border:0;border-radius:14px;width:95vw;max-width:1700px;padding:20px;back
 <h3 id="heading-47">5.2 数据库加密与 WAL 要一起处理</h3>
 <p>当前适配的数据库使用 SQLCipher 风格的加密页。实现中页大小为 4096 字节，页尾保留区为 80 字节，涉及 AES-CBC、IV、HMAC 和页号。已有派生密钥由受权限约束的扫描流程取得，并通过页面校验确认；不是把任意看起来像密钥的内存片段直接当成有效密钥。</p>
 <p>密钥扫描与发送注入是两个用途不同的机制。扫描用于取得本账号数据库的读取材料；Frida 发送 helper 不读微信数据库，也不把这些密钥传给模型。</p>
-<p>近期写入可能在 WAL 中，还没有合并回主数据库。只解密主文件可能看到旧消息。现有实现识别当前 WAL 周期，只回放最后一次有效提交之前的完整帧；合并前校验加密页 HMAC，未提交尾部不作为已提交数据使用。相关实现和故障回归见 <a href="../wechat_linux/storage/crypto.py">crypto.py</a>、<a href="../tests/test_crypto.py">加密测试</a>。</p>
+<p>近期写入可能在 WAL 中，还没有合并回主数据库。只解密主文件可能看到旧消息。现有实现识别当前 WAL 周期，只回放最后一次有效提交之前的完整帧；合并前校验加密页 HMAC，未提交尾部不作为已提交数据使用。相关实现和故障回归见 <a href="../src/wechat_linux/storage/crypto.py">crypto.py</a>、<a href="../tests/test_crypto.py">加密测试</a>。</p>
 <p>这里要区分两种“保存”：微信自己的原始数据库由客户端管理；本程序的解密副本、数据库密钥和待处理队列置于私有 <code>tmpfs,noswap</code>。程序没有把全部明文聊天库打包进项目。</p>
 <h3 id="heading-52">5.3 稳定 ID 与昵称各司其职</h3>
 <p>成员的内部 <code>user_name</code>（常见形式为 wxid）用于身份绑定，昵称仅用于显示。长期记忆进一步按“机器人账号＋群 ID＋成员稳定 ID”隔离，改名不会重建成另一个人，同名也不会合并。</p>
@@ -99,14 +99,14 @@ dialog{border:0;border-radius:14px;width:95vw;max-width:1700px;padding:20px;back
 <p>普通文本消息会解析 <code>atuserlist</code> 等来源元数据，用其中的稳定账号 ID 判断是否真正 @ 机器人。手打 <code>@ds</code> 可以只是普通文字。</p>
 <p>两个状态必须保留区别：</p>
 <div class="table-scroll"><table><thead><tr><th scope="col">解析值</th><th scope="col">含义</th></tr></thead><tbody><tr><td><code>mentioned_users=[]</code></td><td>当前解析结果明确没有列出的 @ 对象</td></tr><tr><td><code>mentioned_users=None</code></td><td>缺少或无法解析这类元数据，不能当成可靠的“没有 @”</td></tr></tbody></table></div>
-<p>群聊中的 ds 关键词是另一个产品触发规则，不应与真实 @ 混写成一种判断。<a href="../wechat_linux/storage/store.py">元数据解析</a> · <a href="../wxbridge/app/bot.py">机器人触发入口</a></p>
+<p>群聊中的 ds 关键词是另一个产品触发规则，不应与真实 @ 混写成一种判断。<a href="../src/wechat_linux/storage/store.py">元数据解析</a> · <a href="../src/wxbridge/app/bot.py">机器人触发入口</a></p>
 <h3 id="heading-60">5.5 引用消息的外层类型可能不是普通文本</h3>
 <p>曾出现“引用图片后喊 ds 不触发”，其中一种已确认原因是消息类型过滤：微信可以把引用回复编码为 64 位组合类型，例如 <code>0x3900000031</code>，低位主类型为 49，高位子类型为 57。旧逻辑只接受类型 1，便会跳过带真实 @ 的引用回复。</p>
 <p>引用消息中，<code>appmsg/title</code> 是本次新写的问题，<code>refermsg</code> 承载被引用内容、作者和原时间。这两部分需要分开：旧引用里的 @ 不能冒充本次真实 @；引用中的“这”也不能靠最近一张图片或其他群的内容来猜。</p>
-<p>普通上下文按当前窗口取值；用户明确引用的旧消息可早于该窗口，作为独立引用快照传入。读取范围不因此扩展成整个群历史。<a href="../wechat_linux/messages/references.py">引用解析</a> · <a href="REFERENCES.md">引用功能说明</a></p>
+<p>普通上下文按当前窗口取值；用户明确引用的旧消息可早于该窗口，作为独立引用快照传入。读取范围不因此扩展成整个群历史。<a href="../src/wechat_linux/messages/references.py">引用解析</a> · <a href="REFERENCES.md">引用功能说明</a></p>
 <h3 id="heading-64">5.6 轮询速度不等于端到端回复速度</h3>
 <p>当前配置默认每 2 秒查询新消息，调度循环可按不超过 1 秒的节拍处理工作结果，消息查询另行限流。发送前补读仍由主进程执行，用于刷新入站状态、确认水位和待发送任务是否仍有效；不会因此额外请求一次模型。</p>
-<p>端到端耗时还包括客户端同步、查询、模型排队与生成、冷却、提交和数据库确认。不能把“2 秒轮询”写成“2 秒内必回”，也不能只按轮询次数推算整机功耗。<a href="../wxbridge/app/bot.py">运行循环</a></p>
+<p>端到端耗时还包括客户端同步、查询、模型排队与生成、冷却、提交和数据库确认。不能把“2 秒轮询”写成“2 秒内必回”，也不能只按轮询次数推算整机功耗。<a href="../src/wxbridge/app/bot.py">运行循环</a></p>
 <h2 id="desktop-failures">6. 桌面发送阶段：几个失败为什么值得保留下来</h2>
 <p>最初用 AT-SPI 和鼠标操作客户端，路径直观，但它同时受界面状态、草稿、焦点、窗口和动作语义影响。下面的故障推动我们把“执行操作”和“确认结果”拆开。</p>
 <div class="table-scroll"><table><thead><tr><th scope="col">现象</th><th scope="col">已确认原因或缺陷</th><th scope="col">采用的处理</th></tr></thead><tbody><tr><td>冷却期间 @ 没有回复，之后又恢复</td><td>先推进游标，再因冷却跳过，触发不再被补处理</td><td>有效任务入队，冷却变为等待</td></tr><tr><td>生成了 41 字回复，却没有匹配发出记录</td><td>发送后 GI Text 调用异常被吞掉；残留草稿随后挡住其他回复</td><td>修正接口、移除吞异常分支，改用持久意图和精确发出确认</td></tr><tr><td>新策略声称执行了发送动作，草稿却不变</td><td>该版本按钮的第 0 个 AT-SPI 动作是 <code>SetFocus</code>，并非 click</td><td>按动作名称识别；仅聚焦不能被视为点击或发送</td></tr><tr><td>鼠标已经在目标点，仍出现等待超时</td><td><code>mousemove --sync</code> 等待未发生的新移动事件</td><td>移除这类同步等待，直接核验实际位置与窗口命中</td></tr></tbody></table></div>
@@ -257,7 +257,7 @@ dialog{border:0;border-radius:14px;width:95vw;max-width:1700px;padding:20px;back
 <p>受控验证分两步进行，构造预检和真正提交分开：</p>
 <ol><li>界面停在测试群，后台把新消息的目标设为文件传输助手；获得新增本人、精确正文和非零服务端消息 ID。</li><li>界面停在文件传输助手，后台把目标设为测试群；新增发出记录核对通过，用户手机确认收到且只有一条。</li></ol>
 <p>实验注入期间，已识别的正常会话切换入口计数均为零，前后选中目标保持一致。实验前用于准备可观察界面的操作不计入“注入后零切换”，不能把整个维护窗口冒称完全没有任何 UI 准备。</p>
-<p>后续正式后端切换，又通过现有队列完成文件助手请求和一次真实 @ 回复。生产实现不再选会话、读输入框或寻找聊天视图。相关当前代码见 <a href="../wechat_linux/native/agent.js">agent.js</a>。</p>
+<p>后续正式后端切换，又通过现有队列完成文件助手请求和一次真实 @ 回复。生产实现不再选会话、读输入框或寻找聊天视图。相关当前代码见 <a href="../src/wechat_linux/native/agent.js">agent.js</a>。</p>
 <h2 id="frida">9. agent.js 究竟是怎样进入微信的</h2>
 <p>这里有三个执行位置，不能混在一起：</p>
 <div class="table-scroll"><table><thead><tr><th scope="col">执行位置</th><th scope="col">运行内容</th><th scope="col">角色</th></tr></thead><tbody><tr><td>微信进程外，普通用户进程</td><td>机器人、<code>NativeClient</code>、发送工作进程</td><td>决定目标、保存意图、发本机请求</td></tr><tr><td>微信进程外，隔离权限 helper</td><td>Python 与 Frida bindings</td><td>验证账号进程、版本、允许清单，建立短时附加</td></tr><tr><td>微信进程内</td><td>Frida 原生组件提供的 JS 运行时和 <code>agent.js</code></td><td>读对象、排主线程回调、调用原生函数</td></tr></tbody></table></div>
@@ -273,7 +273,7 @@ script.exports_sync.arm()</code></pre></div>
 <h3 id="heading-118">arm、status、cancel 为什么要分开</h3>
 <p><code>arm()</code> 只安排一次 GLib source，<code>status()</code> 读取执行阶段，<code>cancel()</code> 撤销尚未执行的排程。RPC 失败时，排程可能已经建立，所以“调用 arm 抛异常”不能自动等同于未提交。</p>
 <p>脚本使用 <code>pin</code> 与 source 销毁回调管理存活：排队期间不能先卸掉仍被原生事件循环持有的 JS 回调地址；source 销毁后再释放 pin。发生在途调用或清理失败时，结果按不明处理，不因此再调一次。</p>
-<p>研究阶段使用过 Hook 观察正常调用；当前生产 agent 不靠长期 Hook 聊天发送函数工作，而是短时附加、构造新源、安排一次调用，随后取消未执行回调并脱离。<a href="../wechat_linux/native/helper.py">helper 实现</a> · <a href="../wechat_linux/native/sender.py">发送工作进程接口</a></p>
+<p>研究阶段使用过 Hook 观察正常调用；当前生产 agent 不靠长期 Hook 聊天发送函数工作，而是短时附加、构造新源、安排一次调用，随后取消未执行回调并脱离。<a href="../src/wechat_linux/native/helper.py">helper 实现</a> · <a href="../src/wechat_linux/native/sender.py">发送工作进程接口</a></p>
 <h2 id="delivery">10. 从“调用过函数”到“可靠发送”还需要什么</h2>
 <h3 id="heading-123">10.1 四个阶段要分开记录</h3>
 <div class="table-scroll"><table><thead><tr><th scope="col">阶段</th><th scope="col">证明的事情</th><th scope="col">尚未证明的事情</th></tr></thead><tbody><tr><td>请求受理 / queued</td><td>请求已进入应用队列</td><td>已经执行 native 调用</td></tr><tr><td>submitted</td><td>helper 观察到一次已验证的提交过程返回</td><td>对应消息已经在本地生成发出记录</td></tr><tr><td>confirmed</td><td>目标会话中出现符合确认条件的新本人文字记录</td><td>对方已读，或所有设备都完成显示</td></tr><tr><td>手机人工确认</td><td>被核对的设备实际收到、显示正确</td><td>每次未来发送都会同样成功</td></tr></tbody></table></div>
@@ -288,7 +288,7 @@ script.exports_sync.arm()</code></pre></div>
 <h3 id="heading-131">10.3 为什么不在失败时自动切回桌面</h3>
 <p>helper 超时可能发生在提交之前，也可能发生在微信已经接受任务之后。此时切回桌面“补发”可能造成重复。只有明确证据证明未提交的错误，才能按受限策略重试；未知提交必须保守暂停。</p>
 <p>相同业务请求使用同一个 <code>request_id</code>。相同 ID、目标和正文返回原结果；同 ID 改正文或目标会冲突。不能在状态不明时换新 ID 绕过阻塞。</p>
-<p>主队列是防重的权威位置。helper 的回放缓存只是易失、有限的辅助保护，不能替代持久意图；helper 重启或缓存淘汰后，这层缓存可能不存在。<a href="../wechat_linux/sending/confirmation.py">确认原语</a> · <a href="../wxbridge/app/delivery.py">机器人投递控制</a> · <a href="../wxbridge/storage/journal.py">队列事务</a></p>
+<p>主队列是防重的权威位置。helper 的回放缓存只是易失、有限的辅助保护，不能替代持久意图；helper 重启或缓存淘汰后，这层缓存可能不存在。<a href="../src/wechat_linux/sending/confirmation.py">确认原语</a> · <a href="../src/wxbridge/app/delivery.py">机器人投递控制</a> · <a href="../src/wxbridge/storage/journal.py">队列事务</a></p>
 <h3 id="heading-135">10.4 私有内存队列的恢复边界</h3>
 <p>队列 SQLite 和解密副本放在私有 <code>tmpfs,noswap</code>，目录 0700、文件 0600。它们能跨机器人进程重启保留，整机重启后清空。磁盘上的接收检查点只保留身份、游标和未完成数量等元数据，不是完整待发正文的备份。</p>
 <p>所以当前设计提供的是<strong>进程生命周期内的持久意图与防重</strong>，不能承诺跨整机断电的永久“恰好一次”。需要这种语义的其它项目，要另行设计自己的持久业务账本，并明确恢复时如何处理不明发送。</p>
@@ -299,11 +299,11 @@ script.exports_sync.arm()</code></pre></div>
 <p>进一步沿已经核验的原消息缓存标识，在本群精确路径找到了可解密的 95×210 缩略图。这证明索引缺失不等于缓存文件必然不存在。</p>
 <p>修复后的定位顺序是：</p>
 <ol><li>在当前群按原消息 server_id 找到唯一图片记录，检查作者、类型和标识。</li><li>优先查询本账号附件索引；注意图片 MD5 通常不等于缓存文件名。</li><li>索引不完整时，只使用已经核验的原消息 <code>packed_info_data</code> 中解析出的本地缓存标识，查找当前账号、当前群的受限缓存路径。</li><li>保留目录边界、符号链接、大小、解密及格式校验；不信任引用快照自行提供的文件路径。</li></ol>
-<p>没有采用“最近一张图”“发送时间最接近”或跨群扫描。这类猜测可能识别出一张清晰但完全不相关的图片，比明确说读不到更难发现。<a href="../wechat_linux/storage/store.py">来源绑定</a> · <a href="../wechat_linux/media/images.py">内存取图</a></p>
+<p>没有采用“最近一张图”“发送时间最接近”或跨群扫描。这类猜测可能识别出一张清晰但完全不相关的图片，比明确说读不到更难发现。<a href="../src/wechat_linux/storage/store.py">来源绑定</a> · <a href="../src/wechat_linux/media/images.py">内存取图</a></p>
 <h3 id="heading-146">11.2 第二类：缓存已解密，但里面不是普通 JPEG/PNG</h3>
 <p>部分 <code>.dat</code> 解密后是 WXGF 容器，含 HEVC 图像流。本次样本中存在单色遮罩和彩色图像两组参数集。早期直接取第一路得到 1920×912 的全白图；这不是模型把内容看成了白色，而是程序选择了遮罩流。</p>
 <p>当前实现识别 VPS/SPS/PPS/VCL 完整性，通过 SPS 的色度字段区分彩色与单色流，优先彩色，再比较有效图像负载。取选中流第一帧，经已有 libde265、libswscale、libavutil 的公开接口转 RGB，编码为 PNG。</p>
-<p>解码在隔离子进程中执行，正常数据流只走内存和管道：墙钟上限 8 秒、CPU 5 秒、地址空间 768 MiB，输入输出最多 8 MiB，单边最多 8192、总像素最多 16777216。仅继承受限 PATH/LANG，不继承 API Key 等业务环境。缺库、超时或损坏时保留真实错误并降级到可读预览。<a href="../wechat_linux/media/wxgf.py">WXGF 实现</a> · <a href="../tests/test_wxgf.py">解码测试</a></p>
+<p>解码在隔离子进程中执行，正常数据流只走内存和管道：墙钟上限 8 秒、CPU 5 秒、地址空间 768 MiB，输入输出最多 8 MiB，单边最多 8192、总像素最多 16777216。仅继承受限 PATH/LANG，不继承 API Key 等业务环境。缺库、超时或损坏时保留真实错误并降级到可读预览。<a href="../src/wechat_linux/media/wxgf.py">WXGF 实现</a> · <a href="../tests/test_wxgf.py">解码测试</a></p>
 <h3 id="heading-150">11.3 第三类：Linux 确实只有缩略图</h3>
 <p>另一轮故障中，定位、解密和 API 传图都已成功，但实际送入的只有 <strong>67×144、2667 字节 JPEG</strong>。手机能放大看清，并不能证明 Linux 同步了相同清晰度的文件。</p>
 <p>提高模型的图像 detail 参数不能恢复已丢失的文字像素。必须先让客户端取得清晰缓存，或者如实承认只有缩略图。</p>
@@ -312,7 +312,7 @@ script.exports_sync.arm()</code></pre></div>
 <p>匹配同时检查 RGB 误差、空间相关性、图像细节和第二候选的距离，最多看三屏。平坦图片、不唯一或特征不足时拒绝猜测。点击前核对真实 X11 窗口、进程归属、几何位置和鼠标命中；Qt 残留的无障碍节点不能替代真实窗口存在。</p>
 <p>关键区别是：<strong>截图只用于定位，不作为最终发给模型的图片。</strong> 点击之后仍沿原消息绑定的缓存路径重新读取、解密和验图，确实获得 <code>original/cached</code> 质量才报告下载成功。未更新就保留原图质量和失败原因。</p>
 <div class="table-scroll"><table><thead><tr><th scope="col">实测案例</th><th scope="col">操作前</th><th scope="col">操作后</th><th scope="col">能证明什么</th></tr></thead><tbody><tr><td>附件索引缺行</td><td>程序认为无图</td><td>找到可读 95×210 缩略图</td><td>定位已修复，不能声称取得清晰图</td></tr><tr><td>WXGF 彩色流选择</td><td>旧路径使用 500×237 预览；错误原型曾取到白遮罩</td><td>1920×912 彩色 PNG</td><td>从真实清晰缓存解码，未放大预览</td></tr><tr><td>受控打开绑定图片</td><td>67×144 缩略图</td><td>498×1080 清晰微信缓存</td><td>客户端可以按需取得更清晰文件</td></tr><tr><td>完整自动流程</td><td>119×210 缩略图</td><td>584×1024、227131 字节 PNG，约 12.56 秒</td><td>自动定位、打开与原缓存确认通过</td></tr></tbody></table></div>
-<p>这些清晰度来自不同图片，不是同一张图连续升级的四个阶段。<code>cached</code> 也不保证等于发送者上传的原始文件。自动流程实测到清晰缓存和请求组装；10 月 26 日该轮未再额外调用模型重答或向群发测试消息，不能把本地回放写成新的手机端识图验收。<a href="../wechat_linux/desktop/image_download.py">下载实现</a> · <a href="IMAGE_DOWNLOAD.md">下载说明</a></p>
+<p>这些清晰度来自不同图片，不是同一张图连续升级的四个阶段。<code>cached</code> 也不保证等于发送者上传的原始文件。自动流程实测到清晰缓存和请求组装；10 月 26 日该轮未再额外调用模型重答或向群发测试消息，不能把本地回放写成新的手机端识图验收。<a href="../src/wechat_linux/desktop/image_download.py">下载实现</a> · <a href="IMAGE_DOWNLOAD.md">下载说明</a></p>
 <h3 id="heading-159">11.5 一个值得记住的窗口清理教训</h3>
 <p>诊断代码早期用 <code>xdotool windowclose</code> 直接销毁 X 窗口，Qt 内部却还残留显示状态，导致后续媒体页不能正常重开。改为向本次创建的窗口发送 <code>WM_DELETE_WINDOW</code>，让 Qt 走正常关闭流程；另验证真实窗口消失及媒体页能再次打开。</p>
 <p>“窗口已经从屏幕消失”不能单独证明客户端内部完成清理。异步任务、C++ 引用和 GUI 窗口在这点上相似：都需要遵守所属系统的生命周期。</p>
@@ -382,7 +382,7 @@ SHA-256: e58facbc7c94ef06733bbeaf3d9a4bad4f898bb8e179fd107d562a9b866138dc</code>
 <p>图片下载的原生研究与独立 SDK 封装已经完成，后续重点是新版 helper 的真实验收和应用恢复设计。按当前要求暂不接入 bot，保留生产兼容路线；待明确授权后再推进上线，这也能为精简桌面环境提供基础。</p>
 <h2 id="source-map">16. 源码地图与原始记录索引</h2>
 <h3 id="heading-212">16.1 建议从这些文件读起</h3>
-<div class="table-scroll"><table><thead><tr><th scope="col">关注点</th><th scope="col">当前实现</th></tr></thead><tbody><tr><td>库公共入口与数据记录</td><td><a href="../wechat_linux/__init__.py">公共入口</a>、<a href="../wechat_linux/models.py">记录类型</a>、<a href="../wechat_linux/session.py">Session</a></td></tr><tr><td>数据库与 WAL</td><td><a href="../wechat_linux/storage/store.py">store.py</a>、<a href="../wechat_linux/storage/crypto.py">crypto.py</a>、<a href="../wechat_linux/storage/keyscan.py">keyscan.py</a></td></tr><tr><td>引用和真实事件</td><td><a href="../wechat_linux/messages/references.py">references.py</a>、<a href="../wechat_linux/messages/pats.py">pats.py</a></td></tr><tr><td>后台提交的三个位置</td><td><a href="../wechat_linux/native/sender.py">sender.py</a>、<a href="../wechat_linux/native/helper.py">helper.py</a>、<a href="../wechat_linux/native/agent.js">agent.js</a></td></tr><tr><td>固定版本指纹</td><td><a href="../wechat_linux/native/profile.json">profile.json</a>、<a href="../wechat_linux/profiles.py">能力声明</a></td></tr><tr><td>接口、锁与确认</td><td><a href="../wechat_linux/transport/server.py">本地 server</a>、<a href="../wechat_linux/runtime/locking.py">锁</a>、<a href="../wechat_linux/sending/confirmation.py">发出确认</a>、<a href="../wechat_linux/sending/outbox.py">独立 outbox</a></td></tr><tr><td>图片链路</td><td><a href="../wechat_linux/media/images.py">images.py</a>、<a href="../wechat_linux/media/wxgf.py">wxgf.py</a>、<a href="../wechat_linux/desktop/image_download.py">桌面兼容下载</a>、<a href="../wechat_linux/native/image_download.py">原生下载 SDK</a>、<a href="../wechat_linux/native/image_agent.js">图片 agent</a></td></tr><tr><td>机器人如何消费库</td><td><a href="../wxbridge/app/bot.py">bot.py</a>、<a href="../wxbridge/app/delivery.py">delivery.py</a>、<a href="../wxbridge/app/native_gateway.py">本地服务业务适配</a></td></tr><tr><td>实际故障条件</td><td><a href="../tests/test_wechat_library.py">SDK 回归</a>、<a href="../tests/test_native_api.py">native 回归</a>、<a href="../tests/test_image_download.py">桌面图片回归</a>、<a href="../tests/test_native_images.py">原生图片回归</a></td></tr></tbody></table></div>
+<div class="table-scroll"><table><thead><tr><th scope="col">关注点</th><th scope="col">当前实现</th></tr></thead><tbody><tr><td>库公共入口与数据记录</td><td><a href="../src/wechat_linux/__init__.py">公共入口</a>、<a href="../src/wechat_linux/models.py">记录类型</a>、<a href="../src/wechat_linux/session.py">Session</a></td></tr><tr><td>数据库与 WAL</td><td><a href="../src/wechat_linux/storage/store.py">store.py</a>、<a href="../src/wechat_linux/storage/crypto.py">crypto.py</a>、<a href="../src/wechat_linux/storage/keyscan.py">keyscan.py</a></td></tr><tr><td>引用和真实事件</td><td><a href="../src/wechat_linux/messages/references.py">references.py</a>、<a href="../src/wechat_linux/messages/pats.py">pats.py</a></td></tr><tr><td>后台提交的三个位置</td><td><a href="../src/wechat_linux/native/sender.py">sender.py</a>、<a href="../src/wechat_linux/native/helper.py">helper.py</a>、<a href="../src/wechat_linux/native/agent.js">agent.js</a></td></tr><tr><td>固定版本指纹</td><td><a href="../src/wechat_linux/native/profile.json">profile.json</a>、<a href="../src/wechat_linux/profiles.py">能力声明</a></td></tr><tr><td>接口、锁与确认</td><td><a href="../src/wechat_linux/transport/server.py">本地 server</a>、<a href="../src/wechat_linux/runtime/locking.py">锁</a>、<a href="../src/wechat_linux/sending/confirmation.py">发出确认</a>、<a href="../src/wechat_linux/sending/outbox.py">独立 outbox</a></td></tr><tr><td>图片链路</td><td><a href="../src/wechat_linux/media/images.py">images.py</a>、<a href="../src/wechat_linux/media/wxgf.py">wxgf.py</a>、<a href="../src/wechat_linux/desktop/image_download.py">桌面兼容下载</a>、<a href="../src/wechat_linux/native/image_download.py">原生下载 SDK</a>、<a href="../src/wechat_linux/native/image_agent.js">图片 agent</a></td></tr><tr><td>机器人如何消费库</td><td><a href="../src/wxbridge/app/bot.py">bot.py</a>、<a href="../src/wxbridge/app/delivery.py">delivery.py</a>、<a href="../src/wxbridge/app/native_gateway.py">本地服务业务适配</a></td></tr><tr><td>实际故障条件</td><td><a href="../tests/test_wechat_library.py">SDK 回归</a>、<a href="../tests/test_native_api.py">native 回归</a>、<a href="../tests/test_image_download.py">桌面图片回归</a>、<a href="../tests/test_native_images.py">原生图片回归</a></td></tr></tbody></table></div>
 <h3 id="heading-214">16.2 本机研究档案</h3>
 <p>以下为工作区根目录 <code>archives/</code> 下的相对位置，是写作依据和进一步核查入口。它们不随库发行，也不要求复制到 GitHub；报告中的可执行事实另有上述受版本管理的实现与测试支撑。</p>
 <div class="table-scroll"><table><thead><tr><th scope="col">编号</th><th scope="col">原始记录</th><th scope="col">支撑内容</th></tr></thead><tbody><tr><td>E01</td><td><code>ghidra/ghidra-setup-20261019-f6d86e258e344084bf930cc542177af9/INSTALLATION.md</code></td><td>样本、工具与导入验证</td></tr><tr><td>E02</td><td><code>organization-20261020/git-root-20261020-57e37be8/working-tree/wechat-group-bot/docs/incidents/20261020-stalls.md</code></td><td>41 字草稿、冷却丢触发和后续 UI 错误的原因分级</td></tr><tr><td>E03</td><td><code>reverse-engineering/native-send-20261024/README.md</code></td><td>第一次依赖输入模型的内部发送</td></tr><tr><td>E04</td><td><code>reverse-engineering/native-routing-20261024/README.md</code></td><td>服务注册表与后台路线的只读分析</td></tr><tr><td>E05</td><td><code>reverse-engineering/chat-model-20261025/README.md</code></td><td>两轮会话切换、输入视图与控制器复用</td></tr><tr><td>E06</td><td><code>reverse-engineering/backend-send-20261025/README.md</code></td><td>不切窗口向文件助手发送</td></tr><tr><td>E07</td><td><code>reverse-engineering/backend-group-20261025/README.md</code></td><td>指定群发送、零观察切换和手机确认</td></tr><tr><td>E08</td><td><code>deployments/20261025-native-service/README.md</code></td><td>正式替换后台、真实 @ 验收</td></tr><tr><td>E09</td><td><code>deployments/20261020-wxgf/README.md</code></td><td>单色遮罩、彩色流及实际解码</td></tr><tr><td>E10</td><td><code>diagnostics/image-index-20261025/README.md</code></td><td>索引缺失但缩略图存在</td></tr><tr><td>E11</td><td><code>diagnostics/desktop-minimal-20261025/README.md</code></td><td>已登录会话的桌面精简试验及短期资源观察</td></tr><tr><td>E12</td><td><code>diagnostics/image-download-20261026/README.md</code></td><td>清晰图下载、错误窗口清理与自动流程实测</td></tr><tr><td>E13</td><td><code>diagnostics/library-extraction-20261026/README.md</code>、<code>result.json</code></td><td>公共库、测试、wheel 和部署核验</td></tr></tbody></table></div>

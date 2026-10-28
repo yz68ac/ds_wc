@@ -1,219 +1,159 @@
-// 唯一完整配置参考：含模型连接、角色选择和其他功能的注释；程序不直接加载此文件。
-// 日常只改 config.json 中需要覆盖的字段；未填写项继承 config.defaults.json。
-// 默认和本示例全部使用 DeepSeek；临时切换 GPT 只写在本机 config.json，不修改默认值。
-// API Key 放同目录的 .env，人格正文放 prompts/system.md。
+// 模型 ID 必须显式填写；provider_env 可指定 provider 的 .env 路径。
 {
-  // 原生发送外部入口：默认关闭；需要另行部署私有helper，普通机器人回复仍走桌面。
   "native_api": {
     "enabled": false,
-    "socket": "/run/wxbridge-trial/native-api.sock", // 由现有监听主进程收请求并入队。
-    "helper_socket": "/run/wxbridge-trial/native-helper.sock", // 独立权限隔离的Frida helper。
-    "allowed_chat_ids": ["filehelper"], // 只能填真实内部ID，测试群需显式加入。
-    "max_text_bytes": 4096, // UTF-8字节数，原样发送，不额外调用模型或应用人格格式化。
+    "socket": "/run/wxbridge-trial/native-api.sock",
+    "helper_socket": "/run/wxbridge-trial/native-helper.sock",
+    "allowed_chat_ids": [
+      "filehelper"
+    ],
+    "max_text_bytes": 4096,
     "max_pending": 16,
-    "max_requests": 1024 // 本次内存队列生命周期内保留去重记录；满后拒绝新请求，不淘汰旧ID。
+    "max_requests": 1024
   },
-  // Linux 原生微信数据目录；空值表示自动发现当前账号。
   "db_dir": "",
-  // 密钥、解密副本和队列须位于私有 tmpfs,noswap，不能随意改到普通磁盘。
   "keys_file": "/run/wxbridge-trial/keys.json",
   "decrypted_dir": "/run/wxbridge-trial/decrypted",
   "state_file": "/run/wxbridge-trial/state.json",
   "log_file": "/run/wxbridge-trial/bot.log",
+  "wechat_process": "wechat",
   "source": "db",
-  // 同一账号的发送最小间隔；另有各群自己的 target.cooldown_seconds。
-  "account": {"send_interval_seconds": 1},
-  // 空列表保持原有单群模式。多群只使用一个监听服务；完整示例见 docs/MULTI_GROUP.md。
-  // 每项：id（稳定实例名）、chat（稳定群ID）、enabled、reuse_legacy_state、overrides。
-  "instances": [],
-  "poll_interval_seconds": 2.0, // 新消息常规查询间隔（秒）；发送就绪时补读，工作进程与发送确认仍及时调度。
-  "reply_to_backlog": false, // 生产入口强制关闭，避免新部署补答旧消息。
-  // 集中配置身份：可改为 {"name":"ds", "aliases":["小D", "DeepSeek"], "prompt_file":"prompts/system.md"}。
-  // null 或未设置时继续使用旧字段；按字段覆盖旧值。显式 aliases 替换旧名称列表，不改变真实 @。
-  "persona": null,
-  // 输出语气：只控制机器人表达，不修改群友原文；改配置后重启监听。
-  "reply_style": {
-    "wechat_emoticons_enabled": false, // 开启后偶尔用一个微信表情，也可单发表情；按需在实际配置开启。
-    "omit_trailing_period": true // 普通短句省略尾句号；自写正文统一英文半角标点，代码、链接及引用内容保留。
+  "account": {
+    "send_interval_seconds": 1
   },
-  // @ 回复队列：合并默认关闭，每次真实 @ 独立排队。
+  "instances": [],
+  "poll_interval_seconds": 2,
+  "reply_to_backlog": false,
+  "reply_style": {
+    "wechat_emoticons_enabled": false,
+    "omit_trailing_period": false
+  },
   "queue": {
-    "debounce_seconds": 0, // 0 不合并；正数为同一人连续 @ 的合并静默窗口（秒）。
-    "generation_concurrency": 2, // 整个账号的有效 API 任务上限，只能为 1 或 2，各群共享。
-    "max_pending": 32, // 普通触发达到容量时保留接收游标，等待队列腾出位置。
-    "max_pending_per_sender": 8, // 同一成员的待处理任务上限。
-    "generation_lookahead": 4, // 只预生成队列前几项；发送阻塞时暂停新生成。
-    "intake_max_pages": 4, // 单次接收最多查询几页，每页100条，随后让出调度。
-    "generation_retries": 2, // 瞬时生成故障最多再试2次；永久错误直接给失败说明。
-    "generation_retry_delay_seconds": 3, // 重试等待期间继续接收消息，不阻塞主进程。
-    "completed_retention": 200, // 最多保留200条完成记录；未完成/未决发送不会清理。
+    "debounce_seconds": 0,
+    "max_pending": 32,
+    "max_pending_per_sender": 8,
+    "generation_lookahead": 4,
+    "intake_max_pages": 4,
+    "generation_retries": 2,
+    "generation_retry_delay_seconds": 3,
+    "completed_retention": 200,
     "file": "/run/wxbridge-trial/queue.sqlite3"
   },
-  // 主动接话：达到门槛后仍可选择沉默；真实 @ 优先。
   "proactive": {
-    "enabled": false, // 默认关闭；确认群内使用方式后按需开启。
-    "window_seconds": 300, // 检查最近 5 分钟；正常 @ 回复和接话不会重置主动入场冷却。
-    "min_messages": 10, // 至少 10 条群成员文字，图片/表情/系统消息不计数。
-    "check_interval_seconds": 10, // 有新消息时，资格检查的最短间隔。
-    "evaluation_interval_seconds": 60, // 独立入场的两次模型判断至少间隔 60 秒；短会话用10秒检查间隔。
-    "min_new_messages": 3, // 再次判断需 3 条新文字，也用于作废过时短句。
-    "reply_ttl_seconds": 60, // 主动结果有效期；不得小于下面的请求时限。
-    "timeout_seconds": 30, // 主动接话请求时限；思考开关和深度在 models.participation 中调整。
-    "max_reply_chars": 30, // 主动短句硬上限，过长则放弃。
-    "entry_cooldown_seconds": 300, // 从上次主动入场确认算起5分钟；@回复和接话不重置，八秒发送间隔仍生效。
-    "max_entries_per_hour": 0, // 0不限制小时次数；1–12可恢复滚动小时入场上限。
+    "enabled": false,
+    "window_seconds": 300,
+    "min_messages": 10,
+    "check_interval_seconds": 10,
+    "evaluation_interval_seconds": 60,
+    "min_new_messages": 3,
+    "reply_ttl_seconds": 60,
+    "timeout_seconds": 30,
+    "max_reply_chars": 30,
+    "entry_cooldown_seconds": 300,
+    "max_entries_per_hour": 0,
     "opportunities": {
-      "enabled": true, // 提到助手/引用她，或低频多人聊天时也可请求判断；不保证会发言。
-      "min_messages": 3, // 低频聊天候选门槛，原十条活跃门槛仍保留。
+      "enabled": true,
+      "min_messages": 3,
       "min_senders": 2,
-      "address_names": ["ds"] // 不区分大小写，句首/中/末均可点名；绕过随机入场冷却，ads/dss不匹配。
+      "address_names": []
     },
     "conversation": {
-      "enabled": true, // 总开关proactive.enabled也必须开启。
-      "window_seconds": 120, // 真实@接纳/主动首句确认后开始；成员新消息续期，机器人回复不续期。
-      "max_followups": 0 // 0不限制接话轮数；1/2可恢复上限，仍须有新文字且模型愿意接。
+      "enabled": true,
+      "window_seconds": 120,
+      "max_followups": 0
     }
   },
   "target": {
-    "chat": "把这里改成你们的群名", // 推荐完整群名，也可填写稳定的群 ID。
-    "bot_name": "DeepSeek", // 替换人格中的 {bot_name}，不会修改微信昵称。
+    "chat": "",
+    "bot_name": "助手",
     "trigger": {
-      "mentions": ["@DeepSeek", "@deepseek", "@小D"], // 兼容识别配置，生产仍以真实 @ 元数据为准。
+      "mentions": [],
       "prefixes": [],
       "reply_all": false,
-      "require_mention_metadata": true, // 生产强制开启；手打 @ 名称不算真实 @。
-      "pat_enabled": true // 事件识别开关；当前微信拍一拍实时同步问题仍搁置。
+      "require_mention_metadata": true,
+      "pat_enabled": true
     },
-    "cooldown_seconds": 8, // 每条实际发出确认后的最短发送间隔，排队等待而非丢弃。
-    "max_message_age_seconds": 90, // 仅首次接收过滤旧触发；已入队问题不会因此过期。
-    "context_window_seconds": 300, // 普通回复上下文 5 分钟；人物记忆单独注入。
-    "context_max_chars": 24000, // 上下文字符预算；超出时取消，不悄悄截断历史。
-    "context_budget_strategy": "strict", // 可选 recent：超预算时省略完整旧消息并告知模型，保留当前提问及引用；默认不启用。
-    "max_reply_chars": 1800 // 微信单条分片上限；日常短答偏好另由提示词控制。
+    "cooldown_seconds": 8,
+    "max_message_age_seconds": 90,
+    "context_window_seconds": 300,
+    "context_max_chars": 24000,
+    "context_budget_strategy": "strict",
+    "max_reply_chars": 1800
   },
-  // 历史基础连接与人格文件；未选择 profile 的角色沿用这里的连接，密钥不要写在 JSON。
-  "deepseek": {
-    "api_key_env": "DEEPSEEK_API_KEY", // 从项目根目录 .env 或已有环境变量读取。
-    "base_url": "https://api.deepseek.com",
-    "model": "deepseek-flash",
-    "thinking": "enabled", // enabled 开启思考，disabled 关闭。
-    "reasoning_effort": "max", // 开启思考时可选 low / high / max。
-    "temperature": 1.0,
-    "timeout_seconds": 60, // 单次 HTTP 请求超时，不等于整轮处理时限。
-    "max_tokens": 1200, // 输出 token 预算，不是中文字数。
-    "system_prompt_file": "prompts/system.md" // 每次生成重读，同一路径下改人格无需重启。
-  },
-  // null 沿用已有 deepseek/memory 设置；填连接名称即可切换默认供应商。
-  // 可选 deepseek_chat / openai / claude_messages；默认配置已内置，不必手工合并连接。
-  // 连接名称只是别名，实际协议由 provider 决定，具体型号由 model 决定。
-  "model_profile": null,
-  // 下面只是可选连接预设，不代表启用；只有被 model_profile 或 models.<角色>.profile 选中才使用。
-  "model_profiles": {
-    "deepseek_chat": {
-      "provider": "deepseek",
-      "base_url": "https://api.deepseek.com",
-      "api_key_env": "DEEPSEEK_API_KEY",
-      "model": "deepseek-flash",
-      "thinking": "enabled",
-      "reasoning_effort": "max"
-    },
-    "openai": {
-      "provider": "openai_responses",
-      "base_url": "https://api.openai.com/v1",
-      "api_key_env": "OPENAI_API_KEY",
-      "model": "gpt-6-luna",
-      "native_search_supported": true, // 网关不支持内置搜索时改为 false，并使用 external。
-      "thinking": "enabled",
-      "reasoning_effort": "max",
-      "temperature": null
-    },
-    "claude_messages": {
-      "provider": "anthropic",
-      "base_url": "https://api.anthropic.com/v1",
-      "api_key_env": "ANTHROPIC_API_KEY",
-      "model": "claude-opus-4-6", // 可替换为账户可用的 Claude 型号。
-      "native_search_supported": true, // 网关没有内置搜索时设为 false。
-      "thinking": "enabled",
-      "thinking_mode": "adaptive",
-      "reasoning_effort": "max",
-      "temperature": null,
-      "anthropic_version": "2026-10-21", // 旧兼容网关可改为 2023-06-01。
-      "anthropic_auth": "api_key", // 要求 Authorization 的网关可改为 bearer。
-      "anthropic_web_search_version": "web_search_20250305"
-    }
-  },
-  // profile=null 继承 model_profile；给某个角色填连接名即可独立选择 API。
-  // 全局与各角色保持 null，全部沿用 DeepSeek；临时试用 GPT 只在 config.json 选择 reply=openai。
-  // 仅 OpenAI 需要代理时，在 config.json 的 models.reply 中加 proxy_url="http://127.0.0.1:10808"。
-  // 代理只影响该角色，不设置全局环境变量；填写 HTTP 代理入口，不要填 socks5://。
-  // 例如 memory.profile="deepseek_chat" 可让记忆继续使用 DeepSeek。
-  // provider: deepseek / openai_compatible / openai_responses / anthropic。
-  // participation 的思考独立于普通 @ 回复；下面可设 enabled/disabled 和 low/high/max。
-  // 主动接话先由 participation 判断；决定开口才调用 reply 生成正文。真实 @ 直接用 reply。
   "models": {
-    "reply": {"profile": null}, // 所有实际回复沿用 DeepSeek 的模型、预算和时限。
-    "participation": {
-      "profile": null,
-      "thinking": "disabled", // 仅判断是否介入、回应哪条新消息；不生成正文。
-      "reasoning_effort": "high", // 当前不发送此参数；将来开启思考时才使用，不影响普通 @ 的 max。
-      "max_tokens": 256 // 判断JSON预算；正文另用 reply 的预算，实际发送仍最多30字。
+    "reply": {
+      "model": "",
+      "options": {
+        "max_tokens": 1200,
+        "timeout_seconds": 60,
+        "thinking": "disabled"
+      }
     },
-    "memory": {"profile": null},
+    "participation": {
+      "model": "",
+      "options": {
+        "max_tokens": 256,
+        "timeout_seconds": 20,
+        "thinking": "disabled"
+      }
+    },
+    "memory": {
+      "model": "",
+      "options": {
+        "max_tokens": 1200,
+        "timeout_seconds": 60,
+        "thinking": "disabled"
+      }
+    },
     "avatar": {
-      "profile": null,
-      "thinking": "enabled", // 头像分析也开启思考，与文字记忆独立。
-      "reasoning_effort": "max",
-      "max_tokens": 1200
+      "model": "",
+      "options": {
+        "max_tokens": 1200,
+        "timeout_seconds": 60,
+        "thinking": "disabled"
+      }
     }
   },
-  // 默认使用 DeepSeek Search/Fetch，和 DeepSeek 聊天共用密钥，只发最终回答。
-  // 临时使用 OpenAI 时，在 config.json 把 reply 选为 openai、search.backend 选为 native。
-  // auto 按所选协议预选路线；失败不自动切换。外部搜索可用 api_key_env 另指定密钥。
   "search": {
     "enabled": true,
-    "backend": "external", // 默认 DeepSeek；native 仅适用于支持内置搜索的连接。
-    "base_url": "https://api.deepseek.com", // 仅 external 后端使用，native 忽略此地址。
+    "backend": "external",
     "timeout_seconds": 15,
-    "total_timeout_seconds": 120, // 一整轮搜索回答的总时限。
+    "total_timeout_seconds": 120,
     "max_tool_rounds": 2,
     "max_requests": 3,
     "max_results": 5,
-    "feedback_enabled": false, // 默认不发“我去看看”等等待提示；需要时可重新开启。
-    "feedback_phrases": ["我去查查，等我一下。", "我上网搜搜，核实一下。", "这事我去看看。"]
+    "feedback_enabled": false,
+    "feedback_phrases": [
+      "我去查查，等我一下。",
+      "我上网搜搜，核实一下。",
+      "这事我去看看。"
+    ],
+    "connection": "deepseek"
   },
-  // 仅处理明确引用的图片，读取当前账号本地缓存，不自动解读所有群图片。
   "vision": {
     "enabled": true,
-    "detail": "original", // 优先原图，受微信实际缓存情况限制。
+    "detail": "original",
     "max_images": 4,
     "max_image_bytes": 8388608,
     "cache_wait_seconds": 3,
-    // desktop 需要 AT-SPI；native 需要显式启用图片 helper，按绑定来源下载，不操作窗口。
     "download_enabled": false,
-    "download_backend": "desktop", // 可选 native；共享 native_api.helper_socket 和群允许列表，失败不回退桌面。
+    "download_backend": "desktop",
     "download_timeout_seconds": 20
   },
-  // 按机器人账号、群和成员 wxid 隔离的持久摘要；完整说明见 docs/MEMORY.md。
   "memory": {
     "enabled": true,
     "directory": "memory",
-    "model": "deepseek-flash",
-    "thinking": "enabled", // 记忆文字整理独立开关：enabled / disabled。
-    "reasoning_effort": "max", // low / high / max；只在开启思考时发送。
-    "system_prompt_file": "prompts/memory.md", // 可编辑的记忆整理与语境学习提示词。
+    "system_prompt_file": "prompts/memory.md",
     "learning": {
-      "enabled": true, // 记录语境表达，跨至少两天的证据后形成稳定习惯。
-      "passive_enabled": true, // 活跃闲聊也整理全部记忆，不主动发送消息。
+      "enabled": true,
+      "passive_enabled": true,
       "window_seconds": 300,
-      "min_new_messages": 10, // 相同成员相同内容刷屏不累计。
+      "min_new_messages": 10,
       "min_senders": 2,
-      "min_interval_seconds": 300 // 被动批次最短间隔，@ 后整理仍最短60秒。
+      "min_interval_seconds": 300
     },
-    "min_interval_seconds": 60, // 后台整理最短间隔，前台回复优先。
-    "prompt_max_chars": 1200, // 每轮注入的记忆字符预算。
-    "max_tokens": 16384, // 包含思考与结构化输出，max 思考时留足预算；并非固定用满。
-    "timeout_seconds": 90, // 后台总时限，前台需要并发位置时仍可抢占。
-    // 头像只提供私下的弱初见线索，不据此改变好感分数。
+    "min_interval_seconds": 60,
+    "prompt_max_chars": 1200,
     "avatar": {
       "enabled": true,
       "max_per_batch": 2,
@@ -221,24 +161,44 @@
       "retry_interval_seconds": 3600
     }
   },
-  // Linux AT-SPI / X11 发送与保护；一般不需要修改控件名称及快捷键。
   "ui": {
     "backend": "auto",
-    "input_method": "auto",
-    "verify_chat_selected": true, // 生产强制检查目标群，避免发送到错误聊天。
-    "app_names": ["wechat", "WeChat", "微信"],
-    "chat_list_names": ["Chats", "聊天", "会话"],
-    "messages_list_names": ["Messages", "消息"],
+    "app_names": [
+      "wechat",
+      "WeChat",
+      "微信"
+    ],
+    "chat_list_names": [
+      "Chats",
+      "聊天",
+      "会话"
+    ],
+    "messages_list_names": [
+      "Messages",
+      "消息"
+    ],
     "window_class": "wechat",
     "native_executable": "/opt/wechat/wechat",
-    "window_names": ["微信", "WeChat"],
+    "window_names": [
+      "微信",
+      "WeChat"
+    ],
     "search_shortcut": "ctrl+f",
     "paste_shortcut": "ctrl+v",
     "select_all_shortcut": "ctrl+a",
     "send_key": "Return",
+    "input_method": "auto",
+    "verify_chat_selected": true,
     "post_send_wait": 0.8,
-    "send_confirm_timeout_seconds": 10, // 核对数据库发出记录的等待时间，不以按钮点击作成功。
-    "chat_open_wait": 1.0,
-    "dry_run": true // 示例不发送；生产 run --send 显式启用，模拟仍可能调用模型。
-  }
+    "send_confirm_timeout_seconds": 10,
+    "chat_open_wait": 1,
+    "dry_run": true
+  },
+  "model_clients": {
+    "reply": "deepseek",
+    "image": "openai",
+    "background": "deepseek"
+  },
+  "system_prompt_file": "prompts/system.md",
+  "provider_env": null
 }

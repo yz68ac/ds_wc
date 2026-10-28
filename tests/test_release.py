@@ -22,7 +22,8 @@ class ReleaseTests(unittest.TestCase):
         self.root.mkdir()
         self.bundle = Path(self.temp.name)/'release.zip'
         self.git('init', '-q')
-        for name in ('config.defaults.json', 'wxbridge/__main__.py', 'scripts/test-offline.py', 'prompts/system.md'):
+        for name in ('config.defaults.json', 'src/wxbridge/__main__.py', 'src/provider/__init__.py',
+                     'src/wechat_linux/__init__.py', 'scripts/test-offline.py', 'prompts/system.md'):
             path = self.root/name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text('{}' if name.endswith('.json') else 'synthetic', encoding='utf-8')
@@ -82,7 +83,7 @@ class ReleaseTests(unittest.TestCase):
         return result
 
     def test_tampered_source_fails_hash_validation(self):
-        data = self.altered(lambda files: files.update({'wxbridge/__main__.py': b'tampered'}))
+        data = self.altered(lambda files: files.update({'src/wxbridge/__main__.py': b'tampered'}))
         with self.assertRaisesRegex(ValueError, 'hash_mismatch'):
             release['verify'](data)
 

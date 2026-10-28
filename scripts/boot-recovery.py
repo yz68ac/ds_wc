@@ -6,7 +6,6 @@ import contextlib
 import json
 import os
 from pathlib import Path
-import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -84,7 +83,7 @@ def runtime():
 
 
 def configured_groups():
-    sys.path.insert(0, str(APP))
+    sys.path.insert(0, str(APP/'src' if (APP/'src').is_dir() else APP))
     from wxbridge.app.operations import configured_groups as groups
     return groups(APP, RUN)
 
@@ -92,17 +91,11 @@ def configured_groups():
 def checkpoint_one(path, output):
     if not path.exists():
         return dict(saved=False, reason='queue_not_created')
-    db = sqlite3.connect(path.as_uri()+'?mode=ro', uri=True)
-    try:
-        meta = {k: json.loads(v) for k,v in db.execute("SELECT key,value FROM meta WHERE key IN ('identity','cursor')")}
-        pending = sum(json.loads(r[0])['phase'] != 'done' for r in db.execute('SELECT data FROM tasks'))
-        memory_pending = db.execute('SELECT COUNT(*) FROM memory_jobs').fetchone()[0]
-    finally:
-        db.close()
-    if not isinstance(meta.get('identity'), dict) or type(meta.get('cursor')) is not int:
-        raise ValueError('checkpoint_invalid_queue_metadata')
-    value = dict(schema=1, identity=meta['identity'], cursor=meta['cursor'], updated_at=int(time.time()),
-                 pending_at_shutdown=pending, memory_pending_at_shutdown=memory_pending)
+    sys.path.insert(0, str(APP/'src' if (APP/'src').is_dir() else APP))
+    from wxbridge.storage.inspection import inspect_queue
+    snapshot = inspect_queue(path)
+    value = dict(schema=1, identity=snapshot.identity, cursor=snapshot.cursor, updated_at=int(time.time()),
+                 pending_at_shutdown=snapshot.pending, memory_pending_at_shutdown=snapshot.memory_total)
     # The subsequent probe runs as wxbridge, including after a root maintenance checkpoint.
     account = owner() if getattr(os, 'geteuid', lambda: None)() == 0 else None
     if output.parent != PERSIST:
@@ -113,7 +106,7 @@ def checkpoint_one(path, output):
             if account:
                 os.chown(directory, account.pw_uid, account.pw_gid)
     atomic_json(output, value, owner=account)
-    return dict(saved=True, cursor=value['cursor'], pending=pending, memory_pending=memory_pending)
+    return dict(saved=True, cursor=value['cursor'], pending=snapshot.pending, memory_pending=snapshot.memory_total)
 
 
 def checkpoint():
@@ -139,7 +132,7 @@ def restored_state(checkpoint_value, identity, maximum):
 
 def probe(keys=None, *, verify=False):
     # 只在主监听停止、协调器持有两把锁时运行；整个数据库访问留在此单进程。
-    sys.path.insert(0, str(APP))
+    sys.path.insert(0, str(APP/'src' if (APP/'src').is_dir() else APP))
     from wxbridge.config import load_config
     from wxbridge.wechat.store import WeChatStore
     cfg = load_config(APP/'config.json')
@@ -181,13 +174,9 @@ def probe(keys=None, *, verify=False):
                 require_memory_directory(str(Path(active_cfg['state_file']).parent))
                 atomic_json(Path(active_cfg['state_file']), state)
         if queue_file.exists():
-            db = sqlite3.connect(queue_file.as_uri()+'?mode=ro', uri=True)
-            try:
-                row = db.execute("SELECT value FROM meta WHERE key='identity'").fetchone()
-                if row and json.loads(row[0]) != identity:
-                    raise ValueError('existing_queue_identity_mismatch')
-            finally:
-                db.close()
+            from wxbridge.storage.inspection import inspect_queue
+            if inspect_queue(queue_file).identity != identity:
+                raise ValueError('existing_queue_identity_mismatch')
         result = dict(ready=True, checkpoint_restored=cursor_file.exists(), latest_local_id=maximum)
         if identifier is None:
             return result
@@ -201,7 +190,7 @@ def as_user(args):
         os.initgroups(account.pw_name, account.pw_gid)
         os.setgid(account.pw_gid)
         os.setuid(account.pw_uid)
-    env = dict(PATH='/usr/local/bin:/usr/bin:/bin', HOME=account.pw_dir, PYTHONPATH=str(APP))
+    env = dict(PATH='/usr/local/bin:/usr/bin:/bin', HOME=account.pw_dir, PYTHONPATH=str(APP/'src' if (APP/'src').is_dir() else APP))
     allowed = {'DISPLAY','XAUTHORITY','XDG_RUNTIME_DIR','DBUS_SESSION_BUS_ADDRESS','QT_ACCESSIBILITY',
                'QT_LINUX_ACCESSIBILITY_ALWAYS_ON','GTK_MODULES','NO_AT_BRIDGE'}
     for line in (RUN/'env').read_text().splitlines():

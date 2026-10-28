@@ -1,4 +1,6 @@
 """合成头像、内存 SQLite、假 API；头像不能作为人格或好感证据。"""
+from model_support import default_config
+from contextlib import nullcontext
 import copy
 import hashlib
 import json
@@ -38,7 +40,7 @@ class AvatarTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(dir=root)
         self.addCleanup(self.temp.cleanup)
         self.memory = MemoryStore(self.temp.name, IDENTITY)
-        self.cfg = _deep_merge(DEFAULTS, {})
+        self.cfg = default_config()
         self.message = msg(1, NOW, "你好", "wxid_a")
 
     def snap(self, number=1):
@@ -84,7 +86,7 @@ class AvatarTests(unittest.TestCase):
     def test_text_judgement_never_sees_avatar_and_visual_has_no_chat_context(self):
         value = self.snap()
         response = dict(avatars=[update()])
-        with patch("wxbridge.ai.client.ModelClient") as client:
+        with patch("wxbridge.ai.client.client_for") as client:
             client.return_value.complete.side_effect = [dict(content='{"updates":[]}'), dict(content=json.dumps(response))]
             result = extract(self.cfg, value)
             first, second = client.return_value.complete.call_args_list
@@ -99,7 +101,7 @@ class AvatarTests(unittest.TestCase):
             self.assertEqual(model_settings(client.call_args.args[0], 'avatar')['reasoning_effort'], 'max')
 
     def test_visual_api_failure_keeps_text_proposal(self):
-        with patch("wxbridge.ai.client.ModelClient") as client:
+        with patch("wxbridge.ai.client.client_for") as client:
             client.return_value.complete.side_effect = [dict(content='{"updates":[]}'), TimeoutError()]
             result = extract(self.cfg, self.snap())
         self.assertEqual(result, dict(updates=[], avatar_updates=[]))

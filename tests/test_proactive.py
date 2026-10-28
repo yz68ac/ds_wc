@@ -1,5 +1,8 @@
 """合成群聊、真实SQLite、可控时钟；不调用API或微信。"""
 from __future__ import annotations
+from model_support import default_config
+from contextlib import nullcontext
+from contextlib import nullcontext
 
 import copy
 import json
@@ -32,8 +35,9 @@ class DecisionTests(unittest.TestCase):
         self.assertTrue(own)
 
     def test_prompt_is_not_a_fake_mention_and_preserves_personality_and_memory(self):
-        cfg=copy.deepcopy(DEFAULTS)
-        cfg['deepseek'].update(system_prompt_file='',system_prompt='合成人格')
+        cfg=default_config()
+
+        cfg['system_prompt_file'] = str(Path(__file__).resolve().parents[1]/'prompts/system.md')
         rows=[msg(i,NOW,'普通文字') for i in range(1,11)]
         prompt=build_prompt(cfg,rows,'合成群',dict(labels={'wxid_friend':'U1'},text='合成背景'))
         self.assertNotIn('合成人格', prompt[0]['content'])
@@ -53,11 +57,11 @@ class DecisionTests(unittest.TestCase):
             build_prompt(cfg,rows,'合成群')
 
     def test_participation_disables_thinking_and_preserves_foreground_config(self):
-        cfg=copy.deepcopy(DEFAULTS)
+        cfg=default_config()
         client=Mock()
         client.complete.return_value={'content':'{"speak":false,"reply_to":null}','reasoning_content':'PRIVATE_REASONING'}
         original=copy.deepcopy(cfg)
-        with patch('wxbridge.ai.client.ModelClient',return_value=client) as factory:
+        with patch('wxbridge.ai.client.client_for',return_value=client) as factory:
             self.assertFalse(evaluate(cfg,[])['speak'])
         request_cfg=factory.call_args.args[0]
         self.assertEqual(factory.call_args.kwargs['role'], 'participation')
@@ -83,9 +87,9 @@ class DecisionTests(unittest.TestCase):
     def test_config_rejects_invalid_switch_and_limits(self):
         for values in ({'enabled':1},{'min_messages':True},{'min_messages':0},
                        {'max_reply_chars':31},{'timeout_seconds':30,'reply_ttl_seconds':10}):
-            defaults=copy.deepcopy(DEFAULTS)
+            defaults=default_config()
             defaults['proactive'].update(values)
-            with patch('wxbridge.config.DEFAULTS',defaults),patch('wxbridge.config.load_dotenv'):
+            with patch('wxbridge.config.DEFAULTS',defaults),nullcontext():
                 with self.assertRaises(ValueError):
                     load_config('__missing_synthetic_config__.json')
 

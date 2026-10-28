@@ -1,3 +1,5 @@
 # 已验证的离线测试依赖；运行依赖范围仍在 requirements.txt 维护。
 pycryptodome==4.1.0
 zstandard==0.25.0
+openai==3.40.0
+anthropic==2.3.0

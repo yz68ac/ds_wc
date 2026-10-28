@@ -28,7 +28,7 @@ class FocusRecoveryTests(unittest.TestCase):
         for target, opts in [
             ("load_config", dict(return_value={"queue": {"file": "queue"}, "decrypted_dir": "decode", "ui": {}})),
             ("instance_lock", dict(side_effect=lambda path: nullcontext())),
-            ("WeChatDeepSeekBot", dict(return_value=self.bot)),
+            ("GroupSession", dict(return_value=self.bot)),
             ("A11y", dict(return_value=self.a)),
         ]:
             p = patch.object(recovery, target, **opts)

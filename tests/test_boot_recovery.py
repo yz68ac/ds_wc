@@ -44,7 +44,7 @@ class BootRecoveryTests(unittest.TestCase):
             db.executescript('CREATE TABLE meta(key TEXT,value TEXT); CREATE TABLE tasks(data TEXT); CREATE TABLE memory_jobs(data TEXT);')
             identity=dict(account='synthetic_bot',chat='synthetic@chatroom')
             db.executemany('INSERT INTO meta VALUES (?,?)',[('identity',json.dumps(identity)),('cursor','9'),('secret','"KEY_SECRET"')])
-            db.execute('INSERT INTO tasks VALUES (?)',(json.dumps(dict(phase='queued',text='CHAT_SECRET',prompt='PROMPT_SECRET')),))
+            db.execute('INSERT INTO tasks VALUES (?)',(json.dumps(dict(phase='queued',intent=None,text='CHAT_SECRET',prompt='PROMPT_SECRET')),))
             db.execute('INSERT INTO memory_jobs VALUES (?)',('"MEMORY_SECRET"',))
             db.commit(); db.close()
             account=SimpleNamespace(pw_uid=995,pw_gid=984)

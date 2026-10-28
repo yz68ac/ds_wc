@@ -1,4 +1,6 @@
 """Readiness, bounded context and release planning without service mutations."""
+from model_support import default_config
+from contextlib import nullcontext
 import copy
 import importlib.util
 import json
@@ -21,7 +23,7 @@ deployment=importlib.util.module_from_spec(spec);spec.loader.exec_module(deploym
 
 class ReviewOperationTests(unittest.TestCase):
     def test_native_recovery_uses_helper_readiness_without_constructing_gui(self):
-        cfg=copy.deepcopy(DEFAULTS);cfg['ui']['backend']='native_service';cfg['target']['chat']='synthetic@chatroom'
+        cfg=default_config();cfg['ui']['backend']='native_service';cfg['target']['chat']='synthetic@chatroom'
         store=Mock(self_wxid='wxid_synthetic');store.resolve_chat.return_value=('synthetic@chatroom','synthetic')
         store.last_local_id.return_value=10
         with tempfile.TemporaryDirectory(dir=Path(__file__).parent.parent/'.test-tmp') as folder:
@@ -42,7 +44,7 @@ class ReviewOperationTests(unittest.TestCase):
             self.assertTrue(result['result']['client_ready']);find.assert_called_once_with(995,'synthetic')
 
     def test_optional_context_degradation_preserves_full_question_and_reports_omissions(self):
-        cfg=copy.deepcopy(DEFAULTS);cfg['deepseek'].update(system_prompt_file='',system_prompt='synthetic')
+        cfg=default_config();cfg['models']['reply']['options'].update(system_prompt_file='',system_prompt='synthetic')
         cfg['target']['context_max_chars']=1200
         rows=[msg(i,NOW-20+i,'OLD_'+str(i)+'x'*150) for i in range(1,11)]
         trigger=msg(20,NOW,'CURRENT_QUESTION_UNCHANGED')

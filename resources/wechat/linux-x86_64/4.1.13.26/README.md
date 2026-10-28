@@ -21,7 +21,7 @@ deb SHA-256：
 a0db8caeee8d1e6cfe0aa5ce58710270f8d74a90ff4920f53a3fc22aa0956fe9
 ```
 
-实际校验包括：主程序 ELF 架构、复制前后 hash、deb 控制信息，以及流式读取 deb 中 `opt/wechat/wechat` 得到的 hash。三处主程序均与 [原生 profile](../../../../wechat_linux/native/profile.json) 一致。没有执行样本、安装软件或修改线上微信。
+实际校验包括：主程序 ELF 架构、复制前后 hash、deb 控制信息，以及流式读取 deb 中 `opt/wechat/wechat` 得到的 hash。三处主程序均与 [原生 profile](../../../../src/wechat_linux/native/profile.json) 一致。没有执行样本、安装软件或修改线上微信。
 
 来源是用户原先下载并提供的包；上述 hash 用于确认内容一致，不是本次取得的腾讯签名验证结果。精确文件信息见 [manifest.json](manifest.json)。
 

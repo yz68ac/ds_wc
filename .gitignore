@@ -3,6 +3,10 @@ __pycache__/
 .env
 .env.*
 !.env.example
+/src/provider/models.json
+/src/provider/build/
+/src/provider/dist/
+/src/provider/*.egg-info/
 config.json
 keys.json
 all_keys.json
@@ -40,6 +44,7 @@ venv/
 /build/
 /dist/
 /*.egg-info/
+/src/*.egg-info/
 memory/
 Thumbs.db
 .DS_Store

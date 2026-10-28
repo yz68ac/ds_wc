@@ -1,4 +1,7 @@
 """Synthetic multi-group isolation and account scheduling; no live credentials."""
+from model_support import default_config
+from contextlib import nullcontext
+from contextlib import nullcontext
 from copy import deepcopy
 import io
 import json
@@ -36,7 +39,7 @@ class InstanceFixture(unittest.TestCase):
                                     dict(id='beta', chat=CHATS[1], overrides=dict(
                              persona=dict(name='Beta', aliases=['b酱']),
                              deepseek=dict(system_prompt='BETA_PERSONA'), search=dict(enabled=False)))])
-        p = patch('wxbridge.config.load_dotenv'); p.start(); self.addCleanup(p.stop)
+        p = nullcontext(); p.start(); self.addCleanup(p.stop)
         p = patch.dict(os.environ, {}, clear=True); p.start(); self.addCleanup(p.stop)
 
     def load(self, data=None):
@@ -48,7 +51,7 @@ class InstanceConfigTests(InstanceFixture):
 
     def test_different_personas_profiles_and_paths_without_mutating_defaults(self):
         from wxbridge.config import DEFAULTS
-        before = deepcopy(DEFAULTS)
+        before = default_config()
         self.data['models'] = dict(reply=dict(profile='openai', model='old-root-model', proxy_url='http://127.0.0.1:10808'))
         self.data['instances'][1]['overrides']['models'] = dict(reply=dict(profile='deepseek_chat'))
         cfg = self.load()

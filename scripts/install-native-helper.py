@@ -57,7 +57,7 @@ def install(wheel,user,allowed,*,enable_images=False,image_account=None,image_ac
     with wheel.open('rb') as stream:
         if hashlib.file_digest(stream,'sha256').hexdigest()!=WHEEL_SHA256:
             raise ValueError('frida_wheel_hash_mismatch')
-    source=Path(__file__).resolve().parents[1]/'wechat_linux'/'native'
+    source=Path(__file__).resolve().parents[1]/'src'/'wechat_linux'/'native'
     assets=TEXT_ASSETS+(IMAGE_ASSETS if image else ())
     if any(not (source/name).is_file() or (source/name).is_symlink() for name in assets):
         raise ValueError('helper_source_assets_missing')
@@ -130,8 +130,9 @@ WantedBy=multi-user.target
     SHORTCUT.write_text(f'''#!/bin/sh
 set -eu
 cd /opt/wxbridge
+export PYTHONPATH=/opt/wxbridge/src
 if [ "$(id -u)" -eq 0 ]; then
-    exec /usr/sbin/runuser -u {account.pw_name} -- /usr/bin/python3 -m wxbridge native-api "$@"
+    exec /usr/sbin/runuser -u {account.pw_name} -- /usr/bin/env PYTHONPATH=/opt/wxbridge/src /usr/bin/python3 -m wxbridge native-api "$@"
 fi
 exec /usr/bin/python3 -m wxbridge native-api "$@"
 ''')

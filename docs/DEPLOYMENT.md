@@ -1,8 +1,12 @@
+> 模型配置与生命周期已重构：请以 [模型接口](MODEL_API.md) 为准。每群三条线程通道，旧 profile/persona 和模型总额度已移除。
+
 # Linux 部署
 
 已安装实例的差异部署和失败回滚可用[审阅修复说明](REVIEW_FIXES.md)中的`deploy-release.py`；默认仅打印计划，不执行更新。
 
 源码运行依赖原生 Linux 微信。现有验证环境为 Debian 13 amd64、Python 3.13、微信 4.1.13.26；Windows 用于编辑与离线测试。微信客户端不随仓库分发，安装和升级后需要确认数据库与无障碍界面适配。
+
+源码已迁至 `src/`。在仓库根目录交互运行 `python3 -m wxbridge` 前执行 `export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"`；`scripts/run-live.py` 和恢复脚本会自行配置源码路径。现有线上服务和恢复工具须按新的发布包一起迁移并检查，不能只复制部分目录。
 
 ## 约定与依赖
 

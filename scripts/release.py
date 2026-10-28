@@ -52,7 +52,8 @@ def verify(path):
                 raise ValueError('private_release_content')
             if hashlib.sha256(body).hexdigest() != expected.get('sha256'):
                 raise ValueError('release_hash_mismatch')
-        required = {'config.defaults.json', 'wxbridge/__main__.py', 'scripts/test-offline.py', 'prompts/system.md'}
+        required = {'config.defaults.json', 'src/wxbridge/__main__.py', 'src/provider/__init__.py',
+                    'src/wechat_linux/__init__.py', 'scripts/test-offline.py', 'prompts/system.md'}
         if not required.issubset(manifest['files']):
             raise ValueError('incomplete_release')
         return manifest

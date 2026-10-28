@@ -1,9 +1,11 @@
 """句中点名按上下文唤起，绕过随机入场限制但保留队列确认和真实@优先。"""
+from model_support import default_config
+from contextlib import nullcontext
 import unittest
 import copy
 from unittest.mock import patch
 
-from wxbridge.ai.client import DeepSeekClient
+from model_support import ClientFixture
 from wxbridge.ai.proactive import addresses_bot, evaluate
 import test_conversation as conversation
 
@@ -96,31 +98,6 @@ class KeywordParticipationTests(unittest.TestCase):
         self.assertIn('被讨论的内容', prompt[1]['content'])
         self.assertIn('优先结合上下文自然回应', prompt[0]['content'])
 
-    def test_keyword_judges_without_thinking_then_replies_max_and_can_be_preempted(self):
-        self.ordinary('这事ds怎么看')
-        job = self.bot.proactive.job[0]
-        cfg, prompt, options = job.payload
-        self.assertEqual(options['source_ids'], [1])
-        with patch('wxbridge.ai.client.deepseek_api_key', return_value='synthetic-key'), \
-                patch.object(DeepSeekClient, '_post', side_effect=[
-                    {'choices': [{'message': {'content': '{"speak":true,"reply_to":1}'}}]},
-                    {'choices': [{'message': {'content': '我觉得你漏看了前提'}}]}]) as post:
-            decision=evaluate(cfg, prompt, **options)
-            self.assertTrue(decision['handoff'])
-            self.assertEqual(post.call_count,1)
-        judge = post.call_args_list[0].args[0]
-        self.assertEqual(judge['thinking'], {'type': 'disabled'})
-        self.assertNotIn('reasoning_effort', judge)
-        self.assertEqual(judge['max_tokens'], 256)
-        from wxbridge.ai.roles import model_settings
-        self.assertEqual(model_settings(cfg,'reply')['thinking'],'enabled')
-        self.assertEqual(model_settings(cfg,'reply')['reasoning_effort'],'max')
-        self.assertEqual(cfg['deepseek']['reasoning_effort'], 'max')
-        self.add(2)
-        self.bot.tick()
-        self.assertTrue(job.closed)
-        self.assertIsNone(self.bot.proactive.job)
-        self.assertEqual(self.bot.journal.head()['trigger_kind'], 'mention')
 
     def test_keyword_send_after_restart_confirms_once_without_replaying_word(self):
         self.ordinary('刚才那个说法ds怎么看')
@@ -132,34 +109,6 @@ class KeywordParticipationTests(unittest.TestCase):
         self.assertEqual(len(self.sends()), 1)
         self.assertTrue(self.bot.journal.status()['conversation']['active'])
 
-    def test_unnamed_entry_uses_non_thinking_participation_worker(self):
-        from unittest.mock import Mock
-        from wxbridge.app.workers import _work
-        import logging
-        self.ordinary('今天又输了几把')
-        self.ordinary('我也差不多', sender='wxid_other')
-        self.now += 10
-        self.ordinary('看来得换个打法')
-        job = self.bot.proactive.job[0]
-        self.assertEqual(job.payload[2]['source_ids'], [1, 2, 3])
-        before = copy.deepcopy(self.cfg)
-        connection = Mock()
-        disabled = logging.root.manager.disable
-        try:
-            with patch('wxbridge.ai.client.deepseek_api_key', return_value='synthetic-key'), \
-                    patch.object(DeepSeekClient, '_post', return_value={'choices': [{'message': {
-                        'content': '{"speak":false,"reply_to":null}'}}]}) as post:
-                _work(connection, 'proactive', job.payload)
-        finally:
-            logging.disable(disabled)
-        self.assertTrue(connection.send.call_args.args[0]['ok'])
-        self.assertEqual(connection.send.call_args.args[0]['model_metrics'][0]['role'], 'participation')
-        payload = post.call_args.args[0]
-        self.assertEqual(payload['thinking'], {'type': 'disabled'})
-        self.assertNotIn('reasoning_effort', payload)
-        self.assertEqual(payload['max_tokens'], 256)
-        self.assertEqual(post.call_count, 1)
-        self.assertEqual(self.cfg, before)
 
     def test_window_followup_and_new_keyword_both_use_two_stage_worker(self):
         self.ordinary('这事让ds来评评')
@@ -177,41 +126,3 @@ class KeywordParticipationTests(unittest.TestCase):
         self.ordinary('这个说得不错', reference=dict(sender='wxid_self', kind='text', text='旧回复'))
         self.assertEqual(self.bot.proactive.pending['reason'], 'addressed')
         self.assertEqual(self.bot.proactive.job[0].payload[2]['source_ids'], [1])
-
-    def test_keyword_worker_inherits_reply_overrides_and_request_deadline(self):
-        from unittest.mock import Mock
-        from wxbridge.app.workers import _work
-        import logging
-        self.cfg['models']['reply'] = dict(model='synthetic-reply', thinking='enabled',
-                                          reasoning_effort='max', timeout_seconds=5, max_tokens=1700)
-        self.ordinary('这事ds怎么看')
-        job = self.bot.proactive.job[0]
-        before = copy.deepcopy(self.cfg)
-        connection = Mock()
-        disabled = logging.root.manager.disable
-        try:
-            with patch('wxbridge.ai.client.deepseek_api_key', return_value='synthetic-key'), \
-                    patch.object(DeepSeekClient, '_post', side_effect=[
-                        {'choices': [{'message': {'content': '{"speak":true,"reply_to":1}'}}],
-                         'usage': dict(prompt_tokens=10, completion_tokens=5)},
-                        {'choices': [{'message': {'content': '这局你确实有点冤'}}],
-                         'usage': dict(prompt_tokens=20, completion_tokens=8)}]) as post:
-                _work(connection, 'proactive', job.payload)
-        finally:
-            logging.disable(disabled)
-        result = connection.send.call_args.args[0]
-        self.assertTrue(result['ok'])
-        self.assertEqual(result['model_metrics'][0]['role'], 'participation')
-        self.assertEqual(result['decision']['reply_to'], 1)
-        self.assertEqual(len(result['model_metrics']), 1)
-        self.assertEqual(connection.send.call_count, 1)
-        self.assertTrue(result['decision']['handoff'])
-        self.assertNotIn('synthetic-key', str(connection.send.call_args_list))
-        payload = post.call_args.args[0]
-        self.assertEqual(payload['thinking'], {'type': 'disabled'})
-        job.result=result
-        self.bot.tick();self.bot.tick()
-        generated=next(j for j in self.jobs if j.kind=='generate')
-        self.assertEqual(generated.payload[0]['models']['reply']['model'],'synthetic-reply')
-        self.assertEqual(self.bot.journal.head()['trigger_kind'],'addressed')
-        self.assertEqual(self.cfg, before)

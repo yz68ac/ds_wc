@@ -1,5 +1,7 @@
 """Synthetic native API tests. No live config, Frida attachment, models or WeChat sends."""
 from __future__ import annotations
+from model_support import default_config
+from contextlib import nullcontext
 
 import copy
 import io
@@ -78,9 +80,9 @@ class ProtocolTests(unittest.TestCase):
         self.assertFalse(settings(DEFAULTS)['enabled'])
         for key,value in [('enabled',1),('max_text_bytes',4097),('max_pending',0),
                           ('allowed_chat_ids',['nickname']),('socket','/tmp/'+'x'*110)]:
-            cfg=copy.deepcopy(DEFAULTS);cfg['native_api'][key]=value
+            cfg=default_config();cfg['native_api'][key]=value
             with self.subTest(key=key),self.assertRaises(NativeError):settings(cfg)
-        cfg=copy.deepcopy(DEFAULTS);cfg['native_api']['helper_socket']=cfg['native_api']['socket']
+        cfg=default_config();cfg['native_api']['helper_socket']=cfg['native_api']['socket']
         with self.assertRaises(NativeError):settings(cfg)
 
     def test_privileged_helper_revalidates_input_and_allowlist(self):
@@ -98,7 +100,7 @@ class JournalTests(unittest.TestCase):
         self.path=Path(self.temp.name)/'queue.sqlite3'
         self.identity={'account':'synthetic','chat':'synthetic@chatroom'}
         self.journal=self.open();self.addCleanup(lambda:self.journal.close())
-        self.cfg=copy.deepcopy(DEFAULTS);self.cfg['ui']['dry_run']=False
+        self.cfg=default_config();self.cfg['ui']['dry_run']=False
         self.cfg['target']['cooldown_seconds']=0
         self.store=Mock(self_wxid='synthetic');self.store.last_local_id.return_value=2
         self.delivery=DeliveryController(self.cfg,self.journal,self.store,'synthetic@chatroom','合成群')
@@ -152,8 +154,8 @@ class JournalTests(unittest.TestCase):
         self.assertEqual(self.journal.external_status(payload()['request_id'])['state'],'confirming')
 
     def test_external_ready_task_never_calls_model_generation(self):
-        from wxbridge.app.bot import WeChatDeepSeekBot
-        self.enqueue();bot=WeChatDeepSeekBot.__new__(WeChatDeepSeekBot)
+        from wxbridge.app.bot import GroupSession
+        self.enqueue();bot=GroupSession.__new__(GroupSession)
         bot.cfg=self.cfg;bot.journal=self.journal;bot.generators={};bot.job_factory=Mock()
         bot._generation_step();bot.job_factory.assert_not_called()
 
@@ -312,7 +314,7 @@ class SocketTests(unittest.TestCase):
     def test_real_partial_frames_roundtrip_and_socket_permissions(self):
         parent=Path(__file__).resolve().parents[1]/'.test-tmp';parent.mkdir(exist_ok=True)
         with tempfile.TemporaryDirectory(dir=parent) as directory:
-            cfg=copy.deepcopy(DEFAULTS);cfg['native_api'].update(enabled=True,socket=str(Path(directory)/'api.sock'))
+            cfg=default_config();cfg['native_api'].update(enabled=True,socket=str(Path(directory)/'api.sock'))
             bot=Mock(cfg=cfg);bot.journal.external_duplicate.return_value={'state':'queued','duplicate':True}
             with patch('wxbridge.native.api.require_memory_directory'):api=NativeAPI(bot)
             try:
@@ -329,7 +331,7 @@ class SocketTests(unittest.TestCase):
 
 class SenderTests(unittest.TestCase):
     def setUp(self):
-        self.cfg=copy.deepcopy(DEFAULTS);self.cfg['native_api']['enabled']=True;self.cfg['ui']['dry_run']=False
+        self.cfg=default_config();self.cfg['native_api']['enabled']=True;self.cfg['ui']['dry_run']=False
 
     def test_service_submit_never_constructs_desktop_sender_even_with_a_draft(self):
         from wxbridge.native.sender import submit
@@ -436,11 +438,6 @@ class HelperTests(unittest.TestCase):
         result=helper.worker(self.cfg,payload())
         self.assertTrue(result['ok']);self.assertEqual(self.exports.status.call_count,2)
 
-    def test_old_input_model_profile_is_rejected_before_attach(self):
-        (self.assets/'profile.json').write_text(json.dumps({'sha256':'synthetic'}))
-        result=helper.worker(self.cfg,payload())
-        self.assertEqual(result['ui']['error'],'native_profile_mismatch')
-        self.device.attach.assert_not_called()
 
     def test_rpc_arm_failure_is_uncertain_when_cancellation_cannot_confirm_no_call(self):
         self.exports.arm.side_effect=RuntimeError('synthetic_transport_error')

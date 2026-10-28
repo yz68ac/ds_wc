@@ -3,7 +3,9 @@
     "enabled": false,
     "socket": "/run/wxbridge-trial/native-api.sock",
     "helper_socket": "/run/wxbridge-trial/native-helper.sock",
-    "allowed_chat_ids": ["filehelper"],
+    "allowed_chat_ids": [
+      "filehelper"
+    ],
     "max_text_bytes": 4096,
     "max_pending": 16,
     "max_requests": 1024
@@ -21,14 +23,12 @@
   "instances": [],
   "poll_interval_seconds": 2,
   "reply_to_backlog": false,
-  "persona": null,
   "reply_style": {
     "wechat_emoticons_enabled": false,
-    "omit_trailing_period": true
+    "omit_trailing_period": false
   },
   "queue": {
     "debounce_seconds": 0,
-    "generation_concurrency": 2,
     "max_pending": 32,
     "max_pending_per_sender": 8,
     "generation_lookahead": 4,
@@ -54,7 +54,7 @@
       "enabled": true,
       "min_messages": 3,
       "min_senders": 2,
-      "address_names": ["ds"]
+      "address_names": []
     },
     "conversation": {
       "enabled": true,
@@ -64,12 +64,9 @@
   },
   "target": {
     "chat": "",
-    "bot_name": "DeepSeek",
+    "bot_name": "小c",
     "trigger": {
-      "mentions": [
-        "@DeepSeek",
-        "@deepseek"
-      ],
+      "mentions": [],
       "prefixes": [],
       "reply_all": false,
       "require_mention_metadata": true,
@@ -82,70 +79,43 @@
     "context_budget_strategy": "strict",
     "max_reply_chars": 1800
   },
-  "deepseek": {
-    "api_key_env": "DEEPSEEK_API_KEY",
-    "base_url": "https://api.deepseek.com",
-    "model": "deepseek-flash",
-    "thinking": "enabled",
-    "reasoning_effort": "max",
-    "temperature": 1,
-    "timeout_seconds": 60,
-    "max_tokens": 1200,
-    "system_prompt_file": "prompts/system.md"
-  },
-  "model_profile": null,
-  "model_profiles": {
-    "deepseek_chat": {
-      "provider": "deepseek",
-      "base_url": "https://api.deepseek.com",
-      "api_key_env": "DEEPSEEK_API_KEY",
-      "model": "deepseek-flash",
-      "thinking": "enabled",
-      "reasoning_effort": "max"
-    },
-    "openai": {
-      "provider": "openai_responses",
-      "base_url": "https://api.openai.com/v1",
-      "api_key_env": "OPENAI_API_KEY",
-      "model": "gpt-6-luna",
-      "native_search_supported": true,
-      "thinking": "enabled",
-      "reasoning_effort": "max",
-      "temperature": null
-    },
-    "claude_messages": {
-      "provider": "anthropic",
-      "base_url": "https://api.anthropic.com/v1",
-      "api_key_env": "ANTHROPIC_API_KEY",
-      "model": "claude-opus-4-6",
-      "native_search_supported": true,
-      "thinking": "enabled",
-      "thinking_mode": "adaptive",
-      "reasoning_effort": "max",
-      "temperature": null,
-      "anthropic_version": "2026-10-21",
-      "anthropic_auth": "api_key",
-      "anthropic_web_search_version": "web_search_20250305"
-    }
-  },
   "models": {
-    "reply": {},
-    "participation": {
-      "thinking": "disabled",
-      "reasoning_effort": "high",
-      "max_tokens": 256
+    "reply": {
+      "model": "",
+      "options": {
+        "max_tokens": 1200,
+        "timeout_seconds": 60,
+        "thinking": "disabled"
+      }
     },
-    "memory": {},
+    "participation": {
+      "model": "",
+      "options": {
+        "max_tokens": 256,
+        "timeout_seconds": 20,
+        "thinking": "disabled"
+      }
+    },
+    "memory": {
+      "model": "",
+      "options": {
+        "max_tokens": 1200,
+        "timeout_seconds": 60,
+        "thinking": "disabled"
+      }
+    },
     "avatar": {
-      "thinking": "enabled",
-      "reasoning_effort": "max",
-      "max_tokens": 1200
+      "model": "",
+      "options": {
+        "max_tokens": 1200,
+        "timeout_seconds": 60,
+        "thinking": "disabled"
+      }
     }
   },
   "search": {
     "enabled": true,
     "backend": "external",
-    "base_url": "https://api.deepseek.com",
     "timeout_seconds": 15,
     "total_timeout_seconds": 120,
     "max_tool_rounds": 2,
@@ -156,7 +126,8 @@
       "我去查查，等我一下。",
       "我上网搜搜，核实一下。",
       "这事我去看看。"
-    ]
+    ],
+    "connection": "deepseek"
   },
   "vision": {
     "enabled": true,
@@ -171,9 +142,6 @@
   "memory": {
     "enabled": true,
     "directory": "memory",
-    "model": "deepseek-flash",
-    "thinking": "enabled",
-    "reasoning_effort": "max",
     "system_prompt_file": "prompts/memory.md",
     "learning": {
       "enabled": true,
@@ -185,8 +153,6 @@
     },
     "min_interval_seconds": 60,
     "prompt_max_chars": 1200,
-    "max_tokens": 16384,
-    "timeout_seconds": 90,
     "avatar": {
       "enabled": true,
       "max_per_batch": 2,
@@ -226,5 +192,12 @@
     "send_confirm_timeout_seconds": 10,
     "chat_open_wait": 1,
     "dry_run": true
-  }
+  },
+  "model_clients": {
+    "reply": "deepseek",
+    "image": "openai",
+    "background": "deepseek"
+  },
+  "system_prompt_file": "prompts/system.md",
+  "provider_env": null
 }

@@ -18,7 +18,7 @@ wheel 只包含 `wechat_linux` 及原生发送/图片下载所需的 JS、C 和�
 
 对应版本的微信主程序和原始 deb 已另存为 [本地备用资源](../resources/wechat/README.md)，附版本、来源及 SHA-256 清单；大文件不进入 wheel，运行时不会自动执行或替换它们。
 
-机器人仍从仓库运行 `python3 -m wxbridge`，直接使用库代码。旧 `wxbridge.wechat.*`、`wxbridge.native.*` 等入口保留兼容导入；它们不再各持一套微信实现。`wxbridge.ai.images` 只组装模型图片输入。
+机器人从仓库运行前需将 `src` 加入 `PYTHONPATH`，再运行 `python3 -m wxbridge`，直接使用库代码。旧 `wxbridge.wechat.*`、`wxbridge.native.*` 等入口保留兼容导入；它们不再各持一套微信实现。`wxbridge.ai.images` 只组装模型图片输入。
 
 ## 模块分工
 
@@ -92,6 +92,8 @@ with WeChatSession(cfg, submitter=sender) as wechat:
 
 调用返回 `submitted` 只表示内部函数提交过。只有目标会话里出现基线之后、本账号发出、文字完全一致的记录才返回 `confirmed`。超时或传输不明为 `unknown`，继续核对，不自动重发。进程重启先用原 ID 查询/确认；相同 ID 不重发，不同正文复用 ID 会被拒绝。不得在不明结果后换新 ID 绕过阻塞。
 
+`NativeSender` 内部使用独立的 `NativeOptions(helper_socket, allowed_chats, max_text_bytes=4096)`；不需要机器人配置或业务队列。原有应用 `submit(cfg, ...)` 和 `readiness(cfg)` 仍兼容，在边界转换配置。`NativeSender.cfg` 保留兼容配置快照，新代码使用 `sender.options`。
+
 独立发送意图库在提交前写意图，权限 0600、账号绑定、单实例锁；同时只允许一个未确认意图，避免同文案歧义。默认保留最多 4096 个请求去重记录，满后明确报错，不淘汰去重记录。`not_submitted` 也保留原 ID 结果；处理明确失败后，由业务决定是否用新 ID 发起新任务。该库不替代机器人已有的任务队列。
 
 意图库和解密副本随整机重启清空；跨整机重启的业务去重应由应用持久保存，不能假定客户端进程恢复等于送达。
@@ -99,6 +101,8 @@ with WeChatSession(cfg, submitter=sender) as wechat:
 ## 图片与能力声明
 
 使用从 `Message.reference` 取得的原始引用，调用 `wechat.fetch_image(chat_id, reference, download=False)`；返回 `Image.data` 与 `Image.info`，后者明确区分 original、cached、preview、thumbnail。默认只读缓存；`download=True` 才允许在受锁保护的桌面环境中打开绑定图片。若下载失败会返回原缓存和失败原因，不能把缩略图当成原图。详细实现见 [图片下载说明](IMAGE_DOWNLOAD.md)。
+
+`SessionConfig.runtime_dir` 可显式指定桌面图片下载锁所在的私有内存目录，默认取 `decrypted_dir` 的上一级，与旧版位置一致。库的缓存读取传递图片大小上限，桌面下载传递运行目录，不再构造假的机器人 `queue.file`；原有底层 `cfg` 入口继续兼容。
 
 原生图片下载已独立封装为 `NativeImageDownloader`。注入会话后，显式传入 `download=True, download_backend="native", request_id=...` 调用；失败抛出 `ImageDownloadError`，不自动降级或重试。它要求独立启用的可信 helper 资源及安全排空策略，bot 已支持显式选择 native 下载，helper 需通过受控发布显式安装图片资源和开启开关。完整示例和边界见 [原生图片 SDK](NATIVE_IMAGE_SDK.md)。
 
@@ -108,12 +112,17 @@ with WeChatSession(cfg, submitter=sender) as wechat:
 
 ## 开发验证与后续拆仓
 
+版本升级和学习用的离线 ELF 检查、旧/新样本比较、指纹候选搜索、资产盘点和可选反汇编，见[版本与二进制离线分析](WECHAT_ANALYSIS.md)。这些工具不连接微信进程，也不自动修改版本档案。
+
 ```bash
 python3 scripts/test-offline.py
 python3 scripts/check-repository.py
 python3 -m pip wheel --no-deps . --wheel-dir /tmp/wechat-linux-wheel
+python3 scripts/smoke-wheel.py /tmp/wechat-linux-wheel/wechat_linux_adapter-0.1.0-py3-none-any.whl
 ```
 
 合成测试覆盖导入隔离、兼容类型、单实例、账号隔离、发送中断恢复、晚到确认、发出记录不匹配、图片与发布资产迁移。不需要真实聊天、登录、模型请求或群发。正式收发仍需已登录客户端及兼容 helper。
+
+CI 另外在 Python 3.11 和 3.14 构建 wheel，在全新虚拟环境无依赖安装，并从仓库外用隔离模式导入全部库模块和读取 native 资源，避免源码测试通过而发行包漏文件。能力声明只描述库本身；应用是否启用某项能力应查看应用状态。
 
 0.1 是同仓库可安装提取：先保持线上行为，再考虑独立仓库和版本发布。未来拆仓只需迁出 `wechat_linux`、构建配置、本文及 SDK 测试；机器人固定库版本。不要同时重写微信协议或引入新常驻服务。

@@ -14,7 +14,7 @@
 
 两轮对象与后台链路分析、验证边界见[分析总结图](NATIVE_ANALYSIS.md)。
 
-`client.py`、主进程接口、隔离helper和进程内 `agent.js` 的职责，以及脚本如何加载到微信，见 [native代码地图](../wxbridge/native/README.md)。
+`client.py`、主进程接口、隔离helper和进程内 `agent.js` 的职责，以及脚本如何加载到微信，见 [native代码地图](../src/wxbridge/native/README.md)。
 
 ## Linux CLI
 

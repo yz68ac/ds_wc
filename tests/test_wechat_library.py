@@ -35,7 +35,7 @@ assert 'wechat_linux.desktop.ui' not in sys.modules
         self.assertEqual(result.returncode,0,result.stderr.decode())
 
     def test_sdk_source_has_no_bot_imports(self):
-        for path in (ROOT/'wechat_linux').rglob('*.py'):
+        for path in (ROOT/'src/wechat_linux').rglob('*.py'):
             for node in ast.walk(ast.parse(path.read_text(encoding='utf-8'))):
                 modules=([node.module or ''] if isinstance(node,ast.ImportFrom)
                          else [n.name for n in node.names] if isinstance(node,ast.Import) else [])
@@ -60,7 +60,7 @@ assert 'wechat_linux.desktop.ui' not in sys.modules
         deploy=runpy.run_path(str(ROOT/'scripts/deploy-release.py'))
         old={'files':{}};new={'files':{}}
         for name in ('helper.py','agent.js','profile.json'):
-            body=(ROOT/'wechat_linux/native'/name).read_bytes()
+            body=(ROOT/'src/wechat_linux/native'/name).read_bytes()
             # Versioned 4.1.13.26 assets. Image jobs remain opt-in; sender assets unchanged.
             expected={'helper.py':'3bfe8a108ffd0aff5f262167455bf4cfa70e04a9b311acca2d1347074d70f1d6',
                       'agent.js':'213197f9b630a6c7796e531c0aecfecaaaef552adefc312a1f97cf0930757790',

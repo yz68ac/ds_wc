@@ -178,7 +178,7 @@ class LearningTests(unittest.TestCase):
         cfg=copy.deepcopy(self.cfg)
         cfg['memory']['system_prompt_file']=str(prompt)
         value=snapshot(cfg,[],[msg(1,NOW,'[捂脸]','wxid_a')],IDENTITY,self.memory,NOW)
-        with patch('wxbridge.ai.client.ModelClient') as client:
+        with patch('wxbridge.ai.client.client_for') as client:
             client.return_value.complete.return_value=dict(content='{"updates":[],"learning":[]}')
             for content in ('合成整理规则甲','合成整理规则乙'):
                 prompt.write_text(content,encoding='utf-8')

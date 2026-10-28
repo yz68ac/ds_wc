@@ -3,7 +3,7 @@ from copy import deepcopy
 import unittest
 
 from wxbridge.ai.citations import without_citations
-from wxbridge.ai.providers import get_adapter
+from wxbridge.ai.providers import get_protocol_adapter
 
 URL = 'https://example.com/source'
 SOURCES = [dict(url=URL)]
@@ -59,7 +59,7 @@ class CitationOutputTests(unittest.TestCase):
         start=text.index('[');end=text.index(')',start)+1
         data=dict(status='completed',output=[dict(type='message',content=[dict(type='output_text',text=text,
             annotations=[dict(type='url_citation',url=URL,start_index=start,end_index=end)])])])
-        original=deepcopy(data);result=get_adapter('openai_responses').decode(data)
+        original=deepcopy(data);result=get_protocol_adapter('openai_responses').parse_response(data)
         self.assertEqual(result.message['content'],text)
         self.assertEqual(result.message['_provider_state']['items'],data['output'])
         self.assertEqual(without_citations(result.message['content'],SOURCES,result.search['citations']),'结论')
@@ -72,7 +72,7 @@ class CitationOutputTests(unittest.TestCase):
             dict(type='output_text',text='第一段事实',annotations=[]),
             dict(type='output_text',text='第二段'+link,annotations=[
                 dict(type='url_citation',url=URL,start_index=3,end_index=3+len(link))])])])
-        result=get_adapter('openai_responses').decode(data)
+        result=get_protocol_adapter('openai_responses').parse_response(data)
         self.assertEqual(without_citations(result.message['content'],SOURCES,result.search['citations']),'第一段事实\n第二段')
 
     def test_nested_and_spaced_annotation_shells_do_not_leave_empty_parentheses(self):

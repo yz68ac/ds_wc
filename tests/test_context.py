@@ -1,5 +1,7 @@
 """使用合成数据的离线测试，不联网、不发送微信消息。"""
 from __future__ import annotations
+from model_support import default_config
+from contextlib import nullcontext
 
 import unittest
 from wxbridge.config import DEFAULTS, _deep_merge
@@ -11,7 +13,7 @@ from synthetic import NOW, msg
 
 class ContextTests(unittest.TestCase):
     def setUp(self):
-        self.cfg = _deep_merge(DEFAULTS, {})
+        self.cfg = default_config()
         self.trigger = msg(50, NOW, "@DeepSeek 请总结")
 
     def test_exact_inclusive_bounds_and_sender_order(self):

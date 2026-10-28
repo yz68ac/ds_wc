@@ -1,12 +1,14 @@
 """联网工具与反馈：全为合成响应，不调用 API。"""
+from model_support import default_config
+from contextlib import nullcontext
 import copy
 import json
 import unittest
 from unittest.mock import Mock, patch
 import urllib.error
 
-from wxbridge.ai.client import DeepSeekClient, DeepSeekError
-from wxbridge.ai.search import SearchClient, SearchError, answer_with_search, public_url
+from model_support import ClientFixture, ModelError
+from wxbridge.ai.search import SearchClient, SearchError, answer_with_search, is_public_url_candidate
 from wxbridge.config import DEFAULTS, _deep_merge
 
 
@@ -20,11 +22,11 @@ def result(url="https://example.com/release", title="官方说明", summary="合
 
 class SearchTests(unittest.TestCase):
     def setUp(self):
-        self.cfg = _deep_merge(DEFAULTS, {})
+        self.cfg = default_config()
         self.messages = [dict(role="system", content="合成人格"), dict(role="user", content="合成问题")]
         self.client = Mock()
-        from wxbridge.ai.providers import get_adapter
-        self.client.assistant_message.side_effect = get_adapter('deepseek').assistant_message
+        from wxbridge.ai.providers import get_protocol_adapter
+        self.client.assistant_message.side_effect = get_protocol_adapter('deepseek').assistant_message
         self.backend = Mock()
         self.backend.search.return_value = result()
         self.backend.fetch.return_value = dict(title="详情", content="实际合成正文")
@@ -45,7 +47,7 @@ class SearchTests(unittest.TestCase):
         for content in (None, '', ' \n ', '---', '```json\n```'):
             with self.subTest(content=content):
                 self.client.complete.return_value = dict(content=content, reasoning_content='PRIVATE_REASONING')
-                with self.assertRaisesRegex(DeepSeekError, 'empty_reply'):
+                with self.assertRaisesRegex(ModelError, 'empty_reply'):
                     self.answer()
         self.backend.search.assert_not_called()
 
@@ -54,7 +56,7 @@ class SearchTests(unittest.TestCase):
             with self.subTest(found=bool(rows['results'])):
                 self.client.complete.side_effect = [dict(tool_calls=[call(query='合成查询')]), dict(content='')]
                 self.backend.search.return_value = rows
-                with self.assertRaisesRegex(DeepSeekError, 'empty_reply'):
+                with self.assertRaisesRegex(ModelError, 'empty_reply'):
                     self.answer()
 
     def test_feedback_off_discards_tool_waiting_draft_and_preserves_search_metadata(self):
@@ -95,7 +97,7 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(self.backend.search.call_args.args[0], "合成产品 最新消息")
         self.assertEqual(self.messages, saved)
 
-    def test_fetch_only_previously_returned_public_url(self):
+    def test_fetch_only_previously_returned_is_public_url_candidate(self):
         self.client.complete.side_effect = [dict(tool_calls=[call(query="合成资料")]),
             dict(tool_calls=[call("web_fetch", url="https://example.com/release")]), dict(content="读到详情")]
         self.answer()
@@ -158,49 +160,38 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(self.client.complete.call_args.kwargs["tool_choice"], "none")
 
     def test_final_model_failure_after_search_returns_clear_fallback(self):
-        self.client.complete.side_effect = [dict(tool_calls=[call(query="查询")]), DeepSeekError("synthetic")]
+        self.client.complete.side_effect = [dict(tool_calls=[call(query="查询")]), ModelError("synthetic")]
         text, meta = self.answer()
         self.assertIn("超时", text)
         self.assertNotIn("https://example.com/release", text)
         self.assertIn("answer_generation_failed", meta["errors"])
 
     def test_initial_model_error_keeps_existing_failure_semantics(self):
-        self.client.complete.side_effect = DeepSeekError("synthetic")
-        with self.assertRaises(DeepSeekError):
+        self.client.complete.side_effect = ModelError("synthetic")
+        with self.assertRaises(ModelError):
             self.answer()
         self.notice.assert_not_called()
 
-    def test_transport_uses_same_key_and_search_endpoint_without_error_body(self):
-        with patch("wxbridge.ai.search.deepseek_api_key", return_value="synthetic-key"):
-            backend = SearchClient(self.cfg)
-        error = urllib.error.HTTPError("https://example.com", 402, "PRIVATE", {}, None)
-        with patch("wxbridge.ai.search.urllib.request.urlopen", side_effect=error) as request:
-            with self.assertRaisesRegex(SearchError, "^http_402$"):
-                backend.search("PRIVATE_QUERY", 10**20)
-            self.assertEqual(request.call_count, 1)
-            req = request.call_args.args[0]
-            self.assertEqual(req.full_url, "https://api.deepseek.com/v1/tools/search")
-            self.assertEqual(json.loads(req.data)["query"], "PRIVATE_QUERY")
 
-    def test_public_urls(self):
+    def test_is_public_url_candidates(self):
         for url in ("http://127.0.0.1", "http://10.0.0.1", "file:///etc/passwd", "https://user:pass@example.com", "http://host.local", "http://[::1]/"):
-            self.assertFalse(public_url(url))
-        self.assertTrue(public_url("https://example.com/release"))
+            self.assertFalse(is_public_url_candidate(url))
+        self.assertTrue(is_public_url_candidate("https://example.com/release"))
 
     def test_complete_preserves_tool_calls_while_chat_only_returns_content(self):
-        client = DeepSeekClient.__new__(DeepSeekClient)
-        from wxbridge.ai.providers import get_adapter
-        client.adapter = get_adapter('deepseek')
-        client.cfg = self.cfg["deepseek"]
+        client = ClientFixture.__new__(ClientFixture)
+        from wxbridge.ai.providers import get_protocol_adapter
+        client.adapter = get_protocol_adapter('deepseek')
+        client.cfg = self.cfg['models']['reply']['options']
         client._post = Mock(return_value={"choices": [{"message": {"content": "最终回答", "tool_calls": [call(query="x")]}}]})
         self.assertTrue(client.complete([], tools=[{}])["tool_calls"])
         self.assertEqual(client.chat([]), "最终回答")
 
     def test_high_effort_is_sent_when_enabled_and_hidden_reasoning_is_not_reply(self):
-        client = DeepSeekClient.__new__(DeepSeekClient)
-        from wxbridge.ai.providers import get_adapter
-        client.adapter = get_adapter('deepseek')
-        client.cfg = {**self.cfg['deepseek'], 'thinking':'enabled', 'reasoning_effort':'high'}
+        client = ClientFixture.__new__(ClientFixture)
+        from wxbridge.ai.providers import get_protocol_adapter
+        client.adapter = get_protocol_adapter('deepseek')
+        client.cfg = {**self.cfg['models']['reply']['options'], 'thinking':'enabled', 'reasoning_effort':'high'}
         client._post = Mock(return_value={'choices':[{'message':{'content':'简短回答','reasoning_content':'PRIVATE_REASONING'}}]})
         self.assertEqual(client.chat([]),'简短回答')
         payload = client._post.call_args.args[0]

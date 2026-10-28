@@ -7,8 +7,8 @@ import sys
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT))
-from wxbridge.app.bot import WeChatDeepSeekBot
+sys.path.insert(0, str(ROOT / 'src'))
+from wxbridge.app.bot import GroupSession
 from wxbridge.config import load_config
 from wxbridge.app.runtime import instance_lock
 
@@ -18,7 +18,7 @@ def main():
     with ExitStack() as stack:
         for name in sorted({cfg["queue"]["file"]+".lock", str(Path(cfg["decrypted_dir"])/".listener.lock")}):
             stack.enter_context(instance_lock(name))
-        bot = WeChatDeepSeekBot(cfg)
+        bot = GroupSession(cfg)
         try:
             rel, table = bot.store.message_table(bot.chat_id)
             conn = bot.store._connect(rel)

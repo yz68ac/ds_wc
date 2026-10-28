@@ -1,5 +1,7 @@
 """完整启动流程的离线回归：不恢复旧触发、保留配置、明确发送开关。"""
 from __future__ import annotations
+from model_support import default_config
+from contextlib import nullcontext
 
 import copy
 from contextlib import nullcontext
@@ -21,7 +23,7 @@ class RuntimeTests(unittest.TestCase):
         parent.mkdir(exist_ok=True)
         self.temp = tempfile.TemporaryDirectory(dir=parent)
         self.addCleanup(self.temp.cleanup)
-        self.cfg = _deep_merge(DEFAULTS, {})
+        self.cfg = default_config()
         self.cfg["state_file"] = str(Path(self.temp.name) / "state.json")
         self.cfg['queue']['file'] = str(Path(self.temp.name)/'queue.sqlite3')
         self.cfg['decrypted_dir'] = str(Path(self.temp.name)/'decrypted')
@@ -39,7 +41,7 @@ class RuntimeTests(unittest.TestCase):
         order.attach_mock(bot.save_status, "status")
         order.attach_mock(bot.run, "run")
         order.attach_mock(bot.close, "close")
-        with patch("wxbridge.app.runtime.setup_logging"), patch("wxbridge.app.runtime.WeChatDeepSeekBot", return_value=bot) as make_bot, patch("sys.stdout", new_callable=io.StringIO):
+        with patch("wxbridge.app.runtime.setup_logging"), patch("wxbridge.app.runtime.GroupSession", return_value=bot) as make_bot, patch("sys.stdout", new_callable=io.StringIO):
             self.assertEqual(run_bot(self.cfg), 0)
         self.assertEqual(self.cfg, original)
         self.assertEqual([c[0] for c in order.mock_calls], ["status", "run", "close"])
@@ -52,7 +54,7 @@ class RuntimeTests(unittest.TestCase):
     def test_status_marks_stopped_even_when_loop_raises(self):
         bot = Mock()
         bot.run.side_effect = RuntimeError("synthetic failure")
-        with patch("wxbridge.app.runtime.setup_logging"), patch("wxbridge.app.runtime.WeChatDeepSeekBot", return_value=bot), patch("sys.stdout", new_callable=io.StringIO):
+        with patch("wxbridge.app.runtime.setup_logging"), patch("wxbridge.app.runtime.GroupSession", return_value=bot), patch("sys.stdout", new_callable=io.StringIO):
             with self.assertRaises(RuntimeError):
                 run_bot(self.cfg)
         bot.close.assert_called_once()
@@ -63,7 +65,7 @@ class RuntimeTests(unittest.TestCase):
                 self.assertEqual(main(args), 0)
                 active_cfg = run.call_args.args[0]
                 self.assertIs(active_cfg["ui"]["dry_run"], expected)
-                self.assertEqual(active_cfg["deepseek"]["model"], "deepseek-flash")
+                self.assertEqual(active_cfg['models']['reply']['model'], "deepseek-flash")
 
 
 if __name__ == "__main__":

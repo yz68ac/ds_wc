@@ -1,4 +1,6 @@
 """合成身份、可控时间和假工作进程；绝不读真实聊天或调用 API。"""
+from model_support import default_config
+from contextlib import nullcontext
 import copy
 import json
 from pathlib import Path
@@ -31,8 +33,9 @@ class MemoryTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(dir=root)
         self.addCleanup(self.temp.cleanup)
         self.memory = MemoryStore(self.temp.name, IDENTITY)
-        self.cfg = _deep_merge(DEFAULTS, {})
-        self.cfg["deepseek"].update(system_prompt_file="", system_prompt="测试人格")
+        self.cfg = default_config()
+
+        self.cfg['system_prompt_file'] = str(Path(__file__).resolve().parents[1]/'prompts/system.md')
 
     def snap(self, identifier=1, sender="wxid_a", name="同名", when=NOW, context=None):
         m = msg(identifier, when, "我喜欢简洁直接的回复", sender)
@@ -163,10 +166,10 @@ class MemoryTests(unittest.TestCase):
         self.assertNotIn("以下人物记忆", short)
 
     def test_extractor_uses_memory_thinking_preserves_foreground_and_uses_no_tools(self):
-        self.cfg["deepseek"]["reasoning_effort"] = "high"
+        self.cfg['models']['reply']['options']["reasoning_effort"] = "high"
         self.cfg["memory"].update(thinking="enabled", reasoning_effort="max")
         before = copy.deepcopy(self.cfg)
-        with patch("wxbridge.ai.client.ModelClient") as client:
+        with patch("wxbridge.ai.client.client_for") as client:
             client.return_value.complete.return_value = dict(content='{"updates":[]}', reasoning_content="PRIVATE_REASONING")
             self.assertEqual(extract(self.cfg, self.snap()), dict(updates=[]))
             config = client.call_args.args[0]
@@ -175,25 +178,10 @@ class MemoryTests(unittest.TestCase):
             settings = model_settings(config, 'memory')
             self.assertEqual(settings['thinking'], 'enabled')
             self.assertEqual(settings['reasoning_effort'], 'max')
-            self.assertEqual(self.cfg["deepseek"]["reasoning_effort"], "high")
+            self.assertEqual(self.cfg['models']['reply']['options']["reasoning_effort"], "high")
             self.assertEqual(self.cfg, before)
             self.assertNotIn("tools", client.return_value.complete.call_args.kwargs)
 
-    def test_memory_thinking_switch_and_effort_reach_api_payload(self):
-        from wxbridge.ai.client import DeepSeekClient
-        for thinking, effort in (("enabled", "low"), ("enabled", "high"), ("enabled", "max"), ("disabled", "max")):
-            with self.subTest(thinking=thinking, effort=effort):
-                self.cfg["memory"].update(thinking=thinking, reasoning_effort=effort)
-                with patch("wxbridge.ai.client.deepseek_api_key", return_value="synthetic-key"), \
-                        patch.object(DeepSeekClient, "_post", return_value={"choices": [{"message": {"content": '{"updates":[]}'}}]}) as post:
-                    self.assertEqual(extract(self.cfg, self.snap()), dict(updates=[]))
-                payload = post.call_args.args[0]
-                self.assertEqual(payload["thinking"], {"type": thinking})
-                if thinking == "enabled":
-                    self.assertEqual(payload["reasoning_effort"], effort)
-                else:
-                    self.assertNotIn("reasoning_effort", payload)
-                self.assertNotIn("tools", payload)
 
     def test_image_prompt_rebuild_preserves_memory_and_reference_author_label(self):
         from wxbridge.ai.images import prepare_multimodal

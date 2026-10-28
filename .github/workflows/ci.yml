@@ -42,3 +42,22 @@ jobs:
         run: python -X utf8 scripts/test-offline.py
       - name: Whitespace
         run: git diff --check
+
+  sdk-wheel:
+    name: Isolated SDK / Python ${{ matrix.python }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        python: ['3.11', '3.14']
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Build SDK wheel
+        run: python -m pip wheel --no-deps --wheel-dir dist .
+      - name: Install without dependencies and check isolated imports and resources
+        run: python scripts/smoke-wheel.py dist/wechat_linux_adapter-*.whl

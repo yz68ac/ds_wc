@@ -1,6 +1,8 @@
+> 模型配置与生命周期已重构：请以 [模型接口](../docs/MODEL_API.md) 为准。每群三条线程通道，旧 profile/persona 和模型总额度已移除。
+
 # 脚本地图
 
-所有示例均从仓库根目录执行。`python3 -m wxbridge` 是应用命令入口；这里的脚本用于环境准备、离线检查、发布和显式维护。
+所有示例均从仓库根目录执行。直接使用 `python3 -m wxbridge` 前，先执行 `export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"`。`python3 -m wxbridge` 是应用命令入口；这里的脚本用于环境准备、离线检查、发布和显式维护。
 
 ```text
 scripts/

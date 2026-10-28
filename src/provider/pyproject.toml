@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "model-provider"
+version = "0.3.1"
+description = "Provider-neutral model calls using the OpenAI and Anthropic SDKs"
+readme = "README.md"
+requires-python = ">=3.11"
+classifiers = [
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+]
+dependencies = ["openai>=3.40,<4", "anthropic>=2.3,<3"]
+
+[project.scripts]
+model-provider = "provider.__main__:main"
+
+[tool.setuptools]
+packages = ["provider", "provider.adapters"]
+package-dir = { "provider" = "." }
+include-package-data = false

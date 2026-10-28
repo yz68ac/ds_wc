@@ -1,5 +1,7 @@
 """回复分片和提示词顺序的离线测试。"""
 from __future__ import annotations
+from model_support import default_config
+from contextlib import nullcontext
 
 import os
 import sys
@@ -18,7 +20,7 @@ def test_chunk() -> None:
 
 
 def test_prompt_order() -> None:
-    cfg = _deep_merge(DEFAULTS, {})
+    cfg = default_config()
     ctx = [
         {"sender_name": "A", "text": "第一条", "time": 900},
         {"sender_name": "B", "text": "第二条", "time": 950},

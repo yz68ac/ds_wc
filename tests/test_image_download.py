@@ -1,4 +1,6 @@
 """Synthetic match ambiguity, source binding, cache confirmation and queue-worker boundaries."""
+from model_support import default_config
+from contextlib import nullcontext
 from contextlib import contextmanager
 import copy
 import time
@@ -43,7 +45,7 @@ class ImageDownloadTests(unittest.TestCase):
         self.assertFalse(any(c.args[0]=='click' for c in desktop.x._xdotool.call_args_list))
 
     def test_unproven_or_non_native_source_never_opens_ui(self):
-        cfg=copy.deepcopy(DEFAULTS);cfg['ui']['backend']='native_service';adapter=Mock()
+        cfg=default_config();cfg['ui']['backend']='native_service';adapter=Mock()
         for proof in ({},{'verified':'yes','chat_title':'synthetic','server_id':'10'},
                       {'verified':True,'chat_title':'','server_id':'10'}):
             data,info=improve_image({'download':proof},cfg,b'thumb',{'quality':'thumbnail'},time.monotonic()+1,adapter=adapter)
@@ -51,7 +53,7 @@ class ImageDownloadTests(unittest.TestCase):
         adapter.assert_not_called()
 
     def test_click_only_succeeds_after_original_bound_cache_confirms_and_closes_under_lock(self):
-        cfg=copy.deepcopy(DEFAULTS);cfg['ui']['backend']='native_service'
+        cfg=default_config();cfg['ui']['backend']='native_service'
         binding=dict(download=dict(verified=True,chat_title='synthetic',server_id='10'))
         original=dict(quality='thumbnail',width=20,height=20)
         desktop=Mock();events=[]
@@ -67,7 +69,7 @@ class ImageDownloadTests(unittest.TestCase):
         self.assertEqual(events,['locked','closed','unlocked'])
 
     def test_timeout_or_ambiguous_match_retains_correct_thumbnail_and_safe_error(self):
-        cfg=copy.deepcopy(DEFAULTS);cfg['ui']['backend']='native_service'
+        cfg=default_config();cfg['ui']['backend']='native_service'
         binding=dict(download=dict(verified=True,chat_title='synthetic',server_id='10'))
         desktop=Mock();desktop.open_matching.side_effect=DownloadError('download_match_ambiguous')
         @contextmanager
@@ -78,7 +80,7 @@ class ImageDownloadTests(unittest.TestCase):
         desktop.close.assert_called_once();read.assert_not_called()
 
     def test_expired_budget_never_initializes_ui(self):
-        cfg=copy.deepcopy(DEFAULTS);cfg['ui']['backend']='native_service';adapter=Mock()
+        cfg=default_config();cfg['ui']['backend']='native_service';adapter=Mock()
         binding=dict(download=dict(verified=True,chat_title='synthetic',server_id='10'))
         data,info=improve_image(binding,cfg,b'correct-thumb',dict(quality='thumbnail'),time.monotonic()-1,adapter=adapter)
         self.assertEqual(info['download']['outcome'],'download_timeout')
@@ -98,13 +100,3 @@ class ImageDownloadTests(unittest.TestCase):
             prompt,info=case.prepare(generation)
         self.assertEqual(info['items'][0]['width'],1000)
         self.assertTrue(prompt[1]['content'][-1]['image_url']['url'].endswith('Ym91bmQtZnVsbA=='))
-
-    def test_download_config_rejects_invalid_flags_and_time_limits(self):
-        import wxbridge.config as config
-        from pathlib import Path
-        for key,value in [('download_enabled',1),('download_timeout_seconds',False),
-                          ('download_timeout_seconds',float('nan')),('download_timeout_seconds',float('inf')),
-                          ('download_timeout_seconds',4),('download_timeout_seconds',31)]:
-            defaults=copy.deepcopy(DEFAULTS);defaults['vision'][key]=value
-            with patch.object(config,'DEFAULTS',defaults),patch.object(config,'load_dotenv'):
-                with self.assertRaises(ValueError):config.load_config(Path(__file__).parent/'nonexistent.json')

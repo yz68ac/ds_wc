@@ -1,4 +1,6 @@
 """合成状态与终端：只读、过期提示、脱敏、导航和Linux真实PTY退出恢复。"""
+from model_support import default_config
+from contextlib import nullcontext
 import copy
 import io
 import json
@@ -48,7 +50,7 @@ class MonitorTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(dir=root)
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.cfg = copy.deepcopy(DEFAULTS)
+        self.cfg = default_config()
         self.cfg.update(state_file=str(self.root/'state.json'), log_file=str(self.root/'bot.log'))
         self.path = self.root/'live-status.json'
         self.path.write_text(json.dumps(live()), encoding='utf-8')
@@ -57,7 +59,7 @@ class MonitorTests(unittest.TestCase):
     def test_cli_once_reads_only_snapshots_and_never_starts_model_store_or_queue(self):
         before = {p.name:(p.read_bytes(),p.stat().st_mtime_ns) for p in self.root.iterdir()}
         with patch('wxbridge.cli.load_config', return_value=self.cfg), patch.object(monitor,'read_services',return_value=({},'')), \
-                patch('wxbridge.app.bot.WeChatStore') as store, patch('wxbridge.ai.client.ModelClient') as client, \
+                patch('wxbridge.app.bot.WeChatStore') as store, patch('wxbridge.ai.client.client_for') as client, \
                 patch('sqlite3.connect',side_effect=AssertionError('must not query databases')), \
                 patch('sys.stdout',new_callable=io.StringIO) as output:
             self.assertEqual(main(['status','--once']),0)

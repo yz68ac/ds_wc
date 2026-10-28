@@ -1,5 +1,7 @@
 """独立提示词文件：路径、长文本、字面花括号、编辑生效与旧配置兼容。"""
 from __future__ import annotations
+from model_support import default_config
+from contextlib import nullcontext
 
 import json
 import copy
@@ -42,7 +44,7 @@ class PromptFileTests(unittest.TestCase):
     def test_relative_path_uses_config_directory_and_accepts_utf8_bom(self):
         self.prompt_file.write_text("你叫 {bot_name}。\n保持自然。", encoding="utf-8-sig")
         cfg = self.config({"system_prompt_file": self.prompt_file.name})
-        self.assertEqual(Path(cfg["deepseek"]["system_prompt_file"]), self.prompt_file)
+        self.assertEqual(Path(cfg['system_prompt_file']), self.prompt_file)
         self.assertEqual(self.render(cfg), "你叫 小灰。\n保持自然。")
 
     def test_long_persona_and_literal_braces_survive_without_truncation(self):
@@ -54,7 +56,7 @@ class PromptFileTests(unittest.TestCase):
 
     def test_legacy_inline_config_keeps_working(self):
         cfg = self.config({"system_prompt": "内联身份：{bot_name}，示例 {\"x\":1}"})
-        self.assertFalse(cfg["deepseek"]["system_prompt_file"])
+        self.assertFalse(cfg['system_prompt_file'])
         self.assertEqual(self.render(cfg), '内联身份：小灰，示例 {"x":1}')
 
     def test_invalid_file_cancels_instead_of_falling_back_to_inline(self):
@@ -76,8 +78,9 @@ class PromptFileTests(unittest.TestCase):
 
 class ConversationPromptTests(unittest.TestCase):
     def setUp(self):
-        self.cfg = copy.deepcopy(DEFAULTS)
-        self.cfg['deepseek'].update(system_prompt_file='', system_prompt='合成人格')
+        self.cfg = default_config()
+
+        self.cfg['system_prompt_file'] = str(Path(__file__).resolve().parents[1]/'prompts/system.md')
         self.cfg['target']['bot_name'] = '同名'
         self.account = 'wxid_synthetic_bot_account'
         self.trigger = msg(50, NOW, '@同名 谢谢', 'friend')

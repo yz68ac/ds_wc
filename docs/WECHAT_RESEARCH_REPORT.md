@@ -73,7 +73,7 @@ Ghidra 的输出是对机器码的解释，并不能恢复原项目注释、完�
 本次 Ghidra 显示地址 = RVA + 0x100000
 ```
 
-即使版本号相同，只要程序 hash 或关键指令指纹不匹配，当前 helper 也应拒绝提交。资源定义见 [profile.json](../wechat_linux/native/profile.json)。
+即使版本号相同，只要程序 hash 或关键指令指纹不匹配，当前 helper 也应拒绝提交。资源定义见 [profile.json](../src/wechat_linux/native/profile.json)。
 
 ### 从 deb 到候选函数，具体怎样缩小范围
 
@@ -122,7 +122,7 @@ deb 是安装包容器；解开后才能分别看程序、资源和安装元数�
 
 因此当前约束是：**一个账号的共享解密目录只有一个读库所有者**。主进程查询消息、引用和附件索引；模型与图片工作进程只收到已经核验的文本或本地文件绑定，不反向打开微信数据库。
 
-公共库会话使用同一 `decrypted_dir/.listener.lock`，现有机器人也使用该锁。不能为同一账号再建一套解密目录来绕过所有者约定。[锁实现](../wechat_linux/runtime/locking.py) · [会话接口](../wechat_linux/session.py)
+公共库会话使用同一 `decrypted_dir/.listener.lock`，现有机器人也使用该锁。不能为同一账号再建一套解密目录来绕过所有者约定。[锁实现](../src/wechat_linux/runtime/locking.py) · [会话接口](../src/wechat_linux/session.py)
 
 ### 为什么采用受控工作进程
 
@@ -145,7 +145,7 @@ deb 是安装包容器；解开后才能分别看程序、资源和安装元数�
 
 密钥扫描与发送注入是两个用途不同的机制。扫描用于取得本账号数据库的读取材料；Frida 发送 helper 不读微信数据库，也不把这些密钥传给模型。
 
-近期写入可能在 WAL 中，还没有合并回主数据库。只解密主文件可能看到旧消息。现有实现识别当前 WAL 周期，只回放最后一次有效提交之前的完整帧；合并前校验加密页 HMAC，未提交尾部不作为已提交数据使用。相关实现和故障回归见 [crypto.py](../wechat_linux/storage/crypto.py)、[加密测试](../tests/test_crypto.py)。
+近期写入可能在 WAL 中，还没有合并回主数据库。只解密主文件可能看到旧消息。现有实现识别当前 WAL 周期，只回放最后一次有效提交之前的完整帧；合并前校验加密页 HMAC，未提交尾部不作为已提交数据使用。相关实现和故障回归见 [crypto.py](../src/wechat_linux/storage/crypto.py)、[加密测试](../tests/test_crypto.py)。
 
 这里要区分两种“保存”：微信自己的原始数据库由客户端管理；本程序的解密副本、数据库密钥和待处理队列置于私有 `tmpfs,noswap`。程序没有把全部明文聊天库打包进项目。
 
@@ -166,7 +166,7 @@ deb 是安装包容器；解开后才能分别看程序、资源和安装元数�
 | `mentioned_users=[]` | 当前解析结果明确没有列出的 @ 对象 |
 | `mentioned_users=None` | 缺少或无法解析这类元数据，不能当成可靠的“没有 @” |
 
-群聊中的 ds 关键词是另一个产品触发规则，不应与真实 @ 混写成一种判断。[元数据解析](../wechat_linux/storage/store.py) · [机器人触发入口](../wxbridge/app/bot.py)
+群聊中的 ds 关键词是另一个产品触发规则，不应与真实 @ 混写成一种判断。[元数据解析](../src/wechat_linux/storage/store.py) · [机器人触发入口](../src/wxbridge/app/bot.py)
 
 ### 5.5 引用消息的外层类型可能不是普通文本
 
@@ -174,13 +174,13 @@ deb 是安装包容器；解开后才能分别看程序、资源和安装元数�
 
 引用消息中，`appmsg/title` 是本次新写的问题，`refermsg` 承载被引用内容、作者和原时间。这两部分需要分开：旧引用里的 @ 不能冒充本次真实 @；引用中的“这”也不能靠最近一张图片或其他群的内容来猜。
 
-普通上下文按当前窗口取值；用户明确引用的旧消息可早于该窗口，作为独立引用快照传入。读取范围不因此扩展成整个群历史。[引用解析](../wechat_linux/messages/references.py) · [引用功能说明](REFERENCES.md)
+普通上下文按当前窗口取值；用户明确引用的旧消息可早于该窗口，作为独立引用快照传入。读取范围不因此扩展成整个群历史。[引用解析](../src/wechat_linux/messages/references.py) · [引用功能说明](REFERENCES.md)
 
 ### 5.6 轮询速度不等于端到端回复速度
 
 当前配置默认每 2 秒查询新消息，调度循环可按不超过 1 秒的节拍处理工作结果，消息查询另行限流。发送前补读仍由主进程执行，用于刷新入站状态、确认水位和待发送任务是否仍有效；不会因此额外请求一次模型。
 
-端到端耗时还包括客户端同步、查询、模型排队与生成、冷却、提交和数据库确认。不能把“2 秒轮询”写成“2 秒内必回”，也不能只按轮询次数推算整机功耗。[运行循环](../wxbridge/app/bot.py)
+端到端耗时还包括客户端同步、查询、模型排队与生成、冷却、提交和数据库确认。不能把“2 秒轮询”写成“2 秒内必回”，也不能只按轮询次数推算整机功耗。[运行循环](../src/wxbridge/app/bot.py)
 
 <a id="desktop-failures"></a>
 ## 6. 桌面发送阶段：几个失败为什么值得保留下来
@@ -303,7 +303,7 @@ Qt 的列表和 C++ 的 vector 也不能因为都像“三个指针”就互换�
 
 实验注入期间，已识别的正常会话切换入口计数均为零，前后选中目标保持一致。实验前用于准备可观察界面的操作不计入“注入后零切换”，不能把整个维护窗口冒称完全没有任何 UI 准备。
 
-后续正式后端切换，又通过现有队列完成文件助手请求和一次真实 @ 回复。生产实现不再选会话、读输入框或寻找聊天视图。相关当前代码见 [agent.js](../wechat_linux/native/agent.js)。
+后续正式后端切换，又通过现有队列完成文件助手请求和一次真实 @ 回复。生产实现不再选会话、读输入框或寻找聊天视图。相关当前代码见 [agent.js](../src/wechat_linux/native/agent.js)。
 
 <a id="frida"></a>
 ## 9. agent.js 究竟是怎样进入微信的
@@ -337,7 +337,7 @@ script.exports_sync.arm()
 
 脚本使用 `pin` 与 source 销毁回调管理存活：排队期间不能先卸掉仍被原生事件循环持有的 JS 回调地址；source 销毁后再释放 pin。发生在途调用或清理失败时，结果按不明处理，不因此再调一次。
 
-研究阶段使用过 Hook 观察正常调用；当前生产 agent 不靠长期 Hook 聊天发送函数工作，而是短时附加、构造新源、安排一次调用，随后取消未执行回调并脱离。[helper 实现](../wechat_linux/native/helper.py) · [发送工作进程接口](../wechat_linux/native/sender.py)
+研究阶段使用过 Hook 观察正常调用；当前生产 agent 不靠长期 Hook 聊天发送函数工作，而是短时附加、构造新源、安排一次调用，随后取消未执行回调并脱离。[helper 实现](../src/wechat_linux/native/helper.py) · [发送工作进程接口](../src/wechat_linux/native/sender.py)
 
 <a id="delivery"></a>
 ## 10. 从“调用过函数”到“可靠发送”还需要什么
@@ -373,7 +373,7 @@ helper 超时可能发生在提交之前，也可能发生在微信已经接受�
 
 相同业务请求使用同一个 `request_id`。相同 ID、目标和正文返回原结果；同 ID 改正文或目标会冲突。不能在状态不明时换新 ID 绕过阻塞。
 
-主队列是防重的权威位置。helper 的回放缓存只是易失、有限的辅助保护，不能替代持久意图；helper 重启或缓存淘汰后，这层缓存可能不存在。[确认原语](../wechat_linux/sending/confirmation.py) · [机器人投递控制](../wxbridge/app/delivery.py) · [队列事务](../wxbridge/storage/journal.py)
+主队列是防重的权威位置。helper 的回放缓存只是易失、有限的辅助保护，不能替代持久意图；helper 重启或缓存淘汰后，这层缓存可能不存在。[确认原语](../src/wechat_linux/sending/confirmation.py) · [机器人投递控制](../src/wxbridge/app/delivery.py) · [队列事务](../src/wxbridge/storage/journal.py)
 
 ### 10.4 私有内存队列的恢复边界
 
@@ -399,7 +399,7 @@ helper 超时可能发生在提交之前，也可能发生在微信已经接受�
 3. 索引不完整时，只使用已经核验的原消息 `packed_info_data` 中解析出的本地缓存标识，查找当前账号、当前群的受限缓存路径。
 4. 保留目录边界、符号链接、大小、解密及格式校验；不信任引用快照自行提供的文件路径。
 
-没有采用“最近一张图”“发送时间最接近”或跨群扫描。这类猜测可能识别出一张清晰但完全不相关的图片，比明确说读不到更难发现。[来源绑定](../wechat_linux/storage/store.py) · [内存取图](../wechat_linux/media/images.py)
+没有采用“最近一张图”“发送时间最接近”或跨群扫描。这类猜测可能识别出一张清晰但完全不相关的图片，比明确说读不到更难发现。[来源绑定](../src/wechat_linux/storage/store.py) · [内存取图](../src/wechat_linux/media/images.py)
 
 ### 11.2 第二类：缓存已解密，但里面不是普通 JPEG/PNG
 
@@ -407,7 +407,7 @@ helper 超时可能发生在提交之前，也可能发生在微信已经接受�
 
 当前实现识别 VPS/SPS/PPS/VCL 完整性，通过 SPS 的色度字段区分彩色与单色流，优先彩色，再比较有效图像负载。取选中流第一帧，经已有 libde265、libswscale、libavutil 的公开接口转 RGB，编码为 PNG。
 
-解码在隔离子进程中执行，正常数据流只走内存和管道：墙钟上限 8 秒、CPU 5 秒、地址空间 768 MiB，输入输出最多 8 MiB，单边最多 8192、总像素最多 16777216。仅继承受限 PATH/LANG，不继承 API Key 等业务环境。缺库、超时或损坏时保留真实错误并降级到可读预览。[WXGF 实现](../wechat_linux/media/wxgf.py) · [解码测试](../tests/test_wxgf.py)
+解码在隔离子进程中执行，正常数据流只走内存和管道：墙钟上限 8 秒、CPU 5 秒、地址空间 768 MiB，输入输出最多 8 MiB，单边最多 8192、总像素最多 16777216。仅继承受限 PATH/LANG，不继承 API Key 等业务环境。缺库、超时或损坏时保留真实错误并降级到可读预览。[WXGF 实现](../src/wechat_linux/media/wxgf.py) · [解码测试](../tests/test_wxgf.py)
 
 ### 11.3 第三类：Linux 确实只有缩略图
 
@@ -430,7 +430,7 @@ helper 超时可能发生在提交之前，也可能发生在微信已经接受�
 | 受控打开绑定图片 | 67×144 缩略图 | 498×1080 清晰微信缓存 | 客户端可以按需取得更清晰文件 |
 | 完整自动流程 | 119×210 缩略图 | 584×1024、227131 字节 PNG，约 12.56 秒 | 自动定位、打开与原缓存确认通过 |
 
-这些清晰度来自不同图片，不是同一张图连续升级的四个阶段。`cached` 也不保证等于发送者上传的原始文件。自动流程实测到清晰缓存和请求组装；10 月 26 日该轮未再额外调用模型重答或向群发测试消息，不能把本地回放写成新的手机端识图验收。[下载实现](../wechat_linux/desktop/image_download.py) · [下载说明](IMAGE_DOWNLOAD.md)
+这些清晰度来自不同图片，不是同一张图连续升级的四个阶段。`cached` 也不保证等于发送者上传的原始文件。自动流程实测到清晰缓存和请求组装；10 月 26 日该轮未再额外调用模型重答或向群发测试消息，不能把本地回放写成新的手机端识图验收。[下载实现](../src/wechat_linux/desktop/image_download.py) · [下载说明](IMAGE_DOWNLOAD.md)
 
 ### 11.5 一个值得记住的窗口清理教训
 
@@ -597,14 +597,14 @@ SHA-256: e58facbc7c94ef06733bbeaf3d9a4bad4f898bb8e179fd107d562a9b866138dc
 
 | 关注点 | 当前实现 |
 | --- | --- |
-| 库公共入口与数据记录 | [公共入口](../wechat_linux/__init__.py)、[记录类型](../wechat_linux/models.py)、[Session](../wechat_linux/session.py) |
-| 数据库与 WAL | [store.py](../wechat_linux/storage/store.py)、[crypto.py](../wechat_linux/storage/crypto.py)、[keyscan.py](../wechat_linux/storage/keyscan.py) |
-| 引用和真实事件 | [references.py](../wechat_linux/messages/references.py)、[pats.py](../wechat_linux/messages/pats.py) |
-| 后台提交的三个位置 | [sender.py](../wechat_linux/native/sender.py)、[helper.py](../wechat_linux/native/helper.py)、[agent.js](../wechat_linux/native/agent.js) |
-| 固定版本指纹 | [profile.json](../wechat_linux/native/profile.json)、[能力声明](../wechat_linux/profiles.py) |
-| 接口、锁与确认 | [本地 server](../wechat_linux/transport/server.py)、[锁](../wechat_linux/runtime/locking.py)、[发出确认](../wechat_linux/sending/confirmation.py)、[独立 outbox](../wechat_linux/sending/outbox.py) |
-| 图片链路 | [images.py](../wechat_linux/media/images.py)、[wxgf.py](../wechat_linux/media/wxgf.py)、[桌面兼容下载](../wechat_linux/desktop/image_download.py)、[原生下载 SDK](../wechat_linux/native/image_download.py)、[图片 agent](../wechat_linux/native/image_agent.js) |
-| 机器人如何消费库 | [bot.py](../wxbridge/app/bot.py)、[delivery.py](../wxbridge/app/delivery.py)、[本地服务业务适配](../wxbridge/app/native_gateway.py) |
+| 库公共入口与数据记录 | [公共入口](../src/wechat_linux/__init__.py)、[记录类型](../src/wechat_linux/models.py)、[Session](../src/wechat_linux/session.py) |
+| 数据库与 WAL | [store.py](../src/wechat_linux/storage/store.py)、[crypto.py](../src/wechat_linux/storage/crypto.py)、[keyscan.py](../src/wechat_linux/storage/keyscan.py) |
+| 引用和真实事件 | [references.py](../src/wechat_linux/messages/references.py)、[pats.py](../src/wechat_linux/messages/pats.py) |
+| 后台提交的三个位置 | [sender.py](../src/wechat_linux/native/sender.py)、[helper.py](../src/wechat_linux/native/helper.py)、[agent.js](../src/wechat_linux/native/agent.js) |
+| 固定版本指纹 | [profile.json](../src/wechat_linux/native/profile.json)、[能力声明](../src/wechat_linux/profiles.py) |
+| 接口、锁与确认 | [本地 server](../src/wechat_linux/transport/server.py)、[锁](../src/wechat_linux/runtime/locking.py)、[发出确认](../src/wechat_linux/sending/confirmation.py)、[独立 outbox](../src/wechat_linux/sending/outbox.py) |
+| 图片链路 | [images.py](../src/wechat_linux/media/images.py)、[wxgf.py](../src/wechat_linux/media/wxgf.py)、[桌面兼容下载](../src/wechat_linux/desktop/image_download.py)、[原生下载 SDK](../src/wechat_linux/native/image_download.py)、[图片 agent](../src/wechat_linux/native/image_agent.js) |
+| 机器人如何消费库 | [bot.py](../src/wxbridge/app/bot.py)、[delivery.py](../src/wxbridge/app/delivery.py)、[本地服务业务适配](../src/wxbridge/app/native_gateway.py) |
 | 实际故障条件 | [SDK 回归](../tests/test_wechat_library.py)、[native 回归](../tests/test_native_api.py)、[桌面图片回归](../tests/test_image_download.py)、[原生图片回归](../tests/test_native_images.py) |
 
 ### 16.2 本机研究档案

@@ -1,4 +1,8 @@
+> 模型配置与生命周期已重构：请以 [模型接口](MODEL_API.md) 为准。每群三条线程通道，旧 profile/persona 和模型总额度已移除。
+
 # 完整流程与代码导读
+
+本页主要从机器人的旧导入路径描述收发流程。微信底层实现现已提取到 [wechat_linux](../src/wechat_linux/README.md)，`wxbridge/wechat` 与 `wxbridge/native` 中部分 Python 模块是兼容导入；排查实际实现时请沿导入跳转到库。启动与部署细节应以 [部署说明](DEPLOYMENT.md) 和实际配置为准。
 
 阅读时先沿一次启动走到退出，再沿一条群消息走到回复。正常监听只有一条数据库消息链路；环境检查和界面排障由独立模块提供。
 
@@ -15,7 +19,7 @@ wxbridge/
   storage/              事务队列与私有内存目录
 ```
 
-建议依次阅读 `cli.py → app/runtime.py → app/bot.py`，再按问题进入 `wechat`、`ai` 或 `storage`。逐个文件的地图见 [wxbridge/README.md](../wxbridge/README.md)。
+建议依次阅读 `cli.py → app/runtime.py → app/bot.py`，再按问题进入 `wechat`、`ai` 或 `storage`。逐个文件的地图见 [wxbridge/README.md](../src/wxbridge/README.md)。
 
 ## 一次启动如何走完
 
@@ -85,7 +89,7 @@ flowchart TD
 | `app/delivery.py`、`app/conversation.py` | 发送生命周期与确认后的纯会话策略，确认及状态更新仍同事务 |
 | `native/api.py`、`native/client.py`、`native/command.py` | 本机外部请求入口及调用方；接入相同队列，不建立第二个数据库所有者 |
 | `native/sender.py`、`native/protocol.py` | 受控发送工作进程、私有helper通信及字节分片 |
-| `native/helper.py`、`native/agent.js`、`native/profile.json` | 隔离权限、版本绑定、短时注入与明确收件人后台发送；详见[native地图](../wxbridge/native/README.md) |
+| `native/helper.py`、`native/agent.js`、`native/profile.json` | 隔离权限、版本绑定、短时注入与明确收件人后台发送；详见[native地图](../src/wxbridge/native/README.md) |
 | `app/metrics.py`、`app/build_info.py` | 有界阶段耗时、API用量、运行版本与配置哈希 |
 | `ai/search.py` | 按需搜索/抓取工具循环、进度事件、来源及失败说明 |
 | `ai/output.py` | 保留人格并约束简短口语、纯文本；清理意外 Markdown，不截断正文 |

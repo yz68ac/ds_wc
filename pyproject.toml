@@ -16,9 +16,19 @@ dependencies = []
 
 [project.optional-dependencies]
 database = ["pycryptodome>=3.20", "zstandard>=0.22"]
+analysis = ["capstone>=5,<6"]
+
+[dependency-groups]
+provider = ["model-provider"]
+
+[tool.uv]
+default-groups = ["provider"]
+
+[tool.uv.sources]
+model-provider = { path = "src/provider", editable = true }
 
 [tool.setuptools.packages.find]
-where = ["."]
+where = ["src"]
 include = ["wechat_linux", "wechat_linux.*"]
 
 [tool.setuptools.package-data]

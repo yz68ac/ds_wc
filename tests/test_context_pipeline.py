@@ -1,5 +1,7 @@
 """真实 SQLite + 可控时钟/子进程替身，覆盖接收至发送确认，不联网。"""
 from __future__ import annotations
+from model_support import default_config
+from contextlib import nullcontext
 
 import json
 from pathlib import Path
@@ -8,9 +10,9 @@ import time
 import unittest
 from unittest.mock import Mock, patch
 
-from wxbridge.app.bot import WeChatDeepSeekBot
+from wxbridge.app.bot import GroupSession
 from wxbridge.config import DEFAULTS, _deep_merge
-from wxbridge.ai.client import DeepSeekClient
+from model_support import ClientFixture
 from wxbridge.storage.journal import Journal
 from wxbridge.app.workers import ProcessJob
 from synthetic import NOW, msg
@@ -34,7 +36,7 @@ class PipelineTests(unittest.TestCase):
         parent.mkdir(exist_ok=True)
         self.temp = tempfile.TemporaryDirectory(dir=parent)
         self.addCleanup(self.temp.cleanup)
-        self.cfg = _deep_merge(DEFAULTS, {})
+        self.cfg = default_config()
         # 旧链路用例每次 tick 显式模拟接收；实际轮询节流在 test_polling 单独验证。
         self.cfg['poll_interval_seconds'] = 0
         self.cfg["memory"]["enabled"] = False
@@ -43,7 +45,8 @@ class PipelineTests(unittest.TestCase):
         self.cfg["queue"]["file"] = str(Path(self.temp.name) / "queue.sqlite3")
         self.cfg["queue"]["debounce_seconds"] = 3  # 保留后续可选合并策略的回归。
         self.cfg["state_file"] = str(Path(self.temp.name) / "state.json")
-        self.cfg["deepseek"].update(system_prompt_file="", system_prompt="合成人格")
+
+        self.cfg['system_prompt_file'] = str(Path(__file__).resolve().parents[1]/'prompts/system.md')
         self.now, self.rows, self.jobs = float(NOW), [], []
         self.store = Mock()
         self.store.self_wxid = "wxid_self"
@@ -63,7 +66,7 @@ class PipelineTests(unittest.TestCase):
         self.addCleanup(lambda: self.bot.close())
 
     def make_bot(self):
-        self.bot = WeChatDeepSeekBot(self.cfg)
+        self.bot = GroupSession(self.cfg)
         def make(kind, payload, **kwargs):
             job = FakeJob(kind, payload, **kwargs)
             self.jobs.append(job)
@@ -626,13 +629,13 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(publish.call_count, 3)
 
     def test_reasoning_is_not_sent_as_answer(self):
-        client = DeepSeekClient.__new__(DeepSeekClient)
-        from wxbridge.ai.providers import get_adapter
-        client.adapter = get_adapter('deepseek')
-        client.cfg = {**self.cfg["deepseek"], "thinking": "disabled"}
+        client = ClientFixture.__new__(ClientFixture)
+        from wxbridge.ai.providers import get_protocol_adapter
+        client.adapter = get_protocol_adapter('deepseek')
+        client.cfg = {**self.cfg['models']['reply']['options'], "thinking": "disabled"}
         client._post = Mock(return_value={"choices": [{"message": {"content": "", "reasoning_content": "PRIVATE"}}]})
-        from wxbridge.ai.client import DeepSeekError
-        with self.assertRaisesRegex(DeepSeekError, 'empty_reply'):
+        from wxbridge.ai.client import ModelError
+        with self.assertRaisesRegex(ModelError, 'empty_reply'):
             client.chat([])
         self.assertEqual(client._post.call_args.args[0]["thinking"], {"type": "disabled"})
 
@@ -772,7 +775,7 @@ class WorkerTests(unittest.TestCase):
         prior = logging.root.manager.disable
         connection = Mock()
         try:
-            with patch("wxbridge.ai.client.ModelClient") as client:
+            with patch("wxbridge.ai.client.client_for") as client:
                 client.return_value.chat.return_value = "**简单说**，先这样。"
                 _work(connection, "generate", ({"search": {"enabled": False}}, [dict(role="system", content="合成人格")], None))
                 prompt = client.return_value.chat.call_args.args[0]
@@ -791,7 +794,7 @@ class WorkerTests(unittest.TestCase):
             on_search()
             return "联网回答", dict(attempted=True, calls=1, results=1, errors=[])
         try:
-            with patch("wxbridge.ai.client.ModelClient"), patch("wxbridge.ai.search.answer_with_search", side_effect=answer):
+            with patch("wxbridge.ai.client.client_for"), patch("wxbridge.ai.search.answer_with_search", side_effect=answer):
                 _work(connection, "generate", ({}, [], None))
         finally:
             logging.disable(prior)

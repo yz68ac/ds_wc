@@ -1,4 +1,7 @@
 """消息接收节流与发送前补读：合成时钟、SQLite和工作进程，不访问真实微信。"""
+from model_support import default_config
+from contextlib import nullcontext
+from contextlib import nullcontext
 import copy
 import unittest
 from unittest.mock import patch
@@ -161,8 +164,8 @@ class PollingTests(unittest.TestCase):
 
     def test_config_requires_a_finite_positive_interval(self):
         for value in (0, -1, True, '2', float('inf'), float('nan')):
-            defaults = copy.deepcopy(DEFAULTS)
+            defaults = default_config()
             defaults['poll_interval_seconds'] = value
             with self.subTest(value=value), patch('wxbridge.config.DEFAULTS', defaults), \
-                    patch('wxbridge.config.load_dotenv'), self.assertRaisesRegex(ValueError, 'poll_interval_seconds'):
+                    nullcontext(), self.assertRaisesRegex(ValueError, 'poll_interval_seconds'):
                 load_config('__missing_synthetic_config__.json')

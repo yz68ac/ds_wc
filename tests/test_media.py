@@ -1,5 +1,8 @@
 """合成图片、SQLite 附件索引与模拟 API；不读取真实图片或凭据。"""
 from __future__ import annotations
+from model_support import default_config
+from contextlib import nullcontext
+from contextlib import nullcontext
 
 import base64
 from contextlib import closing
@@ -15,7 +18,7 @@ import zlib
 
 from wxbridge.config import DEFAULTS, _deep_merge, load_config
 from wxbridge.wechat.crypto import AES
-from wxbridge.ai.client import DeepSeekClient, DeepSeekError
+from model_support import ClientFixture, ModelError
 from wxbridge.ai.prompts import build_prompt
 from wxbridge.ai.images import MediaError, V1, V2, decode_dat, key_candidates, prepare_multimodal, read_local_image, validate_image
 from wxbridge.wechat.references import image_md5, local_image_cache_key, prompt_reference
@@ -81,9 +84,10 @@ class LocalImageTests(unittest.TestCase):
         self.path.parent.mkdir(parents=True)
         self.binding = dict(account="wxid_synthetic", account_root=str(self.root), home=str(self.home),
                             candidates=[dict(relative=str(self.path.relative_to(self.root)), quality="original")])
-        self.cfg = _deep_merge(DEFAULTS, {})
+        self.cfg = default_config()
         self.cfg["vision"]["cache_wait_seconds"] = 0
-        self.cfg["deepseek"].update(system_prompt_file="", system_prompt="合成人格")
+
+        self.cfg['system_prompt_file'] = str(Path(__file__).resolve().parents[1]/'prompts/system.md')
 
     def test_linux_key_derivation_and_v2_in_memory(self):
         folder = self.home/".xwechat/net/kvcomm"
@@ -147,7 +151,8 @@ class LocalImageTests(unittest.TestCase):
                     images=[dict(trigger_index=0, depth=0, **self.binding)])
 
     def prepare(self, generation):
-        base = build_prompt(self.cfg, generation["context"], generation["triggers"][-1], "合成群")
+        base = build_prompt(self.cfg, generation["context"], generation["triggers"][-1], "合成群",
+                            generation['triggers'], memory=generation.get('memory'), account=generation.get('account', ''))
         return prepare_multimodal(self.cfg, base, generation)
 
     def test_api_receives_actual_pixels_only_in_user_and_keeps_persona(self):
@@ -266,8 +271,9 @@ class ImageBindingTests(unittest.TestCase):
         self.assertTrue(binding["cache_fallback"])
         trigger = msg(10, NOW, "@ds 这怎么看")
         trigger["reference"] = reference
-        cfg = _deep_merge(DEFAULTS, {})
-        cfg["deepseek"].update(system_prompt_file="", system_prompt="合成人格")
+        cfg = default_config()
+
+        cfg['system_prompt_file'] = str(Path(__file__).resolve().parents[1]/'prompts/system.md')
         generation = dict(context=[], triggers=[trigger], chat_title="合成群",
                           images=[dict(trigger_index=0, depth=0, **binding)])
         base = build_prompt(cfg, [], trigger, "合成群")
@@ -340,8 +346,9 @@ class ImageBindingTests(unittest.TestCase):
         full = thumbnail.with_name("b"*32+"_h.dat")
         trigger = msg(10, NOW, "@ds 这怎么看")
         trigger["reference"] = reference
-        cfg = _deep_merge(DEFAULTS, {})
-        cfg["deepseek"].update(system_prompt_file="", system_prompt="合成人格")
+        cfg = default_config()
+
+        cfg['system_prompt_file'] = str(Path(__file__).resolve().parents[1]/'prompts/system.md')
         generation = dict(context=[], triggers=[trigger], chat_title="合成群",
                           images=[dict(trigger_index=0, depth=0, **binding)])
         self.store._query_messages.reset_mock()
@@ -429,26 +436,25 @@ class ImageBindingTests(unittest.TestCase):
 
 class VisionClientTests(unittest.TestCase):
     def test_post_sends_openai_image_content_array_and_rejects_request_limit(self):
-        client = DeepSeekClient.__new__(DeepSeekClient)
-        from wxbridge.ai.providers import get_adapter
-        client.adapter = get_adapter('deepseek')
+        client = ClientFixture.__new__(ClientFixture)
+        from wxbridge.ai.providers import get_protocol_adapter
+        client.adapter = get_protocol_adapter('deepseek')
         client.cfg = {}
+        client.protocol = 'deepseek'
+        client._sdk, client._sdk_client = Mock(), Mock()
         client.base_url, client.api_key = "https://example.invalid", "synthetic-key"
         payload = dict(messages=[dict(role="user", content=[dict(type="image_url", image_url=dict(url="data:image/png;base64,AAAA"))])])
-        response = Mock()
-        response.__enter__ = Mock(return_value=response)
-        response.__exit__ = Mock(return_value=False)
-        response.read.return_value = b'{"choices": []}'
-        with patch("wxbridge.ai.client.urllib.request.urlopen", return_value=response) as send:
+        with patch("provider.transport.sdk_send", return_value={"choices": []}) as send:
             client._post(payload, 1)
-            self.assertEqual(json.loads(send.call_args.args[0].data), payload)
-        with patch("wxbridge.ai.client.MAX_REQUEST_BYTES", 10), patch("wxbridge.ai.client.urllib.request.urlopen") as send:
-            with self.assertRaises(DeepSeekError):
+            self.assertEqual(send.call_args.args[3], payload)
+            self.assertEqual(send.call_args.args[2], "deepseek")
+        with patch("provider.transport.MAX_REQUEST_BYTES", 10), patch("provider.transport.sdk_send") as send:
+            with self.assertRaises(ModelError):
                 client._post(payload, 1)
             send.assert_not_called()
 
     def test_default_vision_and_invalid_config(self):
-        with patch("wxbridge.config.load_dotenv"):
+        with nullcontext():
             cfg = load_config(Path(__file__).parent/"nonexistent.json")
         self.assertTrue(cfg["vision"]["enabled"])
         self.assertEqual(cfg["queue"]["debounce_seconds"], 0)

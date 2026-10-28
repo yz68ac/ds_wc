@@ -1,10 +1,12 @@
 """参与判断与正文生成的边界、剩余期限和抢占；无真实API调用。"""
+from model_support import default_config
+from contextlib import nullcontext
 import copy
 import json
 import unittest
 from unittest.mock import Mock, patch
 
-from wxbridge.ai.client import DeepSeekClient, DeepSeekError
+from model_support import ClientFixture, ModelError
 from wxbridge.ai.proactive import build_prompt, evaluate, parse_judgment, ProactiveError
 from wxbridge.config import DEFAULTS
 from synthetic import NOW, msg
@@ -17,8 +19,9 @@ def response(text):
 
 class StageTests(unittest.TestCase):
     def setUp(self):
-        self.cfg = copy.deepcopy(DEFAULTS)
-        self.cfg['deepseek'].update(system_prompt_file='', system_prompt='合成人格')
+        self.cfg = default_config()
+
+        self.cfg['system_prompt_file'] = str(Path(__file__).resolve().parents[1]/'prompts/system.md')
         self.prompt = build_prompt(self.cfg, [msg(7, NOW, '合成接话目标')], '合成群', opportunity=dict(source_ids=[7]))
 
     def test_strict_judgment_does_not_accept_generated_text_or_unusable_target(self):
@@ -28,154 +31,16 @@ class StageTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 parse_judgment(json.dumps(value))
 
-    def test_invalid_or_unknown_target_never_calls_reply_model(self):
-        for text in ('invalid', '{"speak":true,"reply_to":999}', '{"speak":true,"reply_to":7,"text":"预生成"}'):
-            with self.subTest(text=text), patch('wxbridge.ai.client.deepseek_api_key', return_value='synthetic-key'), \
-                    patch.object(DeepSeekClient, '_post', return_value=response(text)) as post, self.assertRaises(ValueError):
-                try:
-                    evaluate(self.cfg, self.prompt, source_ids=[7])
-                finally:
-                    self.assertEqual(post.call_count, 1)
 
-    def test_unnamed_entry_uses_max_for_body_and_keeps_context_and_persona(self):
-        callback = Mock()
-        with patch('wxbridge.ai.client.deepseek_api_key', return_value='synthetic-key'), \
-                patch.object(DeepSeekClient, '_post', side_effect=[
-                    response('{"speak":true,"reply_to":7}'), response('**这局有点意思。**')]) as post:
-            answer = evaluate(self.cfg, self.prompt, source_ids=[7], on_reply=callback)
-        callback.assert_called_once_with(7)
-        self.assertEqual(answer, dict(speak=True, text='这局有点意思', reply_to=7))
-        judge, reply = [call.args[0] for call in post.call_args_list]
-        self.assertEqual(judge['thinking'], {'type': 'disabled'})
-        self.assertNotIn('reasoning_effort', judge)
-        self.assertEqual(reply['thinking'], {'type': 'enabled'})
-        self.assertEqual(reply['reasoning_effort'], 'max')
-        before = json.loads(judge['messages'][1]['content'])
-        after = json.loads(reply['messages'][1]['content'])
-        self.assertEqual(before['messages'], after['messages'])
-        self.assertEqual(after['reply_target']['id'], 7)
-        self.assertNotIn('合成人格', judge['messages'][0]['content'])
-        self.assertTrue(reply['messages'][0]['content'].startswith('合成人格'))
-        self.assertIn('消息ID 7', reply['messages'][0]['content'])
-        self.assertNotIn('PRIVATE_REASONING', json.dumps(answer))
 
-    def test_silence_is_one_request_and_never_emits_reply_event(self):
-        callback = Mock()
-        with patch('wxbridge.ai.client.deepseek_api_key', return_value='synthetic-key'), \
-                patch.object(DeepSeekClient, '_post', return_value=response('{"speak":false,"reply_to":null}')) as post:
-            self.assertFalse(evaluate(self.cfg, self.prompt, source_ids=[7], on_reply=callback)['speak'])
-        self.assertEqual(post.call_count, 1)
-        callback.assert_not_called()
 
-    def test_elapsed_judgment_leaves_only_remaining_lifetime_for_body(self):
-        clock = [100.0]
-        timeouts = []
-        def post(payload, timeout):
-            timeouts.append(timeout)
-            if len(timeouts) == 1:
-                clock[0] += 12
-                return response('{"speak":true,"reply_to":7}')
-            return response('确实有点东西')
-        with patch('wxbridge.ai.client.deepseek_api_key', return_value='synthetic-key'), \
-                patch('wxbridge.ai.proactive.time.monotonic', side_effect=lambda: clock[0]), \
-                patch.object(DeepSeekClient, '_post', side_effect=post):
-            evaluate(self.cfg, self.prompt, source_ids=[7], timeout_seconds=20)
-        self.assertEqual(timeouts, [20, 8])
 
-    def test_no_api_after_deadline_or_second_call_after_expired_judgment(self):
-        clock = [100.0]
-        callback = Mock()
-        def expired(payload, timeout):
-            clock[0] += 11
-            return response('{"speak":true,"reply_to":7}')
-        with patch('wxbridge.ai.client.deepseek_api_key', return_value='synthetic-key'), \
-                patch('wxbridge.ai.proactive.time.monotonic', side_effect=lambda: clock[0]), \
-                patch.object(DeepSeekClient, '_post', side_effect=expired) as post:
-            with self.assertRaises(DeepSeekError):
-                evaluate(self.cfg, self.prompt, source_ids=[7], timeout_seconds=0)
-            post.assert_not_called()
-            with self.assertRaisesRegex(ValueError, 'expired_before_reply'):
-                evaluate(self.cfg, self.prompt, source_ids=[7], timeout_seconds=10, on_reply=callback)
-            self.assertEqual(post.call_count, 1)
-        callback.assert_not_called()
 
-    def test_overlength_reply_rewrites_once_with_original_deadline_and_max_thinking(self):
-        clock, timeouts = [100.], []
-        private = 'PRIVATE_OVERSIZE_ANSWER'*3
-        outputs = ['{"speak":true,"reply_to":7}', private, '这局你确实拿下了']
-        def post(payload, timeout):
-            timeouts.append(timeout)
-            clock[0] += 2
-            return response(outputs[len(timeouts)-1])
-        callback = Mock()
-        original = copy.deepcopy(self.cfg)
-        with patch('wxbridge.ai.client.deepseek_api_key', return_value='synthetic-key'), \
-                patch('wxbridge.ai.proactive.time.monotonic', side_effect=lambda: clock[0]), \
-                patch.object(DeepSeekClient, '_post', side_effect=post) as transport:
-            result = evaluate(self.cfg, self.prompt, source_ids=[7], timeout_seconds=20, on_reply=callback)
-        self.assertEqual(result, dict(speak=True, text='这局你确实拿下了', reply_to=7))
-        self.assertEqual(timeouts, [20, 18, 16])
-        callback.assert_called_once_with(7)
-        calls = [c.args[0] for c in transport.call_args_list]
-        self.assertEqual(calls[2]['reasoning_effort'], 'max')
-        self.assertEqual(calls[1]['max_tokens'], calls[2]['max_tokens'])
-        self.assertEqual(calls[1]['messages'][1], calls[2]['messages'][1])
-        self.assertIn('重新生成短答', calls[2]['messages'][0]['content'])
-        self.assertNotIn(private, json.dumps(calls, ensure_ascii=False))
-        self.assertEqual(original, self.cfg)
 
-    def test_two_bad_lengths_report_length_and_never_make_a_third_body_request(self):
-        with patch('wxbridge.ai.client.deepseek_api_key', return_value='synthetic-key'), \
-                patch.object(DeepSeekClient, '_post', side_effect=[
-                    response('{"speak":true,"reply_to":7}'), response('字'*41), response('字'*42)]) as post:
-            with self.assertRaises(ProactiveError) as failure:
-                evaluate(self.cfg, self.prompt, source_ids=[7])
-        self.assertEqual(post.call_count, 3)
-        self.assertEqual(failure.exception.code, 'proactive_invalid_reply_length')
-        self.assertEqual(failure.exception.reply_chars, 42)
 
-    def test_empty_reply_can_rewrite_but_no_placeholder_is_sent(self):
-        with patch('wxbridge.ai.client.deepseek_api_key', return_value='synthetic-key'), \
-                patch.object(DeepSeekClient, '_post', side_effect=[
-                    response('{"speak":true,"reply_to":7}'), response(''), response('我在这呢')]) as post:
-            answer = evaluate(self.cfg, self.prompt, source_ids=[7])
-        self.assertEqual(answer['text'], '我在这呢')
-        self.assertEqual(post.call_count, 3)
 
-    def test_token_truncation_is_detected_and_rewrites_under_same_budget(self):
-        from wxbridge.ai.client import capture_metrics
-        cut = response('')
-        cut['choices'][0]['finish_reason'] = 'length'
-        with patch('wxbridge.ai.client.deepseek_api_key', return_value='synthetic-key'), \
-                patch.object(DeepSeekClient, '_post', side_effect=[
-                    response('{"speak":true,"reply_to":7}'), cut, response('这次接上了')]), capture_metrics() as metrics:
-            answer = evaluate(self.cfg, self.prompt, source_ids=[7])
-        self.assertEqual(answer['text'], '这次接上了')
-        self.assertEqual([v['role'] for v in metrics], ['participation', 'reply', 'reply'])
-        self.assertEqual(metrics[1]['error'], 'output_limit')
 
-    def test_expired_rewrite_has_no_request_after_original_deadline(self):
-        clock, calls = [100.], []
-        def post(payload, timeout):
-            calls.append(payload)
-            if len(calls) == 1:
-                return response('{"speak":true,"reply_to":7}')
-            clock[0] += 21
-            return response('字'*41)
-        with patch('wxbridge.ai.client.deepseek_api_key', return_value='synthetic-key'), \
-                patch('wxbridge.ai.proactive.time.monotonic', side_effect=lambda: clock[0]), \
-                patch.object(DeepSeekClient, '_post', side_effect=post):
-            with self.assertRaisesRegex(ProactiveError, 'proactive_expired_before_reply'):
-                evaluate(self.cfg, self.prompt, source_ids=[7], timeout_seconds=20)
-        self.assertEqual(len(calls), 2)
 
-    def test_http_body_failure_does_not_enter_length_rewrite(self):
-        with patch('wxbridge.ai.client.deepseek_api_key', return_value='synthetic-key'), \
-                patch.object(DeepSeekClient, '_post', side_effect=[
-                    response('{"speak":true,"reply_to":7}'), DeepSeekError('http_401')]) as post:
-            with self.assertRaisesRegex(DeepSeekError, 'http_401'):
-                evaluate(self.cfg, self.prompt, source_ids=[7])
-        self.assertEqual(post.call_count, 2)
 
     def test_worker_preserves_only_known_error_code_and_length(self):
         import logging

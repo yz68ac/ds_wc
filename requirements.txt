@@ -1,2 +1,4 @@
 pycryptodome>=3.19
 zstandard>=0.22
+openai>=3.40,<4
+anthropic>=2.3,<3

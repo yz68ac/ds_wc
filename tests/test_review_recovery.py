@@ -1,9 +1,11 @@
 """Fault injection for explicit failures, output limits and bounded recovery."""
+from model_support import default_config
+from contextlib import nullcontext
 import copy
 import unittest
 from unittest.mock import Mock, patch
 
-from wxbridge.ai.client import DeepSeekClient, DeepSeekError, ModelResult
+from model_support import ClientFixture, ModelError, ModelResult
 import test_native_api as native_tests
 
 
@@ -45,14 +47,14 @@ class ReviewRecoveryTests(unittest.TestCase):
         self.assertIsNotNone(case.journal.task(identifier)['intent'])
 
     def test_truncated_or_empty_model_output_never_becomes_a_successful_chat(self):
-        client = DeepSeekClient.__new__(DeepSeekClient)
+        client = ClientFixture.__new__(ClientFixture)
         for content, finish, error in (('', 'length', 'output_limit'), ('partial', 'length', 'output_limit'),
                                        ('', 'stop', 'empty_reply'), ('', 'content_filter', 'output_filtered')):
             client.request = Mock(return_value=ModelResult(dict(content=content), finish, {}))
-            with self.subTest(finish=finish, content=bool(content)), self.assertRaisesRegex(DeepSeekError, error):
+            with self.subTest(finish=finish, content=bool(content)), self.assertRaisesRegex(ModelError, error):
                 client.chat([])
 
     def test_tool_calls_may_legitimately_have_no_text(self):
-        client = DeepSeekClient.__new__(DeepSeekClient)
+        client = ClientFixture.__new__(ClientFixture)
         client.request = Mock(return_value=ModelResult(dict(content=None, tool_calls=[dict(id='synthetic')]), 'tool_calls', {}))
         self.assertTrue(client.complete([], require_complete=True)['tool_calls'])

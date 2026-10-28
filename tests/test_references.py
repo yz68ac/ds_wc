@@ -1,5 +1,7 @@
 """引用解析及 API 提示词：合成正文，不读取实际聊天或调用网络。"""
 from __future__ import annotations
+from model_support import default_config
+from contextlib import nullcontext
 
 import html
 import sqlite3
@@ -108,8 +110,9 @@ class ReferenceParsingTests(unittest.TestCase):
 
 class ReferencePromptTests(unittest.TestCase):
     def setUp(self):
-        self.cfg = _deep_merge(DEFAULTS, {})
-        self.cfg["deepseek"].update(system_prompt_file="", system_prompt="合成人格")
+        self.cfg = default_config()
+
+        self.cfg['system_prompt_file'] = str(Path(__file__).resolve().parents[1]/'prompts/system.md')
 
     def test_explicit_old_reference_included_but_unrelated_old_history_excluded(self):
         trigger = parse_message(quoted_xml(content="EXPLICIT_OLD_QUOTE"))

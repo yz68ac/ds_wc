@@ -1,8 +1,8 @@
 // Run the ACTUAL agent against synthetic memory/functions; never load Frida/WeChat.
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict'),path=require('node:path');
 const root=path.resolve(__dirname,'..');
-const profile=JSON.parse(fs.readFileSync(path.join(root,'wechat_linux/native/image_profile.json'),'utf8'));
-const source=fs.readFileSync(path.join(root,'wechat_linux/native/image_agent.js'),'utf8');
+const profile=JSON.parse(fs.readFileSync(path.join(root,'src/wechat_linux/native/image_profile.json'),'utf8'));
+const source=fs.readFileSync(path.join(root,'src/wechat_linux/native/image_agent.js'),'utf8');
 let scenarios=0;
 function world(mode='success') {
  const bytes=new Map(),functions=new Map(),futureResults=new Map(),jobs=new Map();

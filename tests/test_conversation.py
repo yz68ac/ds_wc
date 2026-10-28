@@ -1,5 +1,8 @@
 """主动入场、成员活动续期与可选次数限制的合成回归，无微信或API请求。"""
 from __future__ import annotations
+from model_support import default_config
+from contextlib import nullcontext
+from contextlib import nullcontext
 
 import copy
 import json
@@ -379,12 +382,12 @@ class ConversationProtocolTests(unittest.TestCase):
                               ('conversation', {'enabled': True, 'max_followups': 3}),
                               ('opportunities', {'enabled': True, 'min_senders': 1}),
                               ('opportunities', {'enabled': True, 'address_names': ['']})]:
-            defaults = copy.deepcopy(DEFAULTS)
+            defaults = default_config()
             if isinstance(value, dict):
                 defaults['proactive'][field].update(value)
             else:
                 defaults['proactive'][field] = value
-            with self.subTest(field=field, value=value), patch('wxbridge.config.DEFAULTS', defaults), patch('wxbridge.config.load_dotenv'):
+            with self.subTest(field=field, value=value), patch('wxbridge.config.DEFAULTS', defaults), nullcontext():
                 with self.assertRaises(ValueError):
                     load_config('__missing_synthetic_config__.json')
 

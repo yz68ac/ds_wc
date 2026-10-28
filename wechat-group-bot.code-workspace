@@ -7,12 +7,15 @@
   ],
   "settings": {
     "python.defaultInterpreterPath": "${workspaceFolder}/.venv",
-    "python.analysis.extraPaths": ["."],
+    "python.analysis.extraPaths": ["./src"],
     "files.exclude": {
       "**/__pycache__": true,
       "**/*.pyc": true,
       ".venv": true,
-      "**/.test-tmp": true
+      "**/.test-tmp": true,
+      "build": true,
+      "dist": true,
+      "*.egg-info": true
     },
     "search.exclude": {".venv": true, "memory": true}
   },

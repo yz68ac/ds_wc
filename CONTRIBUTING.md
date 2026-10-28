@@ -23,16 +23,16 @@ git push -u origin feat/your-change
 ## 模块与约束
 
 - `app` 负责调度，主进程拥有所有微信数据库查询；API 和原生/UI发送放入受控工作进程。前台优先，有效 API 并发遵守现有限额。
-- `ai` 处理模型输入输出。保留人格、短答、纯文本偏好；不要将模型内部推理、群聊正文或凭据写入日志。
+- `ai` 处理模型输入输出。群系统提示词由配置提供，不写入固定人设或试用风格；不要将模型内部推理、群聊正文或凭据写入日志。
 - `wechat` 适配原生客户端。真实 @ 要核对消息元数据，不能仅匹配正文中的昵称。
 - `native` 负责本机发送接口与固定版本内部调用。项目源码不被特权helper直接导入；修改helper、agent或profile后，必须成套核对安装资产，不能自动放宽版本指纹。
 - `storage` 管理队列、记忆与来源校验。账号、群、稳定成员 ID 必须隔离；记忆建议经过主进程验证后才能落盘。
 - 发送前持久化意图、校验收件人和允许清单；桌面后端还需校验群和草稿。提交后由主进程确认新增本人发出记录。状态不明不能盲目重发、回退另一后端，也不能把函数或按钮返回当作发送成功。
 - 解密副本和运行队列必须在通过校验的私有 `tmpfs,noswap`；维护修改与监听共用单实例锁。
 
-新增配置时一并更新 `config.defaults.json`、`config.example.jsonc`、`wxbridge/config.py` 的校验及 [配置文档](docs/CONFIG.md)。实际 `config.json`、`.env`、`memory/` 属于部署数据，不应提交。
+新增配置时一并更新 `config.defaults.json`、`config.example.jsonc`、`src/wxbridge/config.py` 的校验及 [配置文档](docs/CONFIG.md)。实际 `config.json`、`.env`、`memory/` 属于部署数据，不应提交。
 
-完整链路和文件职责见 [代码导读](docs/CODE_GUIDE.md)、[native地图](wxbridge/native/README.md) 和 [脚本分类](scripts/README.md)。不要为方便测试绕过上述校验。
+完整链路和文件职责见 [代码导读](docs/CODE_GUIDE.md)、[native地图](src/wxbridge/native/README.md) 和 [脚本分类](scripts/README.md)。不要为方便测试绕过上述校验。
 
 ## 提交前检查
 

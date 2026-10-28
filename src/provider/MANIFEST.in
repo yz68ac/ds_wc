@@ -1,0 +1,8 @@
+include pyproject.toml MANIFEST.in README.md
+include *.py
+recursive-include adapters *.py
+global-exclude .env .env.* models.json *.tmp *.py[cod]
+prune __pycache__
+prune adapters/__pycache__
+prune build
+prune dist
