@@ -140,8 +140,9 @@ def probe(keys=None, *, verify=False):
         cfg['keys_file'] = str(keys)
     with open(os.devnull, 'w') as sink, contextlib.redirect_stdout(sink):
         store = WeChatStore(cfg['db_dir'], cfg['keys_file'], cfg['decrypted_dir'])
-        groups = ([(e['id'], e['config'], e['reuse_legacy_state']) for e in cfg['instances'] if e['enabled']]
-                  if cfg.get('instances') else [(None, cfg, True)])
+        groups = [(e['id'], e['config'], False) for e in cfg['instances'] if e['enabled']]
+        if not groups:
+            raise ValueError('no_enabled_instances')
         states = []
         for identifier, active_cfg, reuse in groups:
             chat, title = store.resolve_chat(active_cfg['target']['chat'])
@@ -150,8 +151,6 @@ def probe(keys=None, *, verify=False):
                 raise ValueError('wechat_account_not_ready')
             if identifier is not None and chat != active_cfg['target']['chat']:
                 raise ValueError('instance_chat_identity_mismatch')
-            if identifier is not None and reuse and store.resolve_chat(cfg['target']['chat'])[0] != chat:
-                raise ValueError('legacy_state_chat_mismatch')
             maximum = store.last_local_id(chat)
             states.append((identifier, active_cfg, reuse, identity, maximum))
         if cfg['ui']['backend']=='native_service':

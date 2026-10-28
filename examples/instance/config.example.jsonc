@@ -1,0 +1,54 @@
+// 复制到 instance/<id>/config.json，填写稳定群 ID 与模型后启用。
+{
+  "enabled": false,
+  "chat": "",
+  "system_prompt_file": "system.md",
+  "model_clients": {
+    "reply": "deepseek",
+    "image": "openai",
+    "background": "deepseek"
+  },
+  "models": {
+    "reply": {
+      "model": "",
+      "options": {
+        "max_tokens": 1200,
+        "timeout_seconds": 60,
+        "thinking": "disabled"
+      }
+    },
+    "participation": {
+      "model": "",
+      "options": {
+        "max_tokens": 256,
+        "timeout_seconds": 20,
+        "thinking": "disabled"
+      }
+    },
+    "memory": {
+      "model": "",
+      "options": {
+        "max_tokens": 1200,
+        "timeout_seconds": 60,
+        "thinking": "disabled"
+      }
+    },
+    "avatar": {
+      "model": "",
+      "options": {
+        "max_tokens": 1200,
+        "timeout_seconds": 60,
+        "thinking": "disabled"
+      }
+    }
+  },
+  "memory": {
+    "enabled": false,
+    "avatar": {
+      "enabled": false
+    }
+  },
+  "proactive": {
+    "enabled": false
+  }
+}

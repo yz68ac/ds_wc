@@ -1,0 +1,66 @@
+// 账号级配置。各群配置放同级 instance/<id>/config.json。
+{
+  "native_api": {
+    "enabled": false,
+    "socket": "/run/wxbridge-trial/native-api.sock",
+    "helper_socket": "/run/wxbridge-trial/native-helper.sock",
+    "allowed_chat_ids": [
+      "filehelper"
+    ],
+    "max_text_bytes": 4096,
+    "max_pending": 16,
+    "max_requests": 1024
+  },
+  "db_dir": "",
+  "keys_file": "/run/wxbridge-trial/keys.json",
+  "decrypted_dir": "/run/wxbridge-trial/decrypted",
+  "state_file": "/run/wxbridge-trial/state.json",
+  "log_file": "/run/wxbridge-trial/bot.log",
+  "wechat_process": "wechat",
+  "source": "db",
+  "account": {
+    "send_interval_seconds": 1
+  },
+  "poll_interval_seconds": 2,
+  "reply_to_backlog": false,
+  "ui": {
+    "backend": "auto",
+    "app_names": [
+      "wechat",
+      "WeChat",
+      "微信"
+    ],
+    "chat_list_names": [
+      "Chats",
+      "聊天",
+      "会话"
+    ],
+    "messages_list_names": [
+      "Messages",
+      "消息"
+    ],
+    "window_class": "wechat",
+    "native_executable": "/opt/wechat/wechat",
+    "window_names": [
+      "微信",
+      "WeChat"
+    ],
+    "search_shortcut": "ctrl+f",
+    "paste_shortcut": "ctrl+v",
+    "select_all_shortcut": "ctrl+a",
+    "send_key": "Return",
+    "input_method": "auto",
+    "verify_chat_selected": true,
+    "post_send_wait": 0.8,
+    "send_confirm_timeout_seconds": 10,
+    "chat_open_wait": 1,
+    "dry_run": true
+  },
+  "provider_env": null,
+  "queue": {
+    "file": "/run/wxbridge-trial/queue.sqlite3"
+  },
+  "memory": {
+    "directory": "memory"
+  }
+}

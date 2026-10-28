@@ -37,6 +37,7 @@ def private_path(name: str) -> bool:
     base = path.name
     return (
         bool(PRIVATE_DIRS.intersection(path.parts[:-1]))
+        or bool(path.parts and path.parts[0] == "instance")
         or (base != ".env.example" and (base == ".env" or base.startswith(".env.")))
         or base in PRIVATE_NAMES
         or base.endswith("_ed25519")

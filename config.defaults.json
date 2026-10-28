@@ -20,7 +20,6 @@
   "account": {
     "send_interval_seconds": 1
   },
-  "instances": [],
   "poll_interval_seconds": 2,
   "reply_to_backlog": false,
   "reply_style": {
@@ -123,9 +122,8 @@
     "max_results": 5,
     "feedback_enabled": false,
     "feedback_phrases": [
-      "我去查查，等我一下。",
       "我上网搜搜，核实一下。",
-      "这事我去看看。"
+      "我去看看。"
     ],
     "connection": "deepseek"
   },

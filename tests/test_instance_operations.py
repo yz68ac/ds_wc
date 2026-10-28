@@ -108,7 +108,7 @@ class InstanceOperationsTests(InstanceFixture):
 
     def test_release_does_not_ignore_disabled_queue_or_unconfirmed_account(self):
         self.create_queues()
-        self.data['instances'][0]['enabled'] = False
+        self.instance_data[0]['enabled'] = False
         self.load()
         value = deploy.queue()
         self.assertEqual(value['memory_pending'], 2)

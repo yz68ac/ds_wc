@@ -1,11 +1,24 @@
-# 多群运行
+# 独立群实例配置
 
-instances 中每项指定唯一 id、稳定 chat 群 ID 和 enabled。每个启用群创建一个 GroupSession，拥有自己的 Journal、上下文、记忆和三条模型通道。
+根 config.json 仅保存账号、数据库、微信发送和运行路径等共享资源。启动时扫描其同级 instance/*/config.json；目录名即实例 ID，文件内容为平铺的群配置，不使用根 instances 列表或 overrides。
 
-overrides 支持 system_prompt_file、model_clients、models，以及 target、queue、memory、search、vision、proactive 等业务设置。连接与密钥统一在 provider 配置中维护。队列路径和群身份由实例编译器生成，不能用 overrides 改写。
+```text
+config.json
+instance/
+  laidahui/
+    config.json
+    system.md
+  another-group/
+    config.json
+    system.md
+```
 
-每群 reply、image、background 各一个 FIFO 工作线程及一个复用 client；没有群间共享 client 或模型总额度。账号协调器只统一消息读取、微信发送门禁及发送确认。后台任务不再因另一群前台请求而被强制终止。
+每份群配置填写 chat（稳定 xxx@chatroom ID）和 enabled；可分别指定 model_clients、models、system_prompt_file、target、queue、memory、search、vision、proactive。没有填写的业务字段继承 config.defaults.json。各群配置互不继承。
 
-未确认的微信发送仍阻止再次提交，停用群的队列历史仍参与核对。模型线程不访问 Journal 或微信数据库。关闭时等待在途请求后释放 client。
+system_prompt_file 及显式指定的 memory.system_prompt_file 相对该实例目录解析。provider_env、微信资源及基础队列/记忆路径由账号配置提供；群配置不能覆盖这些共享资源。实例的队列和状态自动放在基础运行目录 instances/<id>/ 下；记忆继续按账号和群身份隔离。
 
-配置示例参见 [CONFIG](CONFIG.md) 和仓库 config.example.jsonc。
+只有 enabled=true 的实例创建 GroupSession；停用实例允许 chat 留空以便准备配置。启用前必须填写合法且唯一的群 ID 和所需模型，发送允许清单也须包含此群。没有启用实例时，run 明确报告 no_enabled_instances，诊断配置命令仍可使用。
+
+每群拥有 reply/image/background 三条独立模型通道，共享 provider 连接定义但不共享 client。微信账号发送门禁及未确认发送核对保持集中管理。配置变化需重启。
+
+使用 python -m wxbridge --instance laidahui explain-config 查看最终配置；实例 ID 对应目录名。实际 instance/ 目录已被 Git 忽略。公开模板位于 [examples/instance](../examples/instance/README.md)。

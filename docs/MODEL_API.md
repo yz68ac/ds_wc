@@ -13,3 +13,5 @@ GroupSession.submit_images(ImageRequest(...), deadline=None) 返回 Future[Image
 取消排队任务不会请求 API；运行中取消只废弃结果，实际请求结束前通道不启动下一项。任务等待计入截止时间，出队和应用前分别验证有效性。关闭停止接纳、取消等待项、等待活动请求结束，最后关闭 client；SDK 自动重试关闭。微信 UI 与图片准备继续使用隔离进程。
 
 旧 profile、DeepSeekClient/ModelClient 入口、persona 兼容配置和账号模型并发额度已移除。不得把旧连接字段放回 wxbridge 配置。
+
+各群的 model_clients 与 models 保存在 instance/<id>/config.json；账号文件不再放模型选择。

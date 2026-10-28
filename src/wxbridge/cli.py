@@ -14,8 +14,8 @@ from wxbridge.wechat.store import discover_db_dir
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="wxbridge", description="Linux 微信 + DeepSeek 群聊桥接")
-    parser.add_argument("--config", default="config.json", help="配置文件路径")
+    parser = argparse.ArgumentParser(prog="wxbridge", description="Linux 微信群聊桥接")
+    parser.add_argument("--config", default="config.json", help="账号配置路径；实例目录为同级 instance/")
     parser.add_argument('--instance', help='选择群实例ID，用于 status/queue-status/memory/check/explain-config')
     parser.add_argument("--version", action="version", version=__version__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -39,7 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
     memory = sub.add_parser("memory", help="人物记忆维护；修改前须停止监听")
     memory.add_argument("action", choices=["status", "show", "correct", "forget", "clear"])
     memory.add_argument("--member", help="稳定 wxid；show 不填则显示全部")
-    memory.add_argument('--scope', choices=['member', 'group', 'bot'], help='人物记忆、群内用法或ds表达偏好')
+    memory.add_argument('--scope', choices=['member', 'group', 'bot'], help='人物记忆、群内用法或助手表达偏好')
     memory.add_argument("--entry", help="单条记忆 id；forget 不填则遗忘该成员")
     memory.add_argument("--text-file", help="correct 使用 UTF-8 文本文件，最多 220 字")
     run = sub.add_parser("run", help="启动监听，有内存队列则恢复，无队列时建立基线")

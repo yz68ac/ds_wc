@@ -49,10 +49,6 @@ class Coordinator:
                 resolved, _ = self.account.store.resolve_chat(entry['chat'])
                 if resolved != entry['chat'] or not self.account.store.self_wxid:
                     raise StoreError('instance_chat_identity_mismatch')
-                if entry['reuse_legacy_state']:
-                    legacy, _ = self.account.store.resolve_chat(cfg['target']['chat'])
-                    if legacy != resolved:
-                        raise StoreError('legacy_state_chat_mismatch')
             for identifier, active in configs:
                 session = GroupSession(active, echo=echo, store=self.account.store, account=self.account,
                                        instance_id=identifier, start_gateway=False)

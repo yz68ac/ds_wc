@@ -29,7 +29,7 @@
 
 1. 管理员建立专用普通用户和私有内存挂载。参考 [runtime.mount.in](../scripts/systemd/runtime.mount.in)，将 UID/GID 替换为实际值。内核和挂载必须支持 `noswap`；不满足时修复环境，不能删掉校验继续运行。
 2. 将源码放到 `/opt/wxbridge`，运行用户应能读取源码并写入私有记忆目录。部署包要包含 `config.defaults.json`、`prompts/` 和脚本，不能只复制 Python 包。
-3. 按 `config.example.jsonc` 的注释创建标准 JSON 的 `config.json`，至少指定目标群与实际账号数据库目录。不要直接复制带注释文件作为 JSON，也不要把示例群名当作自己的群。
+3. 按 `examples/account.config.example.jsonc` 的注释创建标准 JSON 的 `config.json`，至少指定目标群与实际账号数据库目录。不要直接复制带注释文件作为 JSON，也不要把示例群名当作自己的群。
 4. 从 `.env.example` 创建根目录 `.env`，在服务器本地填写 Key，权限 0600；不要粘贴到聊天、命令行参数或 Git。已有 `scripts/configure-deepseek.sh` 可隐藏输入，且拒绝覆盖已有凭据文件。
 5. 以该普通用户启动微信会话，手机完成登录，再由管理员执行受控密钥扫描和账号/群检查。全新队列建立基线，不自动补答历史消息。
 
@@ -110,3 +110,11 @@ python3 scripts/release.py verify ../wxbridge-release.zip
 部署脚本默认拒绝删除旧发布文件、默认保留服务器提示词。确认目录迁移后，可为每个旧路径传入一次 `--allow-removed 路径`，清单必须与实际移除项完全一致；旧文件进入同一私有备份，失败可恢复。用户明确要求同步当前人格时，使用 `--update-prompts` 将版本化提示词一并备份和更新。两项都不改变密钥、记忆与队列的保护。
 
 本次队列迁移使用 SQLite 生成列与索引，旧版二列写入仍兼容。回滚时停止监听、恢复备份代码和相匹配的默认 JSON，保留当前队列；不要用旧队列快照覆盖已确认的新发送记录。内存队列的备份也必须留在同一私有内存挂载中，不能复制聊天任务到普通磁盘。发布工具负责构建与验证，不自动停止服务、覆盖生产文件或推送 GitHub。
+
+## 独立实例目录
+
+本版根 config.json 只接受账号级字段。每个群的配置和提示词单独放在应用 instance/<id>/ 下；启动时发现并校验 enabled=true 的实例，不再读取根 instances 或 overrides。首次迁移先填写稳定群 ID、模型和账号发送允许清单，未配置群保持停用。
+
+升级须保留整个 instance/ 目录及 provider_env 指定的凭据文件；默认源码配置为 src/provider/.env。发布检查会核对应用内实例文件和默认 provider 配置的哈希，代码更新不改写它们。队列及游标仍在运行目录 instances/<id>/ 下，实例 ID 变更属于新运行身份，不能用改目录名来迁移未决发送。
+
+本地实际实例不进入发布包，公开模板位于 examples/instance/。修改配置后重启监听；本次代码调整未操作服务器。

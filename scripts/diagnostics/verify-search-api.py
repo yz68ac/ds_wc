@@ -11,9 +11,11 @@ def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--live-api',action='store_true')
     parser.add_argument('--config',default=str(ROOT/'config.json'))
+    parser.add_argument('--instance', required=True)
     args=parser.parse_args()
     if not args.live_api: parser.error('Explicit --live-api is required')
-    cfg=load_config(args.config)
+    from wxbridge.instances import select_instance
+    cfg=select_instance(load_config(args.config), args.instance)
     runtime=GroupModels(cfg)
     try:
         cfg['search']['enabled']=True

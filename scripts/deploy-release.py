@@ -263,7 +263,16 @@ def deploy(stage, backup, *, apply=False, update_helper=False, allow_pending_mem
             if before['pending'] or (before['memory_pending'] and not allow_pending_memory):
                 raise ValueError('queue_changed_before_switch')
             preserved_prompts = PRESERVE-set(planned)
-            private = {n: sha(APP/n) for n in ('config.json', '.env', *sorted(preserved_prompts)) if (APP/n).is_file()}
+            private_files = ['config.json', '.env', 'src/provider/.env', *sorted(preserved_prompts)]
+            instance_directory = APP/'instance'
+            if instance_directory.is_symlink():
+                raise ValueError('unsafe_instance_directory')
+            for path in instance_directory.rglob('*'):
+                if path.is_symlink():
+                    raise ValueError('unsafe_instance_config')
+                if path.is_file():
+                    private_files.append(str(path.relative_to(APP)))
+            private = {n: sha(APP/n) for n in private_files if (APP/n).is_file()}
             memory = {str(p.relative_to(APP)): sha(p) for p in (APP/'memory').rglob('*') if p.is_file()}
             backup.mkdir(parents=True, mode=0o700);backup.chmod(0o700)
             updates = {APP/n: ((stage/n).read_bytes(), 0o755 if new['files'][n]['mode']=='100755' else 0o644, user.pw_uid, user.pw_gid) for n in planned}

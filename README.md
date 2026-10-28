@@ -76,16 +76,17 @@ docs/                     配置、架构和部署说明
 
 ## 配置与实际运行
 
-日常只修改 `config.json` 和 `.env`；查字段说明时看唯一的 `config.example.jsonc`，默认值由项目维护。 从仓库根目录直接执行 `python -m wxbridge` 前，请将 `src` 加入 Python 搜索路径：Linux 使用 `export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"`，PowerShell 使用 `$env:PYTHONPATH = "$PWD\src"`。`scripts/run-live.py` 和离线检查入口会自行加入该路径。
+账号配置修改 `config.json`，各群修改 `instance/<id>/config.json`，API 配置修改 `src/provider/.env`。账号示例见 `examples/account.config.example.jsonc`，群示例见 `examples/instance/config.example.jsonc`，通用默认值由项目维护。 从仓库根目录直接执行 `python -m wxbridge` 前，请将 `src` 加入 Python 搜索路径：Linux 使用 `export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"`，PowerShell 使用 `$env:PYTHONPATH = "$PWD\src"`。`scripts/run-live.py` 和离线检查入口会自行加入该路径。
 
 模型调用层可通过 `pip install ./src/provider` 独立安装为 `model-provider`，SDK 作为其运行依赖自动安装；仓库的 `uv sync` 也会安装这个本地库。OpenAI、DeepSeek 和 `openai_compatible` 使用 OpenAI SDK，Anthropic 使用 Anthropic SDK。SDK 内部重试关闭，仍由机器人队列管理重试。`wechat_linux` 单独打包时不依赖这些模型 SDK。
 
 | 文件 | 用途 |
 | --- | --- |
-| `config.json` | 本机实际覆盖配置，未填写字段继承默认值，Git 忽略 |
-| `.env` | 仓库根目录的 API Key，Git 忽略；空模板为 `.env.example` |
+| `config.json` | 本机账号、数据库和运行资源配置，Git 忽略 |
+| `instance/<id>/config.json` | 各群独立配置，目录名为实例 ID，整个目录 Git 忽略 |
+| `src/provider/.env` | 模型接口、API Key 和代理，Git 忽略 |
 | `config.defaults.json` | 程序默认值和内置连接，必须随代码分发 |
-| `config.example.jsonc` | 唯一带注释完整参考，含模型与搜索示例；程序不直接加载 |
+| `examples/account.config.example.jsonc` | 唯一带注释完整参考，含模型与搜索示例；程序不直接加载 |
 | `prompts/system.md` | 群聊人格，每次生成重新读取 |
 | `prompts/memory.md` | 后台整理提示词 |
 | `memory/` | 本机私有记忆，Git 忽略 |

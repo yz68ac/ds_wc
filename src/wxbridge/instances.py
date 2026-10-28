@@ -1,4 +1,4 @@
-"""Compile group overrides; account resources are never owned by a group."""
+"""Discover independent instance directories while retaining shared account resources."""
 from __future__ import annotations
 
 import copy
@@ -11,68 +11,83 @@ from wxbridge.config_merge import deep_merge, field_origins
 
 INSTANCE_ID = re.compile(r'[a-zA-Z0-9][a-zA-Z0-9_-]{0,47}\Z')
 CHAT_ID = re.compile(r'[a-zA-Z0-9_-]{1,128}@chatroom\Z')
-OVERRIDES = {'system_prompt_file', 'target', 'model_clients', 'models',
-             'reply_style', 'proactive', 'memory', 'search', 'vision', 'queue'}
+GROUP_FIELDS = {'system_prompt_file', 'target', 'model_clients', 'models',
+                'reply_style', 'proactive', 'memory', 'search', 'vision', 'queue'}
 
 
-def compile_instances(cfg, entries, path, *, resolver):
+def validate_account_fields(data):
+    """Root JSON contains account resources only, never group overrides."""
+    allowed = {'db_dir', 'keys_file', 'decrypted_dir', 'state_file', 'log_file',
+               'wechat_process', 'source', 'account', 'poll_interval_seconds',
+               'ui', 'native_api', 'provider_env', 'queue', 'memory'}
+    if not isinstance(data, dict) or set(data)-allowed:
+        raise ValueError('root_config_requires_account_fields_only; put group settings in instance/<id>/config.json')
+    for section, keys in (('queue', {'file'}), ('memory', {'directory'})):
+        if section in data and (not isinstance(data[section], dict) or set(data[section])-keys):
+            raise ValueError('root_config.'+section+' only accepts '+','.join(sorted(keys)))
+
+
+def discover_instances(cfg, path, *, resolver):
+    """Load flat group configs beside the account JSON, without network access."""
+    import json
     account = cfg.get('account', {})
     if not isinstance(account, dict) or set(account)-{'send_interval_seconds'}:
-        raise ValueError('account 仅支持 send_interval_seconds')
+        raise ValueError('account only accepts send_interval_seconds')
     gap = account.get('send_interval_seconds', 1)
     if type(gap) not in (int, float) or not math.isfinite(gap) or not 0 <= gap <= 60:
-        raise ValueError('account.send_interval_seconds 必须为0–60秒')
+        raise ValueError('account.send_interval_seconds must be 0..60')
     cfg['account'] = dict(send_interval_seconds=gap)
-    if not isinstance(entries, list) or len(entries) > 16:
-        raise ValueError('instances 必须为最多16项的列表')
-    if entries and os.environ.get('WX_GROUP'):
-        raise ValueError('多群模式请删除 WX_GROUP，使用 instances[].chat')
-    base = copy.deepcopy(cfg)
-    base['instances'] = []
-    base.pop('_compiled_models', None)
-    base.pop('_config_origins', None)
-    result, ids, chats, legacy = [], set(), set(), False
-    for entry in entries:
-        if not isinstance(entry, dict) or set(entry)-{'id', 'chat', 'enabled', 'reuse_legacy_state', 'overrides'}:
-            raise ValueError('instances 项仅支持 id/chat/enabled/reuse_legacy_state/overrides')
-        identifier, chat = entry.get('id'), entry.get('chat')
-        if not isinstance(identifier, str) or not INSTANCE_ID.fullmatch(identifier) or identifier.lower() in ids:
-            raise ValueError('instances.id 无效或重复（不区分大小写）')
-        if not isinstance(chat, str) or not CHAT_ID.fullmatch(chat) or chat in chats:
-            raise ValueError('instances.chat 必须为不重复的稳定群ID')
-        ids.add(identifier.lower()); chats.add(chat)
-        for field in ('enabled', 'reuse_legacy_state'):
-            if type(entry.get(field, field == 'enabled')) is not bool:
-                raise ValueError('instances.'+field+' 必须为布尔值')
-        reuse = entry.get('reuse_legacy_state', False)
-        if reuse and (legacy or not cfg['target']['chat']):
-            raise ValueError('仅一个实例可 reuse_legacy_state，且须保留原 target.chat')
-        legacy |= reuse
-        override = entry.get('overrides', {})
-        if not isinstance(override, dict) or set(override)-OVERRIDES:
-            raise ValueError('instances.overrides 包含账号级或未知配置')
-        for section in OVERRIDES-{'system_prompt_file'}:
+    if os.environ.get('WX_GROUP'):
+        raise ValueError('WX_GROUP is retired; use instance/<id>/config.json chat')
+    directory = Path(path).resolve().parent/'instance'
+    if directory.is_symlink():
+        raise ValueError('unsafe_instance_directory')
+    files = sorted(directory.glob('*/config.json')) if directory.exists() else []
+    if len(files) > 16:
+        raise ValueError('too_many_instances')
+    result, ids, chats = [], set(), set()
+    for file in files:
+        identifier = file.parent.name
+        if file.is_symlink() or file.parent.is_symlink():
+            raise ValueError('unsafe_instance_config')
+        if not INSTANCE_ID.fullmatch(identifier) or identifier.lower() in ids:
+            raise ValueError('invalid_or_duplicate_instance_id:'+identifier)
+        ids.add(identifier.lower())
+        entry = json.loads(file.read_text(encoding='utf-8-sig'))
+        if not isinstance(entry, dict) or set(entry)-GROUP_FIELDS-{'chat', 'enabled'}:
+            raise ValueError('invalid_instance_fields:'+identifier)
+        enabled, chat = entry.get('enabled', True), entry.get('chat', '')
+        if type(enabled) is not bool or not isinstance(chat, str):
+            raise ValueError('invalid_instance_identity:'+identifier)
+        if (enabled and not CHAT_ID.fullmatch(chat)) or (chat and not CHAT_ID.fullmatch(chat)) or (chat and chat in chats):
+            raise ValueError('instance_chat_requires_unique_stable_id:'+identifier)
+        if chat:
+            chats.add(chat)
+        override = {k: copy.deepcopy(v) for k,v in entry.items() if k in GROUP_FIELDS}
+        for section in GROUP_FIELDS-{'system_prompt_file'}:
             if section in override and not isinstance(override[section], dict):
-                raise ValueError('instances.overrides.'+section+' 必须为对象')
-        for section, forbidden in (('target', {'chat'}), ('queue', {'file'}),
-                                   ('memory', {'directory'})):
-            if section in override and (not isinstance(override[section], dict) or set(override[section]) & forbidden):
-                raise ValueError('instances.overrides.'+section+' 不可覆盖共享资源或身份')
-        effective = deep_merge(base, override)
-        origins = {**cfg.get('_config_origins', {}),
-                   **field_origins(override, 'instance.'+identifier)}
+                raise ValueError('invalid_instance_section:'+identifier+'.'+section)
+        for section, forbidden in (('target', {'chat'}), ('queue', {'file'}), ('memory', {'directory'})):
+            if set(override.get(section, {})) & forbidden:
+                raise ValueError('instance_cannot_override_account_resource:'+identifier+'.'+section)
+        if 'system_prompt_file' in override and (not isinstance(override['system_prompt_file'], str) or not override['system_prompt_file'].strip()):
+            raise ValueError('invalid_system_prompt_file:'+identifier)
+        if 'system_prompt_file' in override:
+            override['system_prompt_file'] = str((file.parent/override['system_prompt_file']).resolve())
+        if 'system_prompt_file' in override.get('memory', {}):
+            override['memory']['system_prompt_file'] = str((file.parent/override['memory']['system_prompt_file']).resolve())
+        effective = deep_merge(cfg, override)
+        effective.pop('instances', None)
         effective['target']['chat'] = chat
-        if not reuse:
-            runtime = Path(cfg['queue']['file']).parent/'instances'/identifier
-            effective['queue']['file'] = str(runtime/'queue.sqlite3')
-            effective['state_file'] = str(runtime/'state.json')
-        effective = resolver(effective, path, environment=False, origins=origins)
+        runtime = Path(cfg['queue']['file']).parent/'instances'/identifier
+        effective['queue']['file'] = str(runtime/'queue.sqlite3')
+        effective['state_file'] = str(runtime/'state.json')
+        origins = {**cfg.get('_config_origins', {}), **field_origins(override, 'instance.'+identifier)}
+        effective = resolver(effective, file, environment=False, origins=origins, validate_role_models=enabled)
         effective['instances'] = []
         effective['_instance_id'] = identifier
-        result.append(dict(id=identifier, chat=chat, enabled=entry.get('enabled', True),
-                           reuse_legacy_state=reuse, config=effective))
-    if entries and not any(e['enabled'] for e in result):
-        raise ValueError('instances 至少启用一个实例')
+        effective['_instance_config_file'] = str(file.resolve())
+        result.append(dict(id=identifier, chat=chat, enabled=enabled, reuse_legacy_state=False, config=effective))
     return result
 
 

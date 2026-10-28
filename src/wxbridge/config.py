@@ -1,4 +1,4 @@
-"""配置加载与校验：config.defaults.json + config.json + .env + 环境变量。"""
+"""Account config and independently validated instance/<id>/config.json files."""
 from __future__ import annotations
 
 import json
@@ -30,18 +30,16 @@ DEFAULTS: dict[str, Any] = _load_defaults(DEFAULTS_FILE)
 
 def load_config(path: str | Path = "config.json") -> dict[str, Any]:
     p = Path(path)
-    # API 凭据始终从源码根目录加载，不随 --config 或当前工作目录改变。
-    # Model credentials are loaded exclusively by provider.load_config().
-    data: dict[str, Any] = {}
-    if p.exists():
-        data = json.loads(p.read_text(encoding="utf-8"))
-    cfg = resolve_config(data, p)
-    from wxbridge.instances import compile_instances
-    cfg['instances'] = compile_instances(cfg, data.get('instances', []), p, resolver=resolve_config)
+    from wxbridge.instances import discover_instances, validate_account_fields
+    data = json.loads(p.read_text(encoding='utf-8-sig')) if p.exists() else {}
+    validate_account_fields(data)
+    cfg = resolve_config(data, p, validate_role_models=False)
+    cfg['system_prompt_file'] = str((PROJECT_ROOT/DEFAULTS['system_prompt_file']).resolve())
+    cfg['instances'] = discover_instances(cfg, p, resolver=resolve_config)
     return cfg
 
 
-def resolve_config(data: dict, path: str | Path, *, environment=True, origins=None) -> dict[str, Any]:
+def resolve_config(data: dict, path: str | Path, *, environment=True, origins=None, validate_role_models=True) -> dict[str, Any]:
     """Resolve one effective configuration without loading credentials again."""
     if not isinstance(data, dict):
         raise ValueError('配置必须为 JSON 对象')
@@ -104,8 +102,6 @@ def resolve_config(data: dict, path: str | Path, *, environment=True, origins=No
     # 环境变量覆盖常用项
     if environment and os.environ.get("WX_DB_DIR"):
         cfg["db_dir"] = os.environ["WX_DB_DIR"]
-    if environment and os.environ.get("WX_GROUP"):
-        cfg["target"]["chat"] = os.environ["WX_GROUP"]
 
     # 统一转成绝对路径（相对于配置文件所在目录）
     base = p.resolve().parent
@@ -134,7 +130,7 @@ def resolve_config(data: dict, path: str | Path, *, environment=True, origins=No
         raise ValueError("ui.send_confirm_timeout_seconds 必须大于 0")
     memory = cfg["memory"]
     directory = Path(memory["directory"]).expanduser()
-    cfg["memory"]["directory"] = str(directory if directory.is_absolute() else PROJECT_ROOT/directory)
+    cfg["memory"]["directory"] = str(directory if directory.is_absolute() else base/directory)
     if type(memory['enabled']) is not bool:
         raise ValueError('memory.enabled must be boolean')
     if not isinstance(memory['system_prompt_file'], str) or not memory['system_prompt_file'].strip():
@@ -205,7 +201,8 @@ def resolve_config(data: dict, path: str | Path, *, environment=True, origins=No
     if type(delay) not in (int, float) or not 1 <= delay <= 60:
         raise ValueError('queue.generation_retry_delay_seconds 必须为 1–60 秒')
     from wxbridge.ai.roles import validate_models
-    validate_models(cfg)
+    if validate_role_models:
+        validate_models(cfg)
     cfg['_config_origins'] = provenance
     return cfg
 

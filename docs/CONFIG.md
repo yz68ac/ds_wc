@@ -1,6 +1,6 @@
 # 配置
 
-配置由 config.defaults.json 与本机 config.json 合并；多群在 instances[].overrides 中覆盖。API 连接只在 provider 的 .env 中维护，参考 [provider 文档](../src/provider/README.md)。可通过 provider_env 指定绝对路径，或相对 config.json 的路径。
+根 config.json 只配置账号共享资源；各群读取同级 instance/<id>/config.json，缺省业务字段来自 config.defaults.json。API 连接只在 provider 的 .env 中维护，参考 [provider 文档](../src/provider/README.md)。可通过 provider_env 指定绝对路径，或相对 config.json 的路径。
 
 ## 模型
 
@@ -14,7 +14,7 @@ models.reply/memory/avatar/participation 分别填写 model 和 options。模型
 
 ## 提示词与群身份
 
-system_prompt_file 为群系统提示词文件，相对配置文件解析；每次准备请求时读取。默认是中性助手说明，无固定人设、昵称、短答长度或标点要求。各群可以覆盖此文件。target.bot_name 和 proactive.opportunities.address_names 仅用于群称呼与候选识别，真实 @ 使用微信账号元数据。
+system_prompt_file 为群系统提示词文件，相对该实例目录解析；每次准备请求时读取。默认是中性助手说明，无固定人设、昵称、短答长度或标点要求。各群可以覆盖此文件。target.bot_name 和 proactive.opportunities.address_names 仅用于群称呼与候选识别，真实 @ 使用微信账号元数据。
 
 记忆、关系、学习、头像分类及主动判断仍保留业务协议提示；memory.system_prompt_file 独立控制记忆整理。旧人格正文和本机临时模型试用覆盖已清除。
 
@@ -23,3 +23,5 @@ system_prompt_file 为群系统提示词文件，相对配置文件解析；每�
 同群三条模型通道独立串行，跨群并行。queue.max_pending 等仍控制业务接纳；没有账号级模型总并发额度。微信发送继续通过账号协调和确认队列。群 ID、队列文件、游标和已有业务数据不因本次迁移清空。
 
 配置改变后重建群实例；同一路径下的系统提示词在下次请求准备时重读。
+
+实例目录结构和启用方法见 [多群配置](MULTI_GROUP.md)，公开模板见 [实例模板](../examples/instance/README.md)。旧根 instances 列表与 overrides 不再加载。

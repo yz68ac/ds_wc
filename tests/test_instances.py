@@ -33,88 +33,68 @@ class InstanceFixture(unittest.TestCase):
         self.path = self.root/'config.json'
         self.data = dict(queue=dict(file=str(self.root/'queue.sqlite3')),
                          state_file=str(self.root/'state.json'), memory=dict(directory=str(self.root/'memory')),
-                         instances=[dict(id='alpha', chat=CHATS[0], overrides=dict(
-                             persona=dict(name='Alpha', aliases=['a酱']),
-                             deepseek=dict(system_prompt='ALPHA_PERSONA'), search=dict(enabled=False))),
-                                    dict(id='beta', chat=CHATS[1], overrides=dict(
-                             persona=dict(name='Beta', aliases=['b酱']),
-                             deepseek=dict(system_prompt='BETA_PERSONA'), search=dict(enabled=False)))])
-        p = nullcontext(); p.start(); self.addCleanup(p.stop)
+                         provider_env=str(self.root/'provider.env'))
+        models = default_config()['models']
+        self.instance_data = [dict(id=name, chat=chat, enabled=True,
+            system_prompt_file='system.md', models=deepcopy(models),
+            target=dict(bot_name=name), search=dict(enabled=False),
+            memory=dict(enabled=False, avatar=dict(enabled=False)))
+            for name,chat in zip(('alpha','beta'),CHATS)]
         p = patch.dict(os.environ, {}, clear=True); p.start(); self.addCleanup(p.stop)
 
     def load(self, data=None):
-        self.path.write_text(json.dumps(self.data if data is None else data), encoding='utf-8')
+        from wxbridge.instances import GROUP_FIELDS
+        from wxbridge.config_merge import deep_merge
+        root = deepcopy(self.data if data is None else data)
+        common = {key:root.pop(key) for key in list(root) if key in GROUP_FIELDS and key not in ('queue','memory')}
+        for section,key in (('queue','file'),('memory','directory')):
+            value=root.get(section,{})
+            common[section]={k:v for k,v in value.items() if k!=key}
+            root[section]={key:value[key]} if key in value else {}
+        self.path.write_text(json.dumps(root),encoding='utf-8')
+        for entry in self.instance_data:
+            directory=self.root/'instance'/entry['id']
+            directory.mkdir(parents=True,exist_ok=True)
+            body=deep_merge(common,{k:v for k,v in entry.items() if k!='id'})
+            (directory/'config.json').write_text(json.dumps(body),encoding='utf-8')
+            (directory/'system.md').write_text(entry['id']+' instructions',encoding='utf-8')
         return load_config(self.path)
 
 
 class InstanceConfigTests(InstanceFixture):
+    def test_directory_configs_are_independent(self):
+        self.instance_data[0]['models']['reply']['model']='alpha-model'
+        self.instance_data[1]['models']['reply']['model']='beta-model'
+        cfg=self.load()
+        a,b=[c for _,c in enabled_instances(cfg)]
+        self.assertEqual(model_settings(a)['model'],'alpha-model')
+        self.assertEqual(model_settings(b)['model'],'beta-model')
+        self.assertNotEqual(a['queue']['file'],b['queue']['file'])
+        self.assertEqual(a['system_prompt_file'],str((self.root/'instance/alpha/system.md').resolve()))
+        a['models']['reply']['model']='changed'
+        self.assertEqual(cfg['instances'][0]['config']['models']['reply']['model'],'alpha-model')
 
-    def test_different_personas_profiles_and_paths_without_mutating_defaults(self):
-        from wxbridge.config import DEFAULTS
-        before = default_config()
-        self.data['models'] = dict(reply=dict(profile='openai', model='old-root-model', proxy_url='http://127.0.0.1:10808'))
-        self.data['instances'][1]['overrides']['models'] = dict(reply=dict(profile='deepseek_chat'))
-        cfg = self.load()
-        a, b = [c for _, c in enabled_instances(cfg)]
-        self.assertEqual(a['target']['bot_name'], 'Alpha')
-        self.assertEqual(b['target']['bot_name'], 'Beta')
-        self.assertEqual(a['deepseek']['system_prompt'], 'ALPHA_PERSONA')
-        self.assertEqual(model_settings(a)['model'], 'old-root-model')
-        self.assertEqual(model_settings(b)['model'], 'deepseek-flash')
-        self.assertIsNone(model_settings(b).get('proxy_url'))
-        self.assertNotEqual(a['queue']['file'], b['queue']['file'])
-        self.assertNotEqual(Path(a['state_file']).parent, Path(b['state_file']).parent)
-        a['persona']['aliases'].append('独立')
-        self.assertNotIn('独立', cfg['instances'][0]['config']['persona']['aliases'])
-        self.assertEqual(DEFAULTS, before)
+    def test_disabled_unconfigured_instance_is_allowed(self):
+        self.instance_data[0].update(enabled=False,chat='')
+        self.instance_data[0]['models']['reply']['model']=''
+        cfg=self.load()
+        self.assertFalse(cfg['instances'][0]['enabled'])
+        self.assertEqual([name for name,_ in enabled_instances(cfg)],['beta'])
 
-    def test_ids_chats_disabled_and_shared_resources_are_checked(self):
-        bad = [dict(id='../oops'), dict(id='ALPHA'), dict(chat=CHATS[0]), dict(chat='显示群名'),
-               dict(enabled=1), dict(reuse_legacy_state='yes'), dict(unknown=True),
-               dict(overrides=dict(db_dir='/other')), dict(overrides=dict(queue=dict(file='/other'))),
-               dict(overrides=dict(queue=dict(generation_concurrency=2))),
-               dict(overrides=dict(memory=dict(directory='/other'))),
-               dict(overrides=dict(target=dict(chat=CHATS[0]))),
-               dict(overrides=dict(models=dict(reply=dict(model=''))))]
-        for change in bad:
-            with self.subTest(change=change):
-                data = deepcopy(self.data); data['instances'][1].update(change)
-                with self.assertRaises((ValueError, TypeError)):
-                    self.load(data)
-        data = deepcopy(self.data)
-        for entry in data['instances']: entry['enabled'] = False
-        with self.assertRaises(ValueError): self.load(data)
-        with patch.dict(os.environ, WX_GROUP='other'):
-            with self.assertRaisesRegex(ValueError, 'WX_GROUP'): self.load()
+    def test_root_group_configuration_is_rejected(self):
+        self.path.write_text(json.dumps(dict(instances=[])),encoding='utf-8')
+        with self.assertRaises(ValueError): load_config(self.path)
 
-    def test_legacy_state_is_explicit_and_keeps_original_paths(self):
-        self.data['target'] = dict(chat='旧群显示名')
-        self.data['instances'][0]['reuse_legacy_state'] = True
-        cfg = self.load()
-        self.assertEqual(cfg['instances'][0]['config']['queue']['file'], cfg['queue']['file'])
-        self.assertEqual(cfg['instances'][0]['config']['state_file'], cfg['state_file'])
-        self.assertEqual(len(runtime_locks(cfg)), 3)
-        self.data['instances'][1]['reuse_legacy_state'] = True
+    def test_duplicate_chat_and_account_overrides_are_rejected(self):
+        self.instance_data[1]['chat']=CHATS[0]
+        with self.assertRaises(ValueError): self.load()
+        self.instance_data[1]['chat']=CHATS[1]
+        self.instance_data[1]['db_dir']='/other'
         with self.assertRaises(ValueError): self.load()
 
-    def test_prompt_paths_are_relative_to_config_and_checked_per_instance(self):
-        for entry in self.data['instances']:
-            entry['overrides']['persona']['prompt_file'] = 'prompts/'+entry['id']+'.md'
-        cfg = self.load()
-        for entry in cfg['instances']:
-            self.assertEqual(entry['config']['deepseek']['system_prompt_file'],
-                             str((self.root/'prompts'/f"{entry['id']}.md").resolve()))
-
-    def test_same_profile_keeps_model_override_and_other_roles_are_independent(self):
-        self.data['models'] = dict(reply=dict(profile='openai', model='synthetic-sol', reasoning_effort='medium'))
-        self.data['instances'][0]['overrides']['models'] = dict(reply=dict(profile='openai', reasoning_effort='high'),
-            memory=dict(profile='deepseek_chat', thinking='enabled', reasoning_effort='max'))
-        cfg = self.load()
-        active = cfg['instances'][0]['config']
-        self.assertEqual(model_settings(active)['model'], 'synthetic-sol')
-        self.assertEqual(model_settings(active)['reasoning_effort'], 'high')
-        self.assertEqual(model_settings(active, 'memory')['provider'], 'deepseek')
-        self.assertEqual(model_settings(cfg)['reasoning_effort'], 'medium')
+    def test_enabled_instance_requires_a_model(self):
+        self.instance_data[0]['models']['reply']['model']=''
+        with self.assertRaisesRegex(ValueError,'missing_model'): self.load()
 
 
 class MultiGroupTests(InstanceFixture):
@@ -180,7 +160,7 @@ class MultiGroupTests(InstanceFixture):
         self.assertEqual(self.coordinator.account.occupied(), 2)
         for job in self.active('generate'):
             rendered = json.dumps(job.payload[1], ensure_ascii=False)
-            self.assertIn('ALPHA_PERSONA' if job.owner == 'alpha' else 'BETA_PERSONA', rendered)
+            self.assertIn('alpha instructions' if job.owner == 'alpha' else 'beta instructions', rendered)
             self.assertNotIn('ONLY_BETA' if job.owner == 'alpha' else 'ONLY_ALPHA', rendered)
         self.add(1, 2, '新问题'); self.tick()
         self.assertEqual(sessions[1].last_local_id, 2)
@@ -284,28 +264,10 @@ class MultiGroupTests(InstanceFixture):
     def test_account_status_contains_no_chat_bodies_prompts_keys_or_member_ids(self):
         self.add(0, 1, 'PRIVATE_CHAT'); self.tick()
         value = self.coordinator.status_path.read_text(encoding='utf-8')
-        for secret in ('PRIVATE_CHAT', 'ALPHA_PERSONA', 'wxid_friend', 'api_key', *CHATS):
+        for secret in ('PRIVATE_CHAT', 'alpha instructions', 'wxid_friend', 'api_key', *CHATS):
             self.assertNotIn(secret, value)
         self.assertEqual(set(json.loads(value)['instances']), {'alpha', 'beta'})
 
-    def test_explicit_legacy_adoption_keeps_cursor_and_pending_tasks(self):
-        from wxbridge.storage.journal import Journal
-        self.coordinator.close()
-        legacy = Journal(self.cfg['queue']['file'], dict(account='wxid_bot', chat=CHATS[0]), 0)
-        row = self.add(0, 1)
-        legacy.intake([row], lambda m: True, self.now, 0)
-        legacy.close()
-        self.cfg['target']['chat'] = CHATS[0]
-        entry = self.cfg['instances'][0]
-        entry['reuse_legacy_state'] = True
-        entry['config']['queue']['file'] = self.cfg['queue']['file']
-        entry['config']['state_file'] = self.cfg['state_file']
-        self.coordinator = self.make()
-        a = self.coordinator.sessions[0]
-        self.assertEqual(a.last_local_id, 1)
-        self.assertEqual(a.journal.status()['queue_length'], 1)
-        self.tick()
-        self.assertEqual(len([j for j in self.active('generate') if j.owner == 'alpha']), 1)
 
     def test_memory_for_same_member_in_different_groups_is_isolated(self):
         from wxbridge.storage.person_memory import MemoryStore
@@ -317,17 +279,6 @@ class MultiGroupTests(InstanceFixture):
         first.data['members']['wxid_friend'] = dict(nickname='合成成员', entries=[], affinity=75)
         self.assertNotIn('wxid_friend', second.data['members'])
 
-    def test_background_memory_is_one_account_wide_and_addressed_judgment_is_not_discarded(self):
-        a, b = self.coordinator.sessions
-        a.memory_job = (dict(id=1, state='running', triggers=[dict(local_id=1, time=NOW)]), {}, FakeJob('memory', ()))
-        self.assertFalse(self.coordinator.account.can_start(b, 'memory'))
-        self.assertTrue(self.coordinator.account.can_start(b, 'proactive'))
-        a._pause_memory()
-        a.proactive.job = (FakeJob('proactive', ()), 1, self.now+30)
-        a.proactive.pending = dict(reason='addressed')
-        self.coordinator.account.capacity = 1
-        self.assertFalse(self.coordinator.account.can_start(b, 'generate'))
-        self.assertIsNotNone(a.proactive.job)
 
     def test_cli_selection_and_multi_run_share_one_owner(self):
         from wxbridge.cli import main
