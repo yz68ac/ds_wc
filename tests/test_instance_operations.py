@@ -77,7 +77,7 @@ class InstanceOperationsTests(InstanceFixture):
         store.last_local_id.return_value = 20
         with patch('wxbridge.wechat.store.WeChatStore', return_value=store) as factory, \
              patch('wxbridge.native.sender.readiness'), \
-             patch('wechat_linux.runtime.memoryfs.require_memory_directory', side_effect=lambda p:Path(p).mkdir(parents=True, exist_ok=True, mode=0o700)):
+             patch('wxbridge.storage.memoryfs.require_memory_directory', side_effect=lambda p:Path(p).mkdir(parents=True, exist_ok=True, mode=0o700)):
             result = boot.probe()
         factory.assert_called_once()
         self.assertTrue(result['ready'])
@@ -118,7 +118,7 @@ class InstanceOperationsTests(InstanceFixture):
     def test_database_check_gets_exclusive_owner_before_creating_reader(self):
         from wxbridge.app.diagnostics import check
         from wechat_linux.errors import OwnerBusyError
-        with patch('wechat_linux.runtime.locking.instance_lock', side_effect=OwnerBusyError('database_owner_busy')), \
+        with patch('wxbridge.app.runtime.instance_lock', side_effect=OwnerBusyError('resource_busy')), \
              patch('wxbridge.app.diagnostics.WeChatStore') as store:
             with self.assertRaises(OwnerBusyError): check(self.cfg['instances'][0]['config'])
             store.assert_not_called()

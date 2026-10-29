@@ -24,7 +24,7 @@ def valid_id(value):
     return isinstance(value, str) and REQUEST_ID.fullmatch(value) is not None
 
 
-def validate(value, allowed, account):
+def validate(value):
     if not isinstance(value, dict) or set(value) != FIELDS or value.get('op') != 'download_image':
         raise ValueError('native_image_invalid_request')
     if (not valid_id(value['request_id']) or not isinstance(value['account'], str)
@@ -38,10 +38,6 @@ def validate(value, allowed, account):
             or int(sid) > 2**64-1 or type(value['timeout_seconds']) is not int
             or not 5 <= value['timeout_seconds'] <= 30):
         raise ValueError('native_image_invalid_request')
-    if value['chat_id'] not in allowed:
-        raise ValueError('native_image_chat_not_allowed')
-    if value['account'] != account:
-        raise ValueError('native_image_account_mismatch')
     return dict(value)
 
 

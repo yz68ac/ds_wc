@@ -160,9 +160,7 @@ def key_candidates(account, account_root, home):
             yield hashlib.md5((uid+name).encode()).hexdigest()[:16].encode("ascii"), int(uid)&255
 
 
-def read_local_image(binding, cfg=None, *, max_bytes=None):
-    settings = (cfg or {}).get("vision") or {}
-    max_bytes = int(settings.get("max_image_bytes", 8*1024*1024)) if max_bytes is None else max_bytes
+def read_local_image(binding, *, max_bytes=8*1024*1024):
     if type(max_bytes) is not int or not 1 <= max_bytes <= 8*1024*1024:
         raise MediaError('image_size_limit')
     root = Path(binding["account_root"]).resolve()

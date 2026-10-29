@@ -4,6 +4,7 @@ from model_support import default_config
 from contextlib import nullcontext
 
 import html
+from pathlib import Path
 import sqlite3
 import unittest
 from unittest.mock import Mock
@@ -13,6 +14,7 @@ from wxbridge.ai.context import ContextError
 from wxbridge.ai.prompts import build_prompt
 from wxbridge.wechat.references import parse_quoted_reply
 from wxbridge.wechat.store import WeChatStore
+from wxbridge.wechat.messages import display_message
 from synthetic import NOW, msg
 
 PACKED_REFERENCE = (57 << 32) | 49
@@ -32,7 +34,7 @@ def parse_message(xml, raw_type=PACKED_REFERENCE, mention="wxid_self"):
     row = {"local_id": 50, "local_type": raw_type, "create_time": NOW,
            "message_content": "wxid_friend:\n"+xml, "real_sender_id": 1,
            "source": f"<msgsource><atuserlist>{mention}</atuserlist></msgsource>"}
-    return store._parse_message("synthetic@chatroom", row, {}, {1: "wxid_friend"})
+    return display_message(store._parse_message("synthetic@chatroom", row, {}, {1: "wxid_friend"}))
 
 
 class ReferenceParsingTests(unittest.TestCase):

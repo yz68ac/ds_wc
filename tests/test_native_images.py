@@ -45,20 +45,20 @@ def binding():
 
 class ContractTests(unittest.TestCase):
     def test_bounded_uint64_and_strict_shape(self):
-        self.assertEqual(contract.validate(value(), [CHAT], ACCOUNT), value())
+        self.assertEqual(contract.validate(value()), value())
         for field, bad in [('server_id', '18446744073709551616'), ('server_id', '0'),
                            ('server_id', '01'), ('server_id', 123), ('timeout_seconds', True),
                            ('timeout_seconds', 31), ('sender', 'name\nprivate'), ('image_md5', 'bad')]:
             with self.subTest(field=field, bad=bad):
                 v=value();v[field]=bad
-                with self.assertRaises(ValueError):contract.validate(v, [CHAT], ACCOUNT)
+                with self.assertRaises(ValueError):contract.validate(v)
         for field in ('script', 'path', 'profile', 'api_key'):
             v=value();v[field]='untrusted-private'
-            with self.assertRaises(ValueError):contract.validate(v, [CHAT], ACCOUNT)
+            with self.assertRaises(ValueError):contract.validate(v)
 
     def test_chat_account_and_source_are_separate(self):
-        with self.assertRaisesRegex(ValueError, 'chat_not_allowed'):contract.validate(value(), ['other@chatroom'], ACCOUNT)
-        with self.assertRaisesRegex(ValueError, 'account_mismatch'):contract.validate(value(), [CHAT], 'wxid_other')
+        with self.assertRaisesRegex(ValueError, 'chat_not_allowed'):image_worker.authorize(value(), dict(allowed_chat_ids=['other@chatroom'], image_download=dict(expected_account=ACCOUNT)))
+        with self.assertRaisesRegex(ValueError, 'account_mismatch'):image_worker.authorize(value(), dict(allowed_chat_ids=[CHAT], image_download=dict(expected_account='wxid_other')))
 
     def test_native_completion_is_stricter_than_a_return_or_cdn_task(self):
         self.assertTrue(contract.completed(DONE))
@@ -72,7 +72,7 @@ class ContractTests(unittest.TestCase):
 
 class DownloaderTests(unittest.TestCase):
     def setUp(self):
-        self.client=NativeImageDownloader('/run/synthetic/helper.sock', [CHAT], ACCOUNT)
+        self.client=NativeImageDownloader('/run/synthetic/helper.sock', ACCOUNT)
         self.transport=patch('wechat_linux.native.image_download.request').start();self.addCleanup(patch.stopall)
         self.transport.return_value=deepcopy(COMPLETE)
         self.read=patch('wechat_linux.native.image_download.read_local_image').start()
@@ -286,19 +286,19 @@ class SessionAndAssetTests(unittest.TestCase):
         self.assertGreaterEqual(json.loads(p.stdout)['scenarios'],8)
 
     def test_native_backend_is_explicit_and_never_calls_desktop_or_resolves_title(self):
-        cfg=SessionConfig('/db','/keys','/run/synthetic/decrypted',(CHAT,),ACCOUNT)
+        cfg=SessionConfig('/db', '/keys', '/run/synthetic/decrypted', ACCOUNT)
         downloader=Mock();downloader.download.return_value='native-image'
         session=WeChatSession(cfg,image_downloader=downloader);session.store=Mock(self_wxid=ACCOUNT)
         session.store.image_binding.return_value=binding()
         with patch('wechat_linux.desktop.image_download.improve_image') as desktop:
-            self.assertEqual(session.fetch_image(CHAT,{},download=True,download_backend='native',request_id='image:one'),'native-image')
+            self.assertEqual(session.fetch_image(CHAT,{},download=True,request_id='image:one'),'native-image')
         desktop.assert_not_called();session.store.resolve_chat.assert_not_called()
         downloader.download.assert_called_once()
 
     def test_native_download_not_configured_has_no_automatic_fallback(self):
-        session=WeChatSession(SessionConfig('/db','/keys','/run/synthetic/decrypted',(CHAT,),ACCOUNT));session.store=Mock()
-        with self.assertRaisesRegex(Exception,'native_image_downloader_not_configured'):
-            session.fetch_image(CHAT,{},download=True,download_backend='native',request_id='image:one')
+        session=WeChatSession(SessionConfig('/db', '/keys', '/run/synthetic/decrypted', ACCOUNT));session.store=Mock()
+        with self.assertRaisesRegex(Exception,'image_downloader_not_configured'):
+            session.fetch_image(CHAT,{},download=True,request_id='image:one')
 
     def test_new_assets_and_api_import_without_bot_frida_gi_or_env(self):
         code="""

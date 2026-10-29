@@ -2,12 +2,20 @@
 from __future__ import annotations
 
 import copy
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 from wxbridge.app.bot import setup_logging
-from wechat_linux.runtime.locking import instance_lock
+from wechat_linux.runtime.locking import file_lock
 from wxbridge.instances import runtime_locks
+from wxbridge.storage.memoryfs import require_memory_directory
+
+
+@contextmanager
+def instance_lock(value):
+    require_memory_directory(str(Path(value).parent))
+    with file_lock(value):
+        yield
 
 
 def run_bot(cfg, *, once=False, echo=False):

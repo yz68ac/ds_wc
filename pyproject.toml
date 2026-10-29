@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wechat-linux-adapter"
-version = "0.1.0"
-description = "Local Linux WeChat message, media and confirmed-delivery adapter"
+version = "0.2.0"
+description = "Local Linux WeChat message, media and native submission adapter"
 readme = "docs/WECHAT_LIBRARY.md"
 requires-python = ">=3.11"
 classifiers = [

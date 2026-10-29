@@ -40,9 +40,28 @@
     {
       "rva": 118024400,
       "bytes": "41574156415453504889fb4c8b7f084d"
+    },
+    {
+      "rva": 89641728,
+      "bytes": "554157415641554154534881eca80100"
+    },
+    {
+      "rva": 72586896,
+      "bytes": "f607017501c3488b7f10e9a12afdffcc"
     }
   ],
   "version": "4.1.13.26",
   "arch": "x86_64",
-  "backend": "service_v1"
+  "backend": "service_v1",
+  "send_image": {
+    "factory_rva": 89641728,
+    "source_vtable_rva": 176820504,
+    "path_offset": 240,
+    "size_offset": 368,
+    "formats": [
+      "image/png",
+      "image/jpeg"
+    ],
+    "runtime_verified": false
+  }
 }

@@ -244,11 +244,11 @@ class JournalTests(unittest.TestCase):
         self.delivery.send(factory)
         kind,args=factory.call_args.args
         intent=self.journal.task(identifier)['intent']
-        self.assertEqual(kind,'native_send');self.assertEqual(args[3],'synthetic@chatroom')
-        self.assertEqual(intent['transport'],'native_service');self.assertEqual(args[4],intent['request_id'])
+        self.assertEqual(kind,'native_send');self.assertEqual(args[1],'synthetic@chatroom')
+        self.assertEqual(intent['transport'],'native_service');self.assertEqual(args[3],intent['request_id'])
         self.assertTrue(intent['request_id'].startswith('bot:'))
         self.journal.close();self.journal=self.open()
-        self.assertEqual(self.journal.task(identifier)['intent']['request_id'],args[4])
+        self.assertEqual(self.journal.task(identifier)['intent']['request_id'],args[3])
         delivery=DeliveryController(self.cfg,self.journal,self.store,'synthetic@chatroom','合成群')
         fresh=Mock();delivery.send(fresh);fresh.assert_not_called()
 
@@ -256,11 +256,11 @@ class JournalTests(unittest.TestCase):
         identifier=self.normal_task(['第一片😀[偷笑]','第二片\n中文'])
         job=Mock();job.poll.return_value=dict(ok=True,ui={'backend':'native_service','operation':{'submitted':True}})
         factory=Mock(return_value=job);self.delivery.send(factory)
-        first=factory.call_args.args[1][4];self.delivery.poll_result()
+        first=factory.call_args.args[1][3];self.delivery.poll_result()
         self.store.messages_after.return_value=[dict(local_id=3,sender='synthetic',type=1,text='第一片😀[偷笑]')]
         self.delivery.confirm();self.assertEqual(self.journal.task(identifier)['next_chunk'],1)
         self.delivery.send(factory)
-        second=factory.call_args.args[1][4]
+        second=factory.call_args.args[1][3]
         self.assertNotEqual(first,second);self.assertEqual(factory.call_args.args[1][2],'第二片\n中文')
         self.assertEqual(factory.call_count,2)
 
@@ -336,15 +336,15 @@ class SenderTests(unittest.TestCase):
     def test_service_submit_never_constructs_desktop_sender_even_with_a_draft(self):
         from wxbridge.native.sender import submit
         reply=dict(ok=True,ui=dict(backend='native_service',operation={'submitted':True},recipient_verified=True,chars=4,bytes=12))
-        with patch('wxbridge.wechat.ui.Sender',side_effect=AssertionError('desktop_used')) as desktop,patch('wxbridge.native.sender.request',return_value=reply) as ipc:
-            result=submit(self.cfg,'Display title unused','合成文字','filehelper','synthetic')
+        with patch('wxbridge.wechat.ui.Sender',side_effect=AssertionError('desktop_used')) as desktop,patch('wechat_linux.native.sender.request',return_value=reply) as ipc:
+            result=submit(self.cfg, 'filehelper', '合成文字', 'synthetic')
             self.assertEqual(result['backend'],'native_service');self.assertTrue(result['recipient_verified'])
             desktop.assert_not_called();self.assertEqual(ipc.call_args.args[1]['chat_id'],'filehelper')
 
     def test_ipc_failure_is_uncertain_and_does_not_fall_back(self):
         from wxbridge.native.sender import submit
-        with patch('wxbridge.wechat.ui.Sender',side_effect=AssertionError('desktop_used')) as desktop,patch('wxbridge.native.sender.request',side_effect=NativeError('native_service_unavailable')):
-            try:submit(self.cfg,'File Transfer','合成文字','filehelper','synthetic')
+        with patch('wxbridge.wechat.ui.Sender',side_effect=AssertionError('desktop_used')) as desktop,patch('wechat_linux.native.sender.request',side_effect=NativeError('native_service_unavailable')):
+            try:submit(self.cfg, 'filehelper', '合成文字', 'synthetic')
             except Exception as exc:self.assertIsNone(exc.metadata['submitted'])
             else:self.fail('should refuse uncertain submission')
             desktop.assert_not_called()
@@ -353,29 +353,27 @@ class SenderTests(unittest.TestCase):
         from wxbridge.native.sender import submit
         for change,target in [({'enabled':False},'filehelper'),({},'unlisted@chatroom')]:
             cfg=copy.deepcopy(self.cfg);cfg['native_api'].update(change)
-            with patch('wxbridge.native.sender.request') as ipc:
-                with self.assertRaises(Exception):submit(cfg,'unused','合成',target,'test')
+            with patch('wechat_linux.native.sender.request') as ipc:
+                with self.assertRaises(Exception):submit(cfg, target, '合成', 'test')
                 ipc.assert_not_called()
         cfg=copy.deepcopy(self.cfg);cfg['ui']['dry_run']=True
-        with patch('wxbridge.native.sender.request') as ipc:
-            with self.assertRaises(Exception):submit(cfg,'unused','合成','filehelper','test')
+        with patch('wechat_linux.native.sender.request') as ipc:
+            with self.assertRaises(Exception):submit(cfg, 'filehelper', '合成', 'test')
             ipc.assert_not_called()
 
     def test_old_helper_success_is_uncertain_and_does_not_fall_back(self):
         from wxbridge.native.sender import submit
         result=dict(ok=True,ui=dict(backend='native',operation={'submitted':True}))
-        with patch('wxbridge.wechat.ui.Sender',side_effect=AssertionError('desktop_used')) as desktop,patch('wxbridge.native.sender.request',return_value=result):
-            try:submit(self.cfg,'unused','合成','filehelper','test')
+        with patch('wxbridge.wechat.ui.Sender',side_effect=AssertionError('desktop_used')) as desktop,patch('wechat_linux.native.sender.request',return_value=result):
+            try:submit(self.cfg, 'filehelper', '合成', 'test')
             except Exception as exc:self.assertIsNone(exc.metadata['submitted'])
             else:self.fail('old helper must be rejected')
             desktop.assert_not_called()
 
-    def test_legacy_sender_cannot_silently_use_xdotool_in_service_mode(self):
-        from wxbridge.wechat.ui import Sender
-        sender=Sender.__new__(Sender);sender.backend='native_service';sender.dry_run=False
-        sender._send_xdotool=Mock()
-        with self.assertRaises(Exception):sender.send('unused','合成')
-        sender._send_xdotool.assert_not_called()
+    def test_desktop_sender_rejects_native_backend_at_construction(self):
+        from wechat_linux.desktop.ui import Sender
+        with self.assertRaisesRegex(Exception,'invalid_desktop_backend'):
+            Sender(dict(backend='native_service'))
 
 
 class HelperTests(unittest.TestCase):

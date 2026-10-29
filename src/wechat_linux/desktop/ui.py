@@ -291,7 +291,7 @@ class A11y:
                 "  1) 微信正在当前 DISPLAY 上运行；\n"
                 "  2) 已启用无障碍：gsettings set org.gnome.desktop.interface toolkit-accessibility true；\n"
                 "  3) 启动微信前设置 QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1；\n"
-                "  4) 可先运行 python3 -m wxbridge a11y dump --scope desktop 检查。"
+                "  4) 检查当前桌面的 AT-SPI 应用列表。"
             )
         return app
 
@@ -589,7 +589,7 @@ class A11y:
             errors.append(f"clipboard: {exc}")
         raise UIError("当前焦点输入失败：" + "；".join(errors))
 
-    def input_test(self, marker: str = "wxbridge-input-test") -> dict[str, Any]:
+    def input_test(self, marker: str = "wechat-input-test") -> dict[str, Any]:
         """在输入框里逐个测试输入方式（不会按回车发送）。"""
         app = self.require_app()
         x11 = X11(self.cfg)
@@ -904,21 +904,20 @@ class A11y:
 class Sender:
     """选择 AT-SPI 优先、xdotool 兜底的发送器。"""
 
-    def __init__(self, cfg: dict[str, Any]):
-        self.cfg = cfg
-        self.ui_cfg = cfg["ui"]
+    def __init__(self, ui_options: dict[str, Any]):
+        self.ui_cfg = dict(ui_options)
+        backend = self.ui_cfg.get('backend', 'auto')
+        if backend not in ('auto', 'atspi', 'xdotool'):
+            raise UIError('invalid_desktop_backend')
         self.x11 = X11(self.ui_cfg)
         self.a11y = A11y(self.ui_cfg)
         self.clipboard = Clipboard()
-        from wechat_linux.sending.transport import backend as configured_backend
-        backend = configured_backend(cfg)
         if backend == "atspi":
             self.backend = "atspi"
         elif backend == "xdotool":
             self.backend = "xdotool"
         else:
             self.backend = "atspi" if self.a11y.available else "xdotool"
-        self.dry_run = bool(self.ui_cfg.get("dry_run"))
 
     def status(self) -> dict[str, Any]:
         win = None
@@ -937,7 +936,6 @@ class Sender:
             "clipboard": self.clipboard.tool or None,
             "window_id": win,
             "window_error": win_error,
-            "dry_run": self.dry_run,
             "display": __import__("os").environ.get("DISPLAY", ""),
             "wayland": __import__("os").environ.get("WAYLAND_DISPLAY", ""),
         }
@@ -983,13 +981,7 @@ class Sender:
         self.x11.key(self.ui_cfg.get("paste_shortcut", "ctrl+v"))
         return "clipboard"
 
-    def send(self, chat: str, text: str) -> dict | None:
-        if self.backend=='native_service':
-            raise UIError('后台服务发送必须提供明确 chat_id 并经过队列',
-                          code='native_requires_service_worker',metadata={'submitted':False})
-        if self.dry_run:
-            print(f"[dry-run] 目标已指定，回复字符数={len(text)}；未发送", flush=True)
-            return
+    def send(self, chat: str, text: str) -> dict:
         if self.backend == "atspi":
             try:
                 self.a11y.select_chat(chat)

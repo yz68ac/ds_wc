@@ -21,7 +21,8 @@ from wxbridge.wechat.crypto import AES
 from model_support import ClientFixture, ModelError
 from wxbridge.ai.prompts import build_prompt
 from wxbridge.ai.images import MediaError, V1, V2, decode_dat, key_candidates, prepare_multimodal, read_local_image, validate_image
-from wxbridge.wechat.references import image_md5, local_image_cache_key, prompt_reference
+from wxbridge.wechat.references import image_md5, local_image_cache_key
+from wxbridge.ai.identity import prompt_reference
 from wxbridge.wechat.store import WeChatStore
 from synthetic import NOW, msg
 from test_references import parse_message, quoted_xml
@@ -96,7 +97,7 @@ class LocalImageTests(unittest.TestCase):
         key = hashlib.md5(b"123456wxid_synthetic").hexdigest()[:16].encode()
         self.assertIn((key, 123456&255), list(key_candidates("wxid_synthetic", self.root, self.home)))
         self.path.write_bytes(encrypted(png(), key=key, xor=123456&255))
-        data, info = read_local_image(self.binding, self.cfg)
+        data, info = read_local_image(self.binding, max_bytes=self.cfg['vision']['max_image_bytes'])
         self.assertEqual(data, png())
         self.assertEqual(info["quality"], "original")
         self.assertEqual(self.path.read_bytes()[:6], V2)
@@ -107,13 +108,13 @@ class LocalImageTests(unittest.TestCase):
         thumbnail = self.path.with_name("image_t.dat")
         thumbnail.write_bytes(png())
         self.binding["candidates"].append(dict(relative=str(thumbnail.relative_to(self.root)), quality="thumbnail"))
-        self.assertEqual(read_local_image(self.binding, self.cfg)[1]["quality"], "thumbnail")
+        self.assertEqual(read_local_image(self.binding, max_bytes=self.cfg['vision']['max_image_bytes'])[1]["quality"], "thumbnail")
 
     def test_wxgf_conversion_keeps_pixels_in_memory_and_reports_format(self):
         source = b"wxgf"+bytes(80)
         self.path.write_bytes(encrypted(source))
         with patch('wechat_linux.media.images.key_candidates',return_value=[(b'wrong-key-123456',77),(b'synthetic-key-16',77)]), patch('wxbridge.ai.wxgf.decode_wxgf',return_value=png()) as convert:
-            data,info = read_local_image(self.binding,self.cfg)
+            data,info = read_local_image(self.binding, max_bytes=self.cfg['vision']['max_image_bytes'])
         self.assertEqual(data,png())
         convert.assert_called_once_with(source,self.cfg['vision']['max_image_bytes'])
         self.assertTrue(info['converted'])
@@ -125,24 +126,24 @@ class LocalImageTests(unittest.TestCase):
         self.path.write_bytes(encrypted(b'wxgf'+bytes(80)))
         with patch('wechat_linux.media.images.key_candidates',return_value=[(b'synthetic-key-16',77),(b'wrong-key-123456',77)]), patch('wxbridge.ai.wxgf.decode_wxgf',side_effect=WxgfError('wxgf_decoder_unavailable')):
             with self.assertRaisesRegex(MediaError,'^wxgf_decoder_unavailable$'):
-                read_local_image(self.binding,self.cfg)
+                read_local_image(self.binding, max_bytes=self.cfg['vision']['max_image_bytes'])
             thumbnail = self.path.with_name('image_t.dat')
             thumbnail.write_bytes(png())
             self.binding['candidates'].append(dict(relative=str(thumbnail.relative_to(self.root)),quality='thumbnail'))
-            _,info=read_local_image(self.binding,self.cfg)
+            _,info=read_local_image(self.binding, max_bytes=self.cfg['vision']['max_image_bytes'])
         self.assertEqual(info['quality'],'thumbnail')
         self.assertEqual(info['fallback_errors'],[dict(quality='original',error='wxgf_decoder_unavailable')])
 
     def test_missing_oversized_and_escape_paths_fail_closed(self):
         with self.assertRaisesRegex(MediaError, "local_image_not_cached"):
-            read_local_image(self.binding, self.cfg)
+            read_local_image(self.binding, max_bytes=self.cfg['vision']['max_image_bytes'])
         self.path.write_bytes(b"0"*1200)
         self.cfg["vision"]["max_image_bytes"] = 100
         with self.assertRaisesRegex(MediaError, "image_size_limit"):
-            read_local_image(self.binding, self.cfg)
+            read_local_image(self.binding, max_bytes=self.cfg['vision']['max_image_bytes'])
         self.binding["candidates"][0]["relative"] = "../../outside.dat"
         with self.assertRaisesRegex(MediaError, "unsafe_image_path"):
-            read_local_image(self.binding, self.cfg)
+            read_local_image(self.binding, max_bytes=self.cfg['vision']['max_image_bytes'])
 
     def generation(self, refs=None):
         trigger = msg(10, NOW, "@ds 这怎么看")
@@ -292,7 +293,7 @@ class ImageBindingTests(unittest.TestCase):
         full = self.root/"msg/attach"/self.bucket/"2026-09/Img"/("b"*32+"_h.dat")
         full.parent.mkdir(parents=True)
         full.write_bytes(png())
-        _, info = read_local_image(self.store.image_binding(self.chat, reference), DEFAULTS)
+        _, info = read_local_image(self.store.image_binding(self.chat, reference), max_bytes=DEFAULTS['vision']['max_image_bytes'])
         self.assertEqual(info["quality"], "original")
 
     def test_indexless_preview_cache_is_bound_to_exact_group(self):
@@ -302,7 +303,7 @@ class ImageBindingTests(unittest.TestCase):
         preview.parent.mkdir(parents=True)
         preview.write_bytes(png())
         binding = self.store.image_binding(self.chat, reference)
-        self.assertEqual(read_local_image(binding, DEFAULTS)[1]["quality"], "preview")
+        self.assertEqual(read_local_image(binding, max_bytes=DEFAULTS['vision']['max_image_bytes'])[1]["quality"], "preview")
 
     def test_indexless_cache_cannot_replace_original_identity_checks(self):
         _, reference = self.indexless_source()
@@ -329,7 +330,7 @@ class ImageBindingTests(unittest.TestCase):
         own.write_bytes(png())
         binding = self.store.image_binding(self.chat, reference)
         with self.assertRaisesRegex(MediaError, "local_image_not_cached"):
-            read_local_image(binding, DEFAULTS)
+            read_local_image(binding, max_bytes=DEFAULTS['vision']['max_image_bytes'])
 
     def test_indexless_bad_month_and_unknown_source_key_fail_closed(self):
         _, reference = self.indexless_source(month="2026-13")
@@ -370,7 +371,7 @@ class ImageBindingTests(unittest.TestCase):
         self.assertFalse(any("/2026-10/" in c["relative"] for c in binding["candidates"]))
         forged = dict(binding, candidates=[dict(relative=str((alias/"Img"/thumbnail.name).relative_to(self.root)), quality="thumbnail")])
         with self.assertRaisesRegex(MediaError, "unsafe_image_path"):
-            read_local_image(forged, DEFAULTS)
+            read_local_image(forged, max_bytes=DEFAULTS['vision']['max_image_bytes'])
 
     def test_unproven_or_forged_cache_key_cannot_select_attachment(self):
         ref = dict(image_md5="c"*32, image_cache_key="b"*32)

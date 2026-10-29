@@ -1,6 +1,6 @@
 """Bot adapter for the model-independent local WeChat server."""
 import time
-from wechat_linux.native.protocol import NativeError, REQUEST_ID, settings, validate_send
+from wxbridge.native.protocol import NativeError, REQUEST_ID, settings, validate_send
 
 
 class BotNativeService:

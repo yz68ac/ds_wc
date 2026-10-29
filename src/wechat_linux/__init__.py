@@ -2,8 +2,8 @@
 from wechat_linux.models import DeliveryState,Image,Message,MessageBatch,SendReceipt
 from wechat_linux.errors import WeChatError,NativeError,OwnerBusyError,SendError,StoreError,MediaError,DependencyError,ImageDownloadError
 
-__version__='0.1.0'
-__all__=['WeChatSession','SessionConfig','NativeClient','NativeSender','DeliveryState','Image','Message',
+__version__='0.2.0'
+__all__=['WeChatSession','SessionConfig','NativeSender','DeliveryState','Image','Message',
          'MessageBatch','SendReceipt','WeChatError','NativeError','OwnerBusyError','SendError','StoreError','MediaError',
          'DependencyError','capabilities','NativeImageDownloader','ImageDownloadError','NativeOptions']
 
@@ -12,9 +12,6 @@ def __getattr__(name):
     if name in ('WeChatSession','SessionConfig'):
         from wechat_linux import session
         return getattr(session,name)
-    if name=='NativeClient':
-        from wechat_linux.native.client import NativeClient
-        return NativeClient
     if name=='NativeSender':
         from wechat_linux.native.sender import NativeSender
         return NativeSender

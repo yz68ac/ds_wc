@@ -1,6 +1,7 @@
 """Model-facing quoted-image prompt assembly; image operations belong to wechat_linux."""
 from __future__ import annotations
 import time
+from pathlib import Path
 from wechat_linux.media import images as _media
 from wechat_linux.media.images import (MediaError, V1, V2, HEX32, image_format, validate_image, decode_dat, key_candidates, read_local_image)
 
@@ -17,8 +18,9 @@ def _native_image(binding, cfg, account, deadline):
             raise ImageDownloadError('native_image_source_unverified', requested=False)
         if remaining < 5:
             raise ImageDownloadError('native_image_timeout', requested=False)
-        allowed = [c for c in options.get('allowed_chat_ids', []) if c.endswith('@chatroom')]
-        downloader = NativeImageDownloader(options['helper_socket'], allowed, account)
+        if source['chat_id'] not in options.get('allowed_chat_ids', []):
+            raise ImageDownloadError('native_image_chat_not_allowed', requested=False)
+        downloader = NativeImageDownloader(options['helper_socket'], account)
         image = downloader.download(binding, chat_id=source['chat_id'], request_id=intent['request_id'],
             resume_only=intent.get('resume_only', True), timeout=remaining,
             max_bytes=cfg['vision']['max_image_bytes'])
@@ -27,7 +29,7 @@ def _native_image(binding, cfg, account, deadline):
         # Never submit a new request, switch to desktop or mislabel a thumbnail
         # as clear. A source-bound existing image remains useful to the model.
         try:
-            data, info = _media.read_local_image(binding, cfg)
+            data, info = _media.read_local_image(binding, max_bytes=cfg['vision']['max_image_bytes'])
         except MediaError:
             raise exc
         safe = exc.code if exc.code in ERRORS else 'native_image_failed'
@@ -64,7 +66,7 @@ def prepare_multimodal(cfg, base_prompt, generation):
             else:
                 while True:
                     try:
-                        data, info = _media.read_local_image(binding, cfg)
+                        data, info = _media.read_local_image(binding, max_bytes=settings['max_image_bytes'])
                         break
                     except MediaError as exc:
                         if str(exc) not in ("local_image_not_cached", "local_image_pending", "invalid_encrypted_image", "invalid_image") or time.monotonic() >= deadline:
@@ -72,7 +74,8 @@ def prepare_multimodal(cfg, base_prompt, generation):
                         time.sleep(.2)
                 if settings.get('download_enabled', False) and info['quality'] in ('thumbnail', 'preview'):
                     from wechat_linux.desktop.image_download import improve_image
-                    data, info = improve_image(binding, cfg, data, info, download_deadline)
+                    data, info = improve_image(binding, cfg['ui'], data, info, download_deadline,
+                        runtime_dir=str(Path(cfg['queue']['file']).parent), max_bytes=settings['max_image_bytes'])
             quality = {"original": "本地原图", "cached": "本地微信缓存图（不保证原图）", "preview": "本地预览图", "thumbnail": "本地缩略图"}[info["quality"]]
             reference.update(available=True, text=f"{label}随本条请求附送，来源为{quality}。请直接观察；小字不可辨时请说明，不要补造。", image_label=label,
                              image_quality=info["quality"], image_width=info["width"], image_height=info["height"])

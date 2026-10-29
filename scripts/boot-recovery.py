@@ -147,7 +147,8 @@ def probe(keys=None, *, verify=False):
         for identifier, active_cfg, reuse in groups:
             chat, title = store.resolve_chat(active_cfg['target']['chat'])
             identity = dict(account=store.self_wxid, chat=chat)
-            if not identity['account'] or not chat.endswith('@chatroom'):
+            from wxbridge.instances import CHAT_ID
+            if not identity['account'] or not CHAT_ID.fullmatch(chat):
                 raise ValueError('wechat_account_not_ready')
             if identifier is not None and chat != active_cfg['target']['chat']:
                 raise ValueError('instance_chat_identity_mismatch')
@@ -169,7 +170,7 @@ def probe(keys=None, *, verify=False):
         if cursor_file.exists():
             state = restored_state(json.loads(cursor_file.read_text()), identity, maximum)
             if not verify and not queue_file.exists():
-                from wechat_linux.runtime.memoryfs import require_memory_directory
+                from wxbridge.storage.memoryfs import require_memory_directory
                 require_memory_directory(str(Path(active_cfg['state_file']).parent))
                 atomic_json(Path(active_cfg['state_file']), state)
         if queue_file.exists():

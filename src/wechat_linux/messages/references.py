@@ -37,7 +37,7 @@ def _appmsg(content):
 
 
 def image_md5(content):
-    """仅提取图片标识；CDN 地址、下载 AES key 和原 XML 不进入队列/提示词。"""
+    """Extract the image MD5 from a message snapshot."""
     if "<!DOCTYPE" in content.upper() or "<!ENTITY" in content.upper():
         return ""
     try:
@@ -112,7 +112,7 @@ def local_image_cache_key(packed):
 
 def _reference(node, depth):
     if node is None:
-        return dict(kind="missing", available=False, text="", reason="引用记录缺失")
+        return dict(kind="missing", available=False, text="", reason="reference_missing")
     kind = _number(_text(node, "type"))
     base = kind & 0xFFFFFFFF
     from_user, chat_user = _text(node, "fromusr"), _text(node, "chatusr")
@@ -120,14 +120,14 @@ def _reference(node, depth):
     chat_id = next((value for value in (from_user, chat_user) if value.endswith("@chatroom")), "")
     sender = (chat_user if chat_user and not chat_user.endswith("@chatroom") else "") if from_user.endswith("@chatroom") else from_user
     content = _text(node, "content")
-    result = dict(type=base, sender=sender, sender_name=_text(node, "displayname") or sender or "未知作者",
+    result = dict(type=base, sender=sender, sender_name=_text(node, "displayname") or sender,
                   time=_number(_text(node, "createtime")) or None, server_id=_text(node, "svrid"), chat_id=chat_id)
     if base == 1:
         if sender and content.startswith(sender + ":\n"):
             content = content[len(sender)+2:]
         result.update(kind="text", available=bool(content.strip()), text=content)
         if not content.strip():
-            result["reason"] = "引用文字为空"
+            result["reason"] = "reference_text_empty"
         return result
     if base == 3:
         field = _child(node, "content")
@@ -135,7 +135,7 @@ def _reference(node, depth):
             content = "".join(ET.tostring(child, encoding="unicode") for child in field)
         decoded = html.unescape(content) if content.lstrip().startswith("&lt;") else content
         result.update(kind="image", available=False, text="", image_md5=image_md5(decoded),
-                      reason="尚未读取被引用的本地图片")
+                      reason="reference_image_not_loaded")
         return result
     if base == 49:
         field = _child(node, "content")
@@ -150,18 +150,18 @@ def _reference(node, depth):
             if subtype == 57:
                 result.update(kind="quoted_text", text=title, available=bool(title.strip()))
                 result["reference"] = (_reference(_child(app, "refermsg"), depth+1) if depth < 3
-                                       else dict(kind="unavailable", available=False, text="", reason="更深层引用未展开"))
+                                       else dict(kind="unavailable", available=False, text="", reason="reference_depth_limit"))
                 return result
             if subtype == 5:
                 # 链接快照中的标题/摘要/URL；不声称已读取网页全文。
                 snapshot = {key: _text(app, key) for key in ("title", "des", "url")}
                 result.update(kind="link", available=any(snapshot.values()),
-                              text="\n".join(value for value in snapshot.values() if value),
-                              reason="仅有链接标题、摘要和地址，未抓取网页正文")
+                              text="", title=snapshot['title'], description=snapshot['des'], url=snapshot['url'],
+                              reason="reference_link_snapshot")
                 return result
     labels = {3: "image", 34: "voice", 43: "video", 47: "sticker", 49: "attachment"}
     result.update(kind=labels.get(base, "unsupported"), available=False, text="",
-                  reason="引用快照不含可读正文；未下载媒体或执行识别")
+                  reason="reference_content_unavailable")
     return result
 
 
@@ -173,13 +173,3 @@ def parse_quoted_reply(content: str, raw_type: int):
     if app is None or _number(_text(app, "type")) != 57:
         return None
     return _text(app, "title"), _reference(_child(app, "refermsg"), 0)
-
-
-def prompt_reference(reference):
-    """给模型的显示字段；不传内部账号、server_id 或原始 XML。"""
-    fields = ("kind", "type", "sender_name", "time", "available", "text", "reason",
-              "image_label", "image_quality", "image_width", "image_height")
-    result = {key: reference[key] for key in fields if key in reference}
-    if isinstance(reference.get("reference"), dict):
-        result["reference"] = prompt_reference(reference["reference"])
-    return result

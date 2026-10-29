@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 from wxbridge.wechat.pats import parse_pat, is_pat
 from wxbridge.wechat.store import WeChatStore
+from wxbridge.wechat.messages import display_message
 from wxbridge.ai.memory import snapshot, extract
 from wxbridge.ai.prompts import build_prompt
 from wxbridge.config import DEFAULTS, _deep_merge, load_config
@@ -37,7 +38,7 @@ def parsed(identifier=1, *, actor="wxid_friend", target="wxid_self", chat=CHAT, 
     row = dict(local_id=identifier, local_type=raw_type, create_time=sent, real_sender_id=1,
                message_content=pat_xml(actor, target, chat) if xml is None else xml,
                source="<msgsource><atuserlist>wxid_self</atuserlist></msgsource>")
-    return store._parse_message(CHAT, row, {}, {1: "wxid_outer", 2: "wxid_friend", 3: "wxid_self", 4: "wxid_other"})
+    return display_message(store._parse_message(CHAT, row, {}, {1: "wxid_outer", 2: "wxid_friend", 3: "wxid_self", 4: "wxid_other"}))
 
 
 class PatTests(unittest.TestCase):

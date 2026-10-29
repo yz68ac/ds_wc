@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 
-from wechat_linux.storage.store import WeChatStore
+from wxbridge.wechat.store import WeChatStore
 from wxbridge.instances import queue_candidates
 
 

@@ -150,7 +150,7 @@ def _check_permissions() -> None:
         pass
     raise SystemExit(
         "读取微信进程内存需要 root 或 CAP_SYS_PTRACE。\n"
-        "请用：sudo python3 -m wxbridge scan-keys\n"
+        "需要 root 或 CAP_SYS_PTRACE 权限\n"
         "如果仍然失败，临时执行：sudo sysctl kernel.yama.ptrace_scope=0"
     )
 

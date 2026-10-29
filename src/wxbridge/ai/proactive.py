@@ -1,4 +1,4 @@
-"""主动接话：非思考判断，通过后独立用回复角色生成；不操作数据库或微信。"""
+"""主动接话：参与判断通过后独立用回复角色生成；不操作数据库或微信。"""
 from __future__ import annotations
 
 import json
@@ -45,6 +45,9 @@ def address_names(cfg):
 
 def addresses_bot(message, cfg, account, *, include_reference=True):
     """只用于候选筛选；称呼不等同真实@，是否开口仍由模型判断。"""
+    chat = cfg['target']['chat']
+    if chat.startswith('wxid_') and message.get('sender') == chat and chat != account:
+        return True
     mentioned = message.get('mentioned_users') or []
     if mentioned and account not in mentioned:
         return False
@@ -78,7 +81,8 @@ def build_prompt(cfg, rows, title, memory=None, *, opportunity=None, account='')
         if isinstance(m.get('reference'), dict):
             item['reference'] = reference_data(m['reference'], labels, account)
         messages.append(item)
-    value = dict(chat=title, messages=messages)
+    private = cfg['target']['chat'].startswith('wxid_')
+    value = dict(chat=title, messages=messages, chat_type='private' if private else 'group')
     if opportunity:
         value['opportunity'] = {**opportunity, 'response_path':
             'full_reply' if opportunity.get('reason') == 'addressed' else 'short_reply'}
@@ -113,8 +117,12 @@ def build_prompt(cfg, rows, title, memory=None, *, opportunity=None, account='')
         'reply_to必须选择opportunity.source_ids中的一条新成员消息，不能选择BOT、旧消息或虚构id。'
         '不要text字段、理由、Markdown或内部推理。'
     )
+    if private:
+        rules += ('本轮是与单个用户的微信私聊，对方的新消息默认是向你说的，不需要@或叫出名字。'
+                  '不要套用群聊人数、入场或插话门槛；结合上下文判断是否需要回应，仍可对无需回应的消息保持沉默。')
     return PromptComposer.instructions([
-        dict(role='system', content='你负责判断微信群成员是否适合介入当前对话。'),
+        dict(role='system', content='你负责判断是否回应微信私聊中的新消息。' if private
+             else '你负责判断微信群成员是否适合介入当前对话。'),
         dict(role='user', content=user)], 'participation_judgment', rules)
 
 

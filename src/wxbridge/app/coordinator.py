@@ -8,7 +8,7 @@ from contextlib import ExitStack
 from pathlib import Path
 import time
 
-from wechat_linux.native.protocol import settings as native_settings
+from wxbridge.native.protocol import settings as native_settings
 from wechat_linux.storage.store import StoreError
 from wxbridge.app.account import AccountRuntime
 from wxbridge.app.bot import GroupSession
@@ -55,7 +55,7 @@ class Coordinator:
                 self.sessions.append(session)
             options = native_settings(cfg)
             if options['enabled'] and not cfg['ui'].get('dry_run'):
-                from wechat_linux.transport.server import NativeServer
+                from wxbridge.native.server import NativeServer
                 from wxbridge.app.native_gateway import AccountNativeService
                 self.native_api = NativeServer(options, AccountNativeService(self, options))
         except BaseException:

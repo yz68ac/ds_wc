@@ -52,11 +52,11 @@ def _work(connection, kind, payload):
                     prompt, vision = prepare_multimodal(*payload)
                     result = dict(prompt=prompt, vision=vision)
                 elif kind == "send":
-                    from wechat_linux.desktop.ui import Sender
+                    from wxbridge.wechat.ui import Sender
                     cfg, chat, text = payload
                     result = {"ui": Sender(cfg).send(chat, text)}
                 elif kind == 'native_send':
-                    from wechat_linux.native.sender import submit
+                    from wxbridge.native.sender import submit
                     result = {'ui': submit(*payload)}
                 else:
                     raise ValueError("unknown_worker_kind")

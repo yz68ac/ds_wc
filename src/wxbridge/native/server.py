@@ -10,8 +10,8 @@ import stat
 import struct
 import time
 
-from wechat_linux.native.protocol import MAX_FRAME, REQUEST_ID, NativeError, decode, encode, settings, validate_send
-from wechat_linux.runtime.memoryfs import require_memory_directory
+from wxbridge.native.protocol import MAX_FRAME, REQUEST_ID, NativeError, decode, encode, settings, validate_send
+from wxbridge.storage.memoryfs import require_memory_directory
 
 
 class NativeServer:

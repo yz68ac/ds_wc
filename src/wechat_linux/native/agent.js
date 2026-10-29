@@ -1,10 +1,16 @@
 // Fixed-version explicit-recipient service sender. No UI access, hooks or heap scan.
 const base=Process.mainModule.base;
-if(Process.id!==CONFIG.pid||Process.mainModule.path!=='/opt/wechat/wechat'||PROFILE.backend!=='service_v1')throw Error('native_profile_mismatch');
+if(Process.arch!=='x64'||Process.pointerSize!==8||Process.id!==CONFIG.pid||Process.mainModule.path!=='/opt/wechat/wechat'||PROFILE.backend!=='service_v1')throw Error('native_profile_mismatch');
 if(!/^(filehelper|wxid_[A-Za-z0-9_-]{1,120}|[A-Za-z0-9_-]{1,128}@chatroom)$/.test(CONFIG.chat_id))throw Error('native_invalid_request');
+const imageSend=CONFIG.op==='send_image';
 let byteLength=0;
-for(const ch of CONFIG.text){const c=ch.codePointAt(0);byteLength+=c<128?1:c<2048?2:c<65536?3:4;}
-if(byteLength!==CONFIG.byte_length||byteLength<1||byteLength>4096||CONFIG.text.includes('\0'))throw Error('native_invalid_request');
+if(imageSend){
+  if(!PROFILE.send_image||typeof CONFIG.image_path!=='string'||!CONFIG.image_path.startsWith('/')||CONFIG.image_path.includes('\0')||!Number.isInteger(CONFIG.byte_length)||CONFIG.byte_length<1||CONFIG.byte_length>8388608)throw Error('native_invalid_request');
+}else{
+  if(typeof CONFIG.text!=='string')throw Error('native_invalid_request');
+  for(const ch of CONFIG.text){const c=ch.codePointAt(0);byteLength+=c<128?1:c<2048?2:c<65536?3:4;}
+  if(byteLength!==CONFIG.byte_length||byteLength<1||byteLength>4096||CONFIG.text.includes('\0'))throw Error('native_invalid_request');
+}
 for(const f of PROFILE.functions){
   const got=Array.from(new Uint8Array(base.add(f.rva).readByteArray(16))).map(x=>x.toString(16).padStart(2,'0')).join('');
   if(got!==f.bytes)throw Error('native_profile_mismatch');
@@ -21,6 +27,7 @@ const batch=native(0x7067550,'pointer',['pointer','pointer','pointer','int']);
 const location=native(0x4540610,'void',['pointer','pointer','pointer','int','pointer']);
 const subscribe=native(0x4709f00,'pointer',['pointer','pointer','pointer','pointer','pointer','pointer']);
 const destroySubscription=native(0x45cefc0,'void',['pointer']);
+const destroyString=native(0x4539690,'void',['pointer']);
 function zero(n){const p=Memory.alloc(n);p.writeByteArray(new Uint8Array(n));return p;}
 function cxx(p){const f=p.readU8(),n=(f&1)?p.add(8).readU64().toNumber():f>>>1;if(n>4096)throw Error('invalid_string');return {n,p:(f&1)?p.add(16).readPointer():p.add(1)};}
 function string(p){const s=cxx(p);return s.p.readUtf8String(s.n);}
@@ -46,11 +53,25 @@ function execute(){
   let pair=null,task=null,taskReady=false,sub=null,subReady=false;
   try{
     state.stage='checking';const svc=services();state.registry_count=svc.count;
-    const block=alloc(0x610);construct(block);
-    pair=zero(16);const src=block.add(24);pair.writePointer(src);pair.add(8).writePointer(block);
-    if(!src.readPointer().equals(base.add(0xa8a10c8)))throw Error('source_vtable');
-    src.add(0xe4).writeU32(1);put(src.add(0x90),CONFIG.chat_id);put(src.add(0x5c8),CONFIG.text);
-    if(string(src.add(0x90))!==CONFIG.chat_id||string(src.add(0x5c8))!==CONFIG.text||!cxx(src.add(0x580)).n)throw Error('source_fields');
+    pair=zero(16);let src,block;
+    if(imageSend){
+      const inputPath=zero(24),extra=zero(24);
+      try{
+        put(inputPath,CONFIG.image_path);
+        native(PROFILE.send_image.factory_rva,'pointer',['pointer','int','pointer','pointer'])(pair,3,inputPath,extra);
+      }finally{destroyString(inputPath);}
+      src=pair.readPointer();block=pair.add(8).readPointer();
+      if(src.isNull()||block.isNull()||!src.readPointer().equals(base.add(PROFILE.send_image.source_vtable_rva))||src.add(0xe4).readU32()!==3)throw Error('image_source_fields');
+      if(string(src.add(PROFILE.send_image.path_offset))!==CONFIG.image_path||src.add(PROFILE.send_image.size_offset).readU64().toNumber()!==CONFIG.byte_length)throw Error('image_source_fields');
+      put(src.add(0x90),CONFIG.chat_id);state.image_source_verified=true;state.message_type=3;
+    }else{
+      block=alloc(0x610);construct(block);
+      src=block.add(24);pair.writePointer(src);pair.add(8).writePointer(block);
+      if(!src.readPointer().equals(base.add(0xa8a10c8)))throw Error('source_vtable');
+      src.add(0xe4).writeU32(1);put(src.add(0x90),CONFIG.chat_id);put(src.add(0x5c8),CONFIG.text);
+      if(string(src.add(0x5c8))!==CONFIG.text)throw Error('source_fields');
+    }
+    if(string(src.add(0x90))!==CONFIG.chat_id||!cxx(src.add(0x580)).n)throw Error('source_fields');
     const vec=zero(24);vec.writePointer(pair);vec.add(8).writePointer(pair.add(16));vec.add(16).writePointer(pair.add(16));
     task=zero(80);batch(task,svc.batch,vec,1);taskReady=true;
     const callable=task.add(32).readPointer();
@@ -70,7 +91,7 @@ function execute(){
       subscribe(sub,task,success,failure,done,loc);subReady=true;
       state.stage='returned_unconfirmed';
     }
-  }catch(e){state.error=['registry_bounds','registry_cycle','duplicate_service','services_not_found','source_vtable','source_fields','task_vtable','task_sources','send_guard'].includes(e.message)?e.message:'native_operation_error';state.stage='error';}
+  }catch(e){state.error=['registry_bounds','registry_cycle','duplicate_service','services_not_found','source_vtable','source_fields','image_source_fields','task_vtable','task_sources','send_guard'].includes(e.message)?e.message:'native_operation_error';state.stage='error';}
   finally{
     try {
     if(subReady)destroySubscription(sub);

@@ -27,6 +27,11 @@ for name in ('agent.js', 'profile.json', 'image_agent.js', 'image_adapter.c', 'i
     assert assets.joinpath(name).read_bytes(), name
 assert capabilities()['native_profiles']
 assert 'bot_integrated' not in capabilities()['native_image_download']
+assert 'allowed_chats' not in SessionConfig.__dataclass_fields__
+assert 'allowed_chats' not in NativeOptions.__dataclass_fields__
+assert not hasattr(wechat_linux, 'NativeClient')
+assert hasattr(NativeSender, 'submit_image')
+assert hasattr(WeChatSession, 'send_image')
 print('OK: isolated SDK imports and native resources')
 '''
 

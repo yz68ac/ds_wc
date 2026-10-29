@@ -119,7 +119,7 @@ class MultiGroupTests(InstanceFixture):
         self.store.messages_in_window.side_effect = lambda chat, start, end: [m for m in self.rows[chat] if start <= m['time'] <= end]
         for target, opts in [('wxbridge.storage.journal.checked_path', dict(side_effect=lambda v, **kw: Path(v))),
                              ('wxbridge.app.bot.time.time', dict(side_effect=lambda: self.now)),
-                             ('wechat_linux.transport.server.NativeServer', {})]:
+                             ('wxbridge.native.server.NativeServer', {})]:
             p = patch(target, **opts); p.start(); self.addCleanup(p.stop)
         self.coordinator = self.make()
         self.addCleanup(lambda: self.coordinator.close())
@@ -185,7 +185,7 @@ class MultiGroupTests(InstanceFixture):
         self.assertEqual(len(sends), 1)
         owner = sends[0].owner
         index = 0 if owner == 'alpha' else 1
-        self.assertEqual(sends[0].payload[3], CHATS[index])
+        self.assertEqual(sends[0].payload[1], CHATS[index])
         self.add(1-index, 2, '相同回复', sender='wxid_bot', mention=False)
         sends[0].result = dict(ok=True, ui={})
         self.tick()

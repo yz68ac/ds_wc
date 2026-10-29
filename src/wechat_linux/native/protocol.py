@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import socket
 import struct
 
 MAX_FRAME = 32768
+MAX_IMAGE_BYTES = 8 * 1024 * 1024
 REQUEST_ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,95}\Z')
 CHAT_ID = re.compile(r'(?:filehelper|wxid_[A-Za-z0-9_-]{1,120}|[A-Za-z0-9_-]{1,128}@chatroom)\Z')
 
@@ -50,25 +52,29 @@ def validate_send(value, max_bytes=4096):
     return dict(value)
 
 
-def settings(cfg):
-    data = cfg.get('native_api') or {}
-    if not data:
-        return {'enabled': False}
-    required = {'enabled', 'socket', 'helper_socket', 'allowed_chat_ids', 'max_text_bytes', 'max_pending', 'max_requests'}
-    if not isinstance(data, dict) or set(data) != required or type(data['enabled']) is not bool:
-        raise NativeError('invalid_native_config')
-    for key in ('socket', 'helper_socket'):
-        if not isinstance(data[key], str) or not data[key].startswith('/') or len(data[key].encode()) > 100:
-            raise NativeError('invalid_native_socket')
-    if data['socket'] == data['helper_socket']:
-        raise NativeError('invalid_native_socket')
-    ids = data['allowed_chat_ids']
-    if not isinstance(ids, list) or not ids or len(ids)>16 or any(not isinstance(x,str) or not CHAT_ID.fullmatch(x) for x in ids):
-        raise NativeError('invalid_native_allowlist')
-    for key, minimum, maximum in [('max_text_bytes',1,4096),('max_pending',1,32),('max_requests',1,4096)]:
-        if type(data[key]) is not int or not minimum <= data[key] <= maximum:
-            raise NativeError('invalid_native_limit')
-    return dict(data)
+def validate_send_image(value):
+    fields = {'op', 'request_id', 'chat_id', 'image_path', 'image_bytes', 'image_sha256', 'image_mime'}
+    if not isinstance(value, dict) or set(value) != fields or value['op'] != 'send_image':
+        raise NativeError('invalid_request', submitted=False)
+    if not isinstance(value['request_id'], str) or not REQUEST_ID.fullmatch(value['request_id']):
+        raise NativeError('invalid_request_id', submitted=False)
+    if not isinstance(value['chat_id'], str) or not CHAT_ID.fullmatch(value['chat_id']):
+        raise NativeError('invalid_chat_id', submitted=False)
+    path = value['image_path']
+    try:
+        valid_path = (isinstance(path, str) and path.startswith('/') and '\0' not in path
+                      and len(path.encode('utf-8')) <= 4096 and os.path.normpath(path) == path)
+    except UnicodeError:
+        valid_path = False
+    if not valid_path:
+        raise NativeError('invalid_image_path', submitted=False)
+    if type(value['image_bytes']) is not int or not 1 <= value['image_bytes'] <= MAX_IMAGE_BYTES:
+        raise NativeError('image_size_limit', submitted=False)
+    if not isinstance(value['image_sha256'], str) or not re.fullmatch(r'[0-9a-f]{64}', value['image_sha256']):
+        raise NativeError('invalid_image_digest', submitted=False)
+    if value['image_mime'] not in ('image/png', 'image/jpeg'):
+        raise NativeError('unsupported_image_format', submitted=False)
+    return dict(value)
 
 
 def encode(value):
@@ -123,20 +129,3 @@ def request(path, value, timeout=5, *, peer_uid=None):
             return receive(stream)
     except (OSError, TimeoutError):
         raise NativeError('native_service_unavailable',submitted=None if may_have_submitted else False) from None
-
-
-def task_status(task):
-    if task.get('external_error'):
-        state = 'failed'
-    elif task['phase'] == 'done':
-        state = 'confirmed'
-    elif task.get('blocked_reason'):
-        state = 'blocked'
-    elif task.get('intent'):
-        state = 'confirming'
-    else:
-        state = 'queued'
-    return dict(request_id=task['external_request_id'], task_id=task['id'], state=state,
-                ack_ids=task.get('external_ack_ids', []), error=task.get('external_error') or
-                ('send_confirmation_timeout' if task.get('blocked_reason') else ''),
-                accepted_at=task['accepted_at'], completed_at=task.get('completed_at'))

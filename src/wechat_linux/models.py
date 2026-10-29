@@ -20,13 +20,20 @@ class Message:
     mentioned_users: tuple[str, ...] | None = None
     reference: dict | None = field(default=None, repr=False)
     raw: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
+    raw_type: int = 0
+    message_kind: str = ''
+    pat: dict | None = field(default=None, repr=False)
+    image_md5: str = ''
+    image_cache_key: str = ''
 
     @classmethod
     def from_mapping(cls, chat_id, value):
         mentions=value.get('mentioned_users')
         return cls(chat_id,value['local_id'],str(value.get('server_id') or ''),value.get('sender',''),
                    value.get('sender_name',''),value.get('type',0),value.get('time',0),value.get('text',''),
-                   tuple(mentions) if mentions is not None else None,deepcopy(value.get('reference')),deepcopy(value))
+                   tuple(mentions) if mentions is not None else None,deepcopy(value.get('reference')),deepcopy(value),
+                   value.get('raw_type',value.get('type',0)),value.get('message_kind',''),
+                   deepcopy(value.get('pat')),value.get('image_md5',''),value.get('image_cache_key',''))
 
 
 @dataclass(frozen=True)
@@ -49,6 +56,7 @@ class SendReceipt:
     state: DeliveryState
     ack_id: int | None = None
     error: str = ''
+    metadata: dict = field(default_factory=dict, repr=False, compare=False)
 
 
 @dataclass(frozen=True)

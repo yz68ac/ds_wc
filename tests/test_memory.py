@@ -206,9 +206,9 @@ class MemoryTests(unittest.TestCase):
         self.cfg["queue"]["file"] = str(Path(self.temp.name)/"queue.sqlite3")
         self.cfg["decrypted_dir"] = str(Path(self.temp.name)/"decrypted")
         Path(self.cfg["decrypted_dir"]).mkdir(mode=0o700)
-        with patch("wechat_linux.runtime.locking.require_memory_directory"):
+        with patch("wxbridge.app.runtime.require_memory_directory"):
             with instance_lock(self.cfg["queue"]["file"]+".lock"):
-                with self.assertRaisesRegex(ValueError, "database_owner_busy"):
+                with self.assertRaisesRegex(ValueError, "resource_busy"):
                     memory_command(self.cfg, Namespace(action="clear"))
         os.chmod(self.memory.path, 0o644)
         with self.assertRaisesRegex(ValueError, "memory_file_permissions"):

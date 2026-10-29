@@ -38,11 +38,11 @@ def unique_match(candidates):
 
 
 @contextmanager
-def download_lock(cfg, deadline, *, runtime_dir=None):
+def download_lock(runtime_dir, deadline):
     import fcntl
-    from wechat_linux.runtime.memoryfs import require_memory_directory
-    path = (Path(runtime_dir) if runtime_dir is not None else Path(cfg['queue']['file']).parent)/'image-download.lock'
-    require_memory_directory(str(path.parent))
+    from wechat_linux.runtime.paths import require_private_directory
+    path = Path(runtime_dir)/'image-download.lock'
+    require_private_directory(path.parent)
     fd = os.open(path,os.O_CREAT|os.O_RDWR|os.O_NOFOLLOW,0o600)
     try:
         s=os.fstat(fd)
@@ -60,13 +60,13 @@ def download_lock(cfg, deadline, *, runtime_dir=None):
 
 
 class DesktopImages:
-    def __init__(self,cfg,deadline):
+    def __init__(self,ui_options,deadline):
         import gi
         gi.require_version('Gdk','3.0');gi.require_version('GdkPixbuf','2.0')
         from gi.repository import Gdk,GdkPixbuf
         from wechat_linux.desktop.ui import A11y,X11
         self.Gdk,self.Pixbuf=Gdk,GdkPixbuf
-        self.ui,self.x=A11y(cfg['ui']),X11(cfg['ui'])
+        self.ui,self.x=A11y(ui_options),X11(ui_options)
         self.deadline=deadline
         self.pid=str(self.ui.require_app().get_process_id())
         self.created=[]
@@ -222,27 +222,25 @@ def request_close(window):
     finally:lib.XCloseDisplay(display)
 
 
-def improve_image(binding,cfg,image,info,deadline,*,adapter=DesktopImages,runtime_dir=None,max_bytes=None):
+def improve_image(binding,ui_options,image,info,deadline,*,runtime_dir,max_bytes=8*1024*1024,adapter=DesktopImages):
     """Return only the original bound cache's bytes; a click is not download success."""
     from wechat_linux.media.images import read_local_image,MediaError
     proof=binding.get('download') or {}
     title=proof.get('chat_title')
-    if (cfg.get('ui',{}).get('backend')!='native_service' or proof.get('verified') is not True
+    if (proof.get('verified') is not True
             or not isinstance(title,str) or not title.strip() or not proof.get('server_id')):
         return image,{**info,'download':dict(outcome='download_unverified')}
     started=time.monotonic()
     if started>=deadline:
         return image,{**info,'download':dict(outcome='download_timeout',elapsed_ms=0)}
     try:
-        lock = download_lock(cfg,deadline) if runtime_dir is None else download_lock(cfg,deadline,runtime_dir=runtime_dir)
-        with lock:
-            desktop=adapter(cfg,deadline)
+        with download_lock(runtime_dir,deadline):
+            desktop=adapter(ui_options,deadline)
             try:
                 history=desktop.open_gallery(title);desktop.open_matching(history,image)
                 while time.monotonic()<deadline:
                     try:
-                        data,updated=(read_local_image(binding,cfg) if max_bytes is None
-                                      else read_local_image(binding,max_bytes=max_bytes))
+                        data,updated=read_local_image(binding,max_bytes=max_bytes)
                         if updated['quality'] in ('original','cached'):
                             return data,{**updated,'download':dict(outcome='downloaded',elapsed_ms=round((time.monotonic()-started)*1000))}
                     except MediaError:pass

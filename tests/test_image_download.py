@@ -3,6 +3,7 @@ from model_support import default_config
 from contextlib import nullcontext
 from contextlib import contextmanager
 import copy
+from pathlib import Path
 import time
 import unittest
 from unittest.mock import Mock,patch
@@ -44,16 +45,16 @@ class ImageDownloadTests(unittest.TestCase):
         desktop.x.move_pointer.assert_not_called()
         self.assertFalse(any(c.args[0]=='click' for c in desktop.x._xdotool.call_args_list))
 
-    def test_unproven_or_non_native_source_never_opens_ui(self):
+    def test_unverified_source_never_opens_ui(self):
         cfg=default_config();cfg['ui']['backend']='native_service';adapter=Mock()
         for proof in ({},{'verified':'yes','chat_title':'synthetic','server_id':'10'},
                       {'verified':True,'chat_title':'','server_id':'10'}):
-            data,info=improve_image({'download':proof},cfg,b'thumb',{'quality':'thumbnail'},time.monotonic()+1,adapter=adapter)
+            data,info=improve_image({'download':proof}, cfg['ui'], b'thumb', {'quality':'thumbnail'}, time.monotonic()+1, runtime_dir=str(Path(cfg['queue']['file']).parent), adapter=adapter)
             self.assertEqual(data,b'thumb');self.assertEqual(info['download']['outcome'],'download_unverified')
         adapter.assert_not_called()
 
     def test_click_only_succeeds_after_original_bound_cache_confirms_and_closes_under_lock(self):
-        cfg=default_config();cfg['ui']['backend']='native_service'
+        cfg=default_config();cfg['ui']['backend']='atspi'
         binding=dict(download=dict(verified=True,chat_title='synthetic',server_id='10'))
         original=dict(quality='thumbnail',width=20,height=20)
         desktop=Mock();events=[]
@@ -63,9 +64,9 @@ class ImageDownloadTests(unittest.TestCase):
         desktop.close.side_effect=lambda:events.append('closed')
         with patch('wxbridge.wechat.image_download.download_lock',locked),\
              patch('wechat_linux.media.images.read_local_image',return_value=(b'full',dict(quality='cached',width=600,height=800))) as read:
-            data,info=improve_image(binding,cfg,b'thumb',original,time.monotonic()+2,adapter=lambda *args:desktop)
+            data,info=improve_image(binding, cfg['ui'], b'thumb', original, time.monotonic()+2, runtime_dir=str(Path(cfg['queue']['file']).parent), adapter=lambda *args:desktop)
         self.assertEqual(data,b'full');self.assertEqual(info['download']['outcome'],'downloaded')
-        read.assert_called_once_with(binding,cfg)
+        read.assert_called_once_with(binding,max_bytes=8*1024*1024)
         self.assertEqual(events,['locked','closed','unlocked'])
 
     def test_timeout_or_ambiguous_match_retains_correct_thumbnail_and_safe_error(self):
@@ -75,14 +76,14 @@ class ImageDownloadTests(unittest.TestCase):
         @contextmanager
         def locked(*args):yield
         with patch('wxbridge.wechat.image_download.download_lock',locked),patch('wechat_linux.media.images.read_local_image') as read:
-            data,info=improve_image(binding,cfg,b'correct-thumb',dict(quality='thumbnail'),time.monotonic()+1,adapter=lambda *args:desktop)
+            data,info=improve_image(binding, cfg['ui'], b'correct-thumb', dict(quality='thumbnail'), time.monotonic()+1, runtime_dir=str(Path(cfg['queue']['file']).parent), adapter=lambda *args:desktop)
         self.assertEqual(data,b'correct-thumb');self.assertEqual(info['download']['outcome'],'download_match_ambiguous')
         desktop.close.assert_called_once();read.assert_not_called()
 
     def test_expired_budget_never_initializes_ui(self):
         cfg=default_config();cfg['ui']['backend']='native_service';adapter=Mock()
         binding=dict(download=dict(verified=True,chat_title='synthetic',server_id='10'))
-        data,info=improve_image(binding,cfg,b'correct-thumb',dict(quality='thumbnail'),time.monotonic()-1,adapter=adapter)
+        data,info=improve_image(binding, cfg['ui'], b'correct-thumb', dict(quality='thumbnail'), time.monotonic()-1, runtime_dir=str(Path(cfg['queue']['file']).parent), adapter=adapter)
         self.assertEqual(info['download']['outcome'],'download_timeout')
         self.assertEqual(data,b'correct-thumb');adapter.assert_not_called()
 

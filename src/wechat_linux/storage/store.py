@@ -9,12 +9,14 @@ from __future__ import annotations
 import glob
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
 import sqlite3
 import subprocess
 import time
+import tempfile
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
@@ -22,24 +24,10 @@ from typing import Any
 
 from wechat_linux.storage import crypto
 from wechat_linux.storage.keyscan import find_wechat_pids
-from wechat_linux.runtime.memoryfs import require_memory_directory
+from wechat_linux.runtime.paths import require_private_directory
+from wechat_linux.runtime.locking import file_lock
 from wechat_linux.messages.references import image_md5, local_image_cache_key, parse_quoted_reply
 from wechat_linux.messages.pats import parse_pat
-
-MSG_TYPE_LABEL = {
-    1: "",
-    3: "[图片]",
-    34: "[语音]",
-    42: "[名片]",
-    43: "[视频]",
-    47: "[表情]",
-    48: "[位置]",
-    49: "",
-    50: "[通话]",
-    10000: "[系统消息]",
-    10002: "[撤回]",
-}
-
 
 from wechat_linux.errors import StoreError
 
@@ -143,10 +131,7 @@ def discover_db_dir(preferred: str = "") -> str:
         candidates.extend(glob.glob(pattern))
     candidates = [c for c in candidates if os.path.isdir(c)]
     if not candidates:
-        raise StoreError(
-            "找不到微信数据目录。请确认已登录微信，或在 config.json 里设置 db_dir，"
-            "例如 ~/Documents/xwechat_files/wxid_xxx/db_storage"
-        )
+        raise StoreError('database_directory_not_found')
     # 选最近有写入的
     candidates.sort(key=lambda d: _mtime(os.path.join(d, "session", "session.db")), reverse=True)
     return candidates[0]
@@ -180,8 +165,8 @@ def _strip_xml_title(text: str) -> str:
         m = re.search(rf"<{tag}>(.*?)</{tag}>", text, re.S)
         if m:
             value = re.sub(r"<!\[CDATA\[(.*?)\]\]>", r"\1", m.group(1), flags=re.S)
-            return value.strip()[:300]
-    return "[链接/文件]"
+            return value.strip()
+    return ""
 
 
 class WeChatStore:
@@ -190,7 +175,7 @@ class WeChatStore:
         self.keys_file = keys_file
         self.decrypted_dir = decrypted_dir
         try:
-            require_memory_directory(decrypted_dir)
+            require_private_directory(decrypted_dir)
         except (ValueError, OSError) as exc:
             raise StoreError(str(exc)) from exc
         self.keys = self._load_keys()
@@ -229,10 +214,23 @@ class WeChatStore:
         return None
 
     def _plain_path(self, rel: str) -> Path:
-        return Path(self.decrypted_dir) / rel
+        path = Path(rel)
+        if path.is_absolute() or '..' in path.parts or not path.parts:
+            raise StoreError('invalid_database_path')
+        root = Path(self.decrypted_dir).resolve()
+        target = root / path
+        if not target.resolve().is_relative_to(root) or target.is_symlink():
+            raise StoreError('invalid_database_path')
+        return target
 
     def refresh(self, rel: str) -> Path:
         """确保 rel 对应的明文数据库是最新的，返回明文路径。"""
+        dst = self._plain_path(rel)
+        require_private_directory(dst.parent)
+        with file_lock(dst.with_name(dst.name + '.lock'), blocking=True):
+            return self._refresh(rel, dst)
+
+    def _refresh(self, rel: str, dst: Path) -> Path:
         rel = rel.replace(os.sep, "/")
         src = os.path.join(self.db_dir, rel)
         if not os.path.exists(src):
@@ -243,7 +241,6 @@ class WeChatStore:
                 f"缺少 {rel} 的密钥。请重新运行 scan-keys（注意 db_dir 要对应当前账号）。"
             )
         enc_key = bytes.fromhex(info["enc_key"])
-        dst = self._plain_path(rel)
         wal = src + "-wal"
         db_mt = _mtime(src)
         wal_mt = _mtime(wal)
@@ -251,15 +248,22 @@ class WeChatStore:
         if dst.exists() and prev and prev[0] == db_mt and prev[1] == wal_mt:
             return dst
         t0 = time.time()
-        if dst.exists() and prev and prev[0] == db_mt and prev[1] != wal_mt:
-            crypto.apply_wal(wal, dst, enc_key, bytes.fromhex(info['salt']))
-        else:
-            crypto.decrypt_db_to_file(src, dst, enc_key)
-            crypto.apply_wal(wal, dst, enc_key, bytes.fromhex(info['salt']))
+        descriptor, name = tempfile.mkstemp(prefix='.' + dst.name + '-', dir=dst.parent)
+        os.close(descriptor)
+        staged = Path(name)
+        try:
+            if dst.exists() and prev and prev[0] == db_mt and prev[1] != wal_mt:
+                shutil.copyfile(dst, staged)
+            else:
+                crypto.decrypt_db_to_file(src, staged, enc_key)
+            crypto.apply_wal(wal, staged, enc_key, bytes.fromhex(info['salt']))
+            os.replace(staged, dst)
+        finally:
+            staged.unlink(missing_ok=True)
         self._mtimes[rel] = (db_mt, wal_mt)
         cost = time.time() - t0
         if cost > 1.0:
-            print(f"[store] 解密 {rel} 用时 {cost:.1f}s", flush=True)
+            logging.getLogger(__name__).info('Database refresh took %.1fs', cost)
         return dst
 
     def _connect(self, rel: str) -> sqlite3.Connection:
@@ -358,7 +362,7 @@ class WeChatStore:
         """把群名/备注/wxid 解析成 (username, display_name)。"""
         target = (target or "").strip()
         if not target:
-            raise StoreError("config.json 里 target.chat 为空")
+            raise StoreError('chat_identifier_required')
         if target.endswith("@chatroom") or target.startswith("wxid_") or target.startswith("gh_"):
             contacts = self.contacts()
             return target, self.display_name(contacts, target, target)
@@ -378,19 +382,13 @@ class WeChatStore:
             username, _ = matches[0]
             return username, self.display_name(contacts, username, target)
         if len(matches) > 1:
-            names = "、".join(
-                f"{self.display_name(contacts, u, u)}({u})" for u, _ in matches[:8]
-            )
-            raise StoreError(f"群名“{target}”匹配到多个联系人：{names}。请在 config 里直接写 wxid 或 @chatroom")
+            raise StoreError('ambiguous_chat')
 
         # 再从会话列表找
         for username in self.sessions():
             if username == target:
                 return username, self.display_name(contacts, username, target)
-        raise StoreError(
-            f"找不到“{target}”。请先把群聊在微信里打开一次，或在 contact.db 里确认群名；"
-            "也可以直接填群 id（xxx@chatroom）。"
-        )
+        raise StoreError('chat_not_found')
 
     # ---------- 消息 ----------
     def _message_dbs(self) -> list[str]:
@@ -486,7 +484,7 @@ class WeChatStore:
                 sender, text = prefix, body
         reference = None
         picture_md5 = image_md5(text) if local_type == 3 else ""
-        message_kind = "text" if local_type == 1 else "non_text"
+        message_kind = "text" if local_type == 1 else "image" if local_type == 3 else "non_text"
         pat = parse_pat(text, raw_type, chat_id) if local_type == 49 else None
         known = set(contacts) | set((senders or {}).values())
         if pat and (pat["actor"] not in known or pat["target"] not in known):
@@ -494,16 +492,14 @@ class WeChatStore:
         if local_type == 49 and text:
             quoted = parse_quoted_reply(text, raw_type) if pat is None else None
             if pat is not None:
-                sender, text, message_kind = pat["actor"], "[拍一拍]", "pat"
+                sender, text, message_kind = pat["actor"], "", "pat"
             elif quoted is not None:
                 text, reference = quoted
-                local_type, message_kind = 1, "quoted_text"
+                message_kind = "quoted_text"
             else:
                 text = _strip_xml_title(text)
         if local_type == 3:
-            text = "[图片]"
-        if local_type != 1 and not text:
-            text = MSG_TYPE_LABEL.get(local_type, f"[type={local_type}]")
+            text = ""
         sender_name = self.display_name(contacts, sender, sender) if sender else ""
         if text is None:
             text = ""

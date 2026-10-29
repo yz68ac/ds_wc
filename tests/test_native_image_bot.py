@@ -82,7 +82,7 @@ class NativeImageBotTests(unittest.TestCase):
         self.assertEqual(info['items'][0]['quality'], 'thumbnail')
 
     def test_recovered_native_request_only_queries_helper_status(self):
-        client = NativeImageDownloader('/run/synthetic/helper.sock', [native.CHAT], native.ACCOUNT)
+        client = NativeImageDownloader('/run/synthetic/helper.sock', native.ACCOUNT)
         with patch('wechat_linux.native.image_download.read_local_image', side_effect=[native.THUMB, native.FULL]), \
              patch('wechat_linux.native.image_download.request', return_value=deepcopy(native.COMPLETE)) as request:
             result = client.download(native.binding(), chat_id=native.CHAT, request_id='old:request',
@@ -92,7 +92,7 @@ class NativeImageBotTests(unittest.TestCase):
         self.assertEqual(request.call_args.args[1], {'op':'image_status', 'request_id':'old:request'})
 
     def test_missing_recovered_id_is_never_resubmitted(self):
-        client = NativeImageDownloader('/run/synthetic/helper.sock', [native.CHAT], native.ACCOUNT)
+        client = NativeImageDownloader('/run/synthetic/helper.sock', native.ACCOUNT)
         with patch('wechat_linux.native.image_download.read_local_image', return_value=native.THUMB), \
              patch('wechat_linux.native.image_download.request', return_value=dict(ok=False, error='native_image_request_missing', requested=None)) as request:
             with self.assertRaisesRegex(ImageDownloadError, 'native_image_request_missing'):

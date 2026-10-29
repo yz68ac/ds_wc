@@ -7,13 +7,13 @@ import shutil
 from pathlib import Path
 
 from provider import load_config
-from wechat_linux.storage.store import StoreError, WeChatStore, discover_db_dir
-from wechat_linux.desktop.ui import A11y, Sender, UIError
+from wxbridge.wechat.store import StoreError, WeChatStore, discover_db_dir
+from wxbridge.wechat.ui import A11y, Sender, UIError
 
 
 def check(cfg: dict, group: str = "") -> int:
     from contextlib import ExitStack
-    from wechat_linux.runtime.locking import instance_lock
+    from wxbridge.app.runtime import instance_lock
     from wxbridge.instances import runtime_locks
     with ExitStack() as stack:
         for path in runtime_locks(cfg):
@@ -28,7 +28,7 @@ def _check_locked(cfg: dict, group: str = "") -> int:
     print(f"目标群：{title} ({chat_id})")
     print(f"最新消息 local_id：{store.last_local_id(chat_id)}（不显示正文）")
     if cfg['ui']['backend']=='native_service':
-        from wechat_linux.native.sender import readiness
+        from wxbridge.native.sender import readiness
         print(json.dumps(readiness(cfg)))
     else:
         print(json.dumps(Sender(cfg).status(), ensure_ascii=False, indent=2))
@@ -59,6 +59,6 @@ def ui_tree(cfg: dict, scope: str, depth: int) -> int:
 
 
 def input_test(cfg: dict) -> int:
-    result = Sender(cfg).input_test()
+    result = A11y(cfg['ui']).input_test()
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 1 if "error" in result else 0

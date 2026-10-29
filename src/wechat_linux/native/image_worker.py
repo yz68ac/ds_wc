@@ -23,6 +23,15 @@ else:
     _spec.loader.exec_module(contract)
 
 
+def authorize(value, config):
+    value = contract.validate(value)
+    if value['chat_id'] not in config['allowed_chat_ids']:
+        raise ValueError('native_image_chat_not_allowed')
+    if value['account'] != config['image_download']['expected_account']:
+        raise ValueError('native_image_account_mismatch')
+    return value
+
+
 def account_matches(pid, root):
     """Bind to the client's CURRENT open account files, never inspect DB contents."""
     roots = set()
@@ -95,7 +104,7 @@ def run(config, value, stop, find_client):
         return contract.failure('native_image_timeout')
     assets = Path(config['assets'])
     options = config['image_download']
-    contract.validate(value, config['allowed_chat_ids'], options['expected_account'])
+    authorize(value, config)
     # Shared across helper instances for this Linux UID; never unlink a live lock.
     fd = os.open('/run/wechat-linux-images/'+str(config['uid'])+'.lock',
                  os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
@@ -209,7 +218,7 @@ class ImageManager:
                 return contract.failure('native_image_request_missing', None)
             return self._result(old[1])
         try:
-            contract.validate(value, self.config['allowed_chat_ids'], self.config['image_download']['expected_account'])
+            authorize(value, self.config)
         except ValueError as exc:
             return contract.failure(str(exc))
         identity = {k: v for k, v in value.items() if k != 'timeout_seconds'}

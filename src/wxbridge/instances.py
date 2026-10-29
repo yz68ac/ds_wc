@@ -10,7 +10,7 @@ import re
 from wxbridge.config_merge import deep_merge, field_origins
 
 INSTANCE_ID = re.compile(r'[a-zA-Z0-9][a-zA-Z0-9_-]{0,47}\Z')
-CHAT_ID = re.compile(r'[a-zA-Z0-9_-]{1,128}@chatroom\Z')
+CHAT_ID = re.compile(r'(?:[a-zA-Z0-9_-]{1,128}@chatroom|wxid_[a-zA-Z0-9_-]{1,120})\Z')
 GROUP_FIELDS = {'system_prompt_file', 'target', 'model_clients', 'models',
                 'reply_style', 'proactive', 'memory', 'search', 'vision', 'queue'}
 

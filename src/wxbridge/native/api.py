@@ -1,7 +1,7 @@
-"""Legacy bot-bound facade. New projects use wechat_linux.transport.server.NativeServer."""
-from wechat_linux.transport.server import NativeServer
-from wechat_linux.native.protocol import settings
-from wechat_linux.runtime.memoryfs import require_memory_directory
+"""Bot API facade over the application-owned native server."""
+from wxbridge.native.server import NativeServer
+from wxbridge.native.protocol import settings
+from wxbridge.storage.memoryfs import require_memory_directory
 from wxbridge.app.native_gateway import BotNativeService
 
 

@@ -20,15 +20,12 @@ class NativeImageDownloader:
     helper status. Neither IPC success nor native completion proves cache quality.
     """
 
-    def __init__(self, helper_socket, allowed_chats, expected_account):
-        if (not isinstance(helper_socket, str) or not helper_socket.startswith('/run/')
+    def __init__(self, helper_socket, expected_account):
+        if (not isinstance(helper_socket, str) or not helper_socket.startswith('/')
                 or len(helper_socket.encode()) > 100 or '\0' in helper_socket
                 or not isinstance(expected_account, str) or not contract.USER_ID.fullmatch(expected_account)):
             raise ValueError('invalid_native_image_options')
-        chats = tuple(allowed_chats)
-        if not chats or len(chats) > 16 or any(not isinstance(c, str) or not contract.CHAT_ID.fullmatch(c) for c in chats):
-            raise ValueError('invalid_native_image_options')
-        self.socket_path, self.allowed_chats, self.account = helper_socket, chats, expected_account
+        self.socket_path, self.account = helper_socket, expected_account
         self._requests = {}
 
     def _call(self, value, timeout):
@@ -69,7 +66,7 @@ class NativeImageDownloader:
                      server_id=source.get('server_id'), sender=source.get('sender'),
                      image_md5=source.get('image_md5'), timeout_seconds=timeout)
         try:
-            contract.validate(value, self.allowed_chats, self.account)
+            contract.validate(value)
         except ValueError as exc:
             raise ImageDownloadError(str(exc), requested=False) from None
         # Timeout is a wait budget, not part of the identity of the image operation.
@@ -77,12 +74,11 @@ class NativeImageDownloader:
         digest = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
         if request_id in self._requests and self._requests[request_id] != digest:
             raise ImageDownloadError('native_image_request_conflict', requested=False)
-        cfg = {'vision': {'max_image_bytes': max_bytes}}
         started = time.monotonic()
         deadline = started + timeout
 
         def cached():
-            data, info = read_local_image(binding, cfg)
+            data, info = read_local_image(binding, max_bytes=max_bytes)
             if info['quality'] not in ('original', 'cached'):
                 return None
             info = dict(info, download={'backend': 'native', 'outcome': 'cache_verified',

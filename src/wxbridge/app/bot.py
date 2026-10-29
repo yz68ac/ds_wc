@@ -18,7 +18,7 @@ from wxbridge.config import PROJECT_ROOT
 from wxbridge.storage.person_memory import MemoryStore
 from wxbridge.storage.journal import Journal
 from wxbridge.wechat.messages import chunk_text, is_triggered, reply_chunks
-from wechat_linux.storage.store import StoreError, WeChatStore
+from wxbridge.wechat.store import StoreError, WeChatStore
 from wechat_linux.messages.pats import is_pat
 from wxbridge.app.workers import ProcessJob, WorkerLease, WorkerCleanupError
 from wxbridge.app.session_phases import SessionPhases
@@ -55,10 +55,10 @@ def setup_logging(cfg, verbose=True):
 
 class GroupSession(SessionPhases):
     def __init__(self, cfg, echo=False, *, store=None, account=None, instance_id=None, start_gateway=True):
-        from wxbridge.instances import INSTANCE_ID
+        from wxbridge.instances import CHAT_ID, INSTANCE_ID
         if instance_id is not None and (not isinstance(instance_id, str) or not INSTANCE_ID.fullmatch(instance_id)):
             raise ValueError('invalid_instance_id')
-        from wechat_linux.native.protocol import settings as native_settings
+        from wxbridge.native.protocol import settings as native_settings
         native_options = native_settings(cfg)
         self.cfg, self.echo = cfg, echo
         self.account, self.instance_id = account, instance_id
@@ -66,10 +66,10 @@ class GroupSession(SessionPhases):
         self.log = InstanceLog(log, dict(instance=instance_id)) if instance_id else log
         self.store = store if store is not None else WeChatStore(cfg["db_dir"], cfg["keys_file"], cfg["decrypted_dir"])
         self.chat_id, self.chat_title = self.store.resolve_chat(cfg["target"]["chat"])
-        if not self.chat_id.endswith("@chatroom") or not self.store.self_wxid:
-            raise StoreError("必须确认当前微信账号及目标普通群聊")
+        if not CHAT_ID.fullmatch(self.chat_id) or not self.store.self_wxid:
+            raise StoreError("必须确认当前微信账号及目标群聊或用户私聊")
         if cfg['ui'].get('backend')=='native_service' and (not native_options['enabled'] or self.chat_id not in native_options['allowed_chat_ids']):
-            raise ValueError('native_service requires enabled native_api and an allowed target group')
+            raise ValueError('native_service requires enabled native_api and an allowed target chat')
         baseline = None
         if not cfg["ui"].get("dry_run"):
             try:
@@ -126,7 +126,7 @@ class GroupSession(SessionPhases):
         self.next_poll_at = 0
         self.native_api = None
         if start_gateway and native_options['enabled'] and not cfg['ui'].get('dry_run'):
-            from wechat_linux.transport.server import NativeServer
+            from wxbridge.native.server import NativeServer
             from wxbridge.app.native_gateway import BotNativeService
             self.native_api = NativeServer(native_options, BotNativeService(self, native_options))
 

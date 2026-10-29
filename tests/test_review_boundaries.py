@@ -91,7 +91,7 @@ class ReviewBoundaryTests(unittest.TestCase):
             with self.subTest(unavailable=unavailable):
                 if unavailable:case.store._connect=Mock(side_effect=sqlite3.DatabaseError())
                 binding=case.store.image_binding(case.chat,ref)
-                data,info=read_local_image(binding,DEFAULTS)
+                data,info=read_local_image(binding, max_bytes=DEFAULTS['vision']['max_image_bytes'])
                 self.assertEqual(data,media.png())
                 self.assertEqual(info['binding_source'],'verified_message_cache')
 

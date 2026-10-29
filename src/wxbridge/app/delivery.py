@@ -7,10 +7,10 @@ import time
 import uuid
 from functools import partial
 from wxbridge.app.conversation import confirmation_updates
-from wechat_linux.sending.confirmation import scan_confirmation
+from wxbridge.app.confirmation import scan_confirmation
 from wechat_linux.native.protocol import NativeError, text_parts
 from wxbridge.app.task_policy import submission_failure
-from wechat_linux.sending.transport import native as native_transport
+from wxbridge.wechat.transport import native as native_transport
 
 log = logging.getLogger('wxbridge')
 
@@ -172,8 +172,8 @@ class DeliveryController:
         try:
             current = self.journal.task(task["id"])
             if current['intent'].get('transport')=='native_service':
-                job = job_factory('native_send', (self.cfg, current.get('delivery_chat_title',self.chat_title),
-                    self.journal.outgoing_text(current), current.get('delivery_chat_id',self.chat_id),
+                job = job_factory('native_send', (self.cfg, current.get('delivery_chat_id',self.chat_id),
+                    self.journal.outgoing_text(current),
                     current['intent']['request_id']), timeout=30)
             else:
                 job = job_factory("send", (self.cfg, self.chat_title, self.journal.outgoing_text(current)), timeout=30)

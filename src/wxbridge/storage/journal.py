@@ -9,9 +9,9 @@ import sqlite3
 import uuid
 from typing import Any, Callable
 
-from wechat_linux.runtime.memoryfs import require_memory_directory
+from wxbridge.storage.memoryfs import require_memory_directory
 from wechat_linux.messages.pats import is_pat
-from wechat_linux.native.protocol import NativeError, REQUEST_ID, task_status
+from wxbridge.native.protocol import NativeError, REQUEST_ID, task_status
 from wxbridge.storage.task_state import validate_task, validate_task_states
 
 
