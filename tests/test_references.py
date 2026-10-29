@@ -125,7 +125,7 @@ class ReferencePromptTests(unittest.TestCase):
         self.assertNotIn("UNRELATED_OLD_SECRET", prompt)
         self.assertEqual(prompt.count("@ds 这怎么看"), 1)
         self.assertIn("小明", prompt)
-        self.assertNotIn("wxid_original", prompt)
+        self.assertIn('"member": "wxid_original"', prompt)
         self.assertNotIn("1234567890123456789", prompt)
         self.assertNotIn("<refermsg>", prompt)
 
@@ -142,12 +142,13 @@ class ReferencePromptTests(unittest.TestCase):
         with self.assertRaises(ContextError):
             build_prompt(self.cfg, [], trigger, "合成群")
 
-    def test_previous_context_quote_does_not_expand_old_reference_unrequested(self):
+    def test_previous_context_quote_remains_explicitly_bound_to_its_actual_author(self):
         old = parse_message(quoted_xml(content="UNREQUESTED_REFERENCE"))
         old.update(local_id=49, time=NOW-1)
         trigger = msg(50, NOW, "@ds 普通问题")
         prompt = build_prompt(self.cfg, [old], trigger, "合成群")[1]["content"]
-        self.assertNotIn("UNREQUESTED_REFERENCE", prompt)
+        self.assertIn("UNREQUESTED_REFERENCE", prompt)
+        self.assertIn('"member": "wxid_original"', prompt)
         self.assertIn(old["text"], prompt)
 
 

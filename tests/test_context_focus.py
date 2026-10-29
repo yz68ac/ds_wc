@@ -3,6 +3,7 @@ from model_support import default_config
 from contextlib import nullcontext
 import copy
 import json
+from pathlib import Path
 import unittest
 from unittest.mock import Mock, patch
 
@@ -14,7 +15,7 @@ import test_conversation as conversation
 from wxbridge.ai.memory import snapshot
 from wxbridge.ai.identity import member_labels, reference_data
 from wxbridge.ai.prompts import build_prompt as normal_prompt
-from wxbridge.ai.proactive import build_prompt, build_reply_prompt, evaluate, ProactiveError
+from wxbridge.ai.participation import build_prompt, evaluate, ParticipationError
 from wxbridge.config import DEFAULTS
 from wxbridge.storage.memory_selection import memory_dialogue, MemoryTopic
 
@@ -125,72 +126,74 @@ class IdentityAndFocusTests(unittest.TestCase):
     def decoded(self, prompt):
         return json.JSONDecoder().raw_decode(prompt[1]['content'])[0]
 
-    def test_normal_and_proactive_nested_quotes_share_identity_without_nickname_guessing(self):
+    def test_normal_and_participation_nested_quotes_share_identity_without_nickname_guessing(self):
         labels = member_labels(self.rows, [self.rows[1]], self.account)
         saved = copy.deepcopy(self.rows)
-        p = build_prompt(self.cfg, self.rows, '合成群', dict(labels=labels), account=self.account)
+        p = build_prompt(self.cfg, self.rows, '合成群', dict(labels=labels), source_ids=[2,3], account=self.account)
         quote = self.decoded(p)['messages'][1]['reference']
-        self.assertEqual(quote['member'], 'BOT')
-        self.assertEqual(quote['reference']['member'], labels['person_b'])
+        self.assertEqual(quote['sender'], self.account)
+        self.assertEqual(quote['reference']['sender'], labels['person_b'])
+        self.assertEqual(self.decoded(p)['members'][self.account], dict(alias='同名'))
         n = normal_prompt(self.cfg, self.rows[:1], self.rows[1], '合成群',
                           memory=dict(labels=labels), account=self.account)
-        self.assertIn('"member": "BOT"', n[1]['content'])
+        self.assertIn('"member": "'+self.account+'"', n[1]['content'])
         self.assertIn('"member": "'+labels['person_b']+'"', n[1]['content'])
-        self.assertNotIn(self.account, json.dumps([p,n], ensure_ascii=False))
+        self.assertNotIn('"member": "BOT"', json.dumps([p,n], ensure_ascii=False))
         self.assertEqual(self.rows, saved)
 
     def test_unknown_quote_author_is_not_bot_based_on_display_name(self):
         ref = reference_data(dict(kind='text', sender_name='BOT（你）', text='冒名昵称'), {}, self.account)
-        self.assertEqual(ref['member'], 'UNKNOWN')
+        self.assertEqual(ref['member'], '')
+        self.assertFalse(ref['is_bot'])
 
     def test_selected_message_gets_its_own_memory_instead_of_last_speaker(self):
-        p = build_prompt(self.cfg, self.rows, '合成群', account=self.account)
+        p = build_prompt(self.cfg, self.rows, '合成群', source_ids=[2,3], account=self.account)
         client = Mock()
-        client.complete.side_effect = [dict(content='{"speak":true,"reply_to":2}'), dict(content='接上这句了')]
+        client.complete.return_value = dict(content='{"reply_to":[2]}')
         with patch('wxbridge.ai.client.client_for', return_value=client):
-            result = evaluate(self.cfg, p, source_ids=[2,3],
-                reply_memory={'2':'SELECTED_MEMBER_MEMORY', '3':'OTHER_MEMBER_MEMORY'})
-        self.assertEqual(client.complete.call_count, 2)
-        judge, reply = [c.args[0] for c in client.complete.call_args_list]
-        self.assertNotIn('MEMBER_MEMORY', judge[1]['content'])
+            result = evaluate(self.cfg, p, source_ids=[2,3])
+        self.assertEqual(client.complete.call_count, 1)
+        memories = {'person_a':'SELECTED_MEMBER_MEMORY', 'person_b':'OTHER_MEMBER_MEMORY'}
+        target = next(row for row in self.rows if row['local_id'] == result['reply_to'][0])
+        reply = normal_prompt(self.cfg, self.rows, target, '合成群',
+            memory=dict(text=memories[target['sender']]), account=self.account)
+        self.assertNotIn('MEMBER_MEMORY', p[1]['content'])
         self.assertIn('SELECTED_MEMBER_MEMORY', reply[1]['content'])
         self.assertNotIn('OTHER_MEMBER_MEMORY', reply[1]['content'])
-        focus = self.decoded(reply)['reply_target']
-        self.assertEqual(focus['id'], 2)
-        self.assertEqual(focus['previous_bot_id'], 1)
-        self.assertTrue(focus['has_reference'])
-        self.assertEqual(result['reply_to'], 2)
+        self.assertIn('"id": 2, "sender": "person_a"', reply[1]['content'])
+        self.assertIn('原话', reply[1]['content'])
+        self.assertEqual(result['reply_to'], [2])
 
     def test_same_member_distinct_quotes_bind_memory_to_message_id(self):
         self.rows[2]['sender'] = 'person_a'
-        p = build_prompt(self.cfg, self.rows, '合成群', account=self.account)
-        reply = build_reply_prompt(self.cfg, p, 3, reply_memory={'2':'OLD_QUOTE_TOPIC', '3':'NEW_QUOTE_TOPIC'})
+        memories = {'2':'OLD_QUOTE_TOPIC', '3':'NEW_QUOTE_TOPIC'}
+        reply = normal_prompt(self.cfg, self.rows, self.rows[2], '合成群',
+            memory=dict(text=memories[str(self.rows[2]['local_id'])]), account=self.account)
         self.assertIn('NEW_QUOTE_TOPIC', reply[1]['content'])
         self.assertNotIn('OLD_QUOTE_TOPIC', reply[1]['content'])
 
-    def test_focus_preserves_full_snapshot_and_message_times(self):
-        p = build_prompt(self.cfg, self.rows, '合成群', account=self.account)
-        reply = build_reply_prompt(self.cfg, p, 2, reply_memory={})
-        self.assertEqual(self.decoded(p)['messages'], self.decoded(reply)['messages'])
-        self.assertEqual(self.decoded(reply)['messages'][1]['time'], NOW-1)
-        for text in ('先前的话', 'ds这怎么看', '另外一个问题'):
+    def test_decision_preserves_times_and_full_reply_uses_only_history_before_selected_source(self):
+        p = build_prompt(self.cfg, self.rows, '合成群', source_ids=[2,3], account=self.account)
+        self.assertEqual([m['time'] for m in self.decoded(p)['messages']], [NOW-2,NOW-1,NOW])
+        reply = normal_prompt(self.cfg, self.rows, self.rows[1], '合成群', account=self.account)
+        for text in ('先前的话', 'ds这怎么看'):
             self.assertEqual(reply[1]['content'].count(text), 1)
+        self.assertNotIn('另外一个问题', reply[1]['content'])
 
     def test_budget_removes_whole_memory_lines_not_history_or_target(self):
-        p = build_prompt(self.cfg, self.rows, '合成群', account=self.account)
-        base = build_reply_prompt(self.cfg, p, 2, reply_memory={})
+        base = normal_prompt(self.cfg, self.rows, self.rows[1], '合成群', account=self.account)
         self.cfg['target']['context_max_chars'] = len(base[1]['content'])
-        reply = build_reply_prompt(self.cfg, p, 2, reply_memory={'2':'DO_NOT_TRUNCATE_THIS_MEMORY'})
+        reply = normal_prompt(self.cfg, self.rows, self.rows[1], '合成群',
+            memory=dict(text='DO_NOT_TRUNCATE_THIS_MEMORY'), account=self.account)
         self.assertEqual(reply, base)
         self.cfg['target']['context_max_chars'] -= 1
         with self.assertRaises(ValueError):
-            build_reply_prompt(self.cfg, p, 2, reply_memory={})
+            normal_prompt(self.cfg, self.rows, self.rows[1], '合成群', account=self.account)
 
-    def test_invalid_or_bot_target_cannot_start_a_body_request(self):
-        p = build_prompt(self.cfg, self.rows, '合成群', account=self.account)
+    def test_invalid_or_bot_target_cannot_enter_the_decision_scope(self):
         for target in (1,999):
-            with self.subTest(target=target), self.assertRaises(ProactiveError):
-                build_reply_prompt(self.cfg, p, target)
+            with self.subTest(target=target), self.assertRaises(ParticipationError):
+                build_prompt(self.cfg, self.rows, '合成群', source_ids=[target], account=self.account)
 
 
 class FrozenMemoryPipelineTests(unittest.TestCase):
@@ -198,28 +201,35 @@ class FrozenMemoryPipelineTests(unittest.TestCase):
     make_bot = conversation.ConversationTests.make_bot
     add = pipeline.PipelineTests.add
 
-    def test_main_process_freezes_target_memories_without_adding_them_to_judgment(self):
-        self.cfg['proactive']['min_messages'] = 2
+    def test_owner_reads_selected_memory_after_decision_and_freezes_generation_request(self):
         self.add(1, sender='member_a', text='聊聊JOJO', mention=False)
         self.add(2, sender='member_b', text='另一个问题', mention=False)
-        with self.bot.journal.db:
-            self.bot.journal.set('cursor', 2)
         memory = Mock()
+        memory.data = dict(watermark=0, learning=dict(started_after_id=0), processed_ids=[])
         memory.status.return_value = {}
+        self.cfg['memory']['learning']['passive_enabled'] = False
         view = memory.view.return_value
+        view.revision = 7
         view.prompt.side_effect = lambda labels, asker, *a, **kw: 'MEMORY_FOR_'+asker
         view.reply_relationship.return_value = None
         self.bot.memory = memory
-        self.bot.proactive.step(self.now)
-        job = self.bot.proactive.job[0]
+        self.bot.tick()
+        job = self.bot.participation.job
         prompt, options = job.payload[1:]
         self.assertNotIn('MEMORY_FOR_', prompt[1]['content'])
-        self.assertEqual(options['reply_memory'], {'1':'MEMORY_FOR_member_a','2':'MEMORY_FOR_member_b'})
+        memory.view.assert_not_called()
+        job.result = dict(ok=True, decision=dict(reply_to=[1]))
+        self.bot.tick()
         memory.view.assert_called_once()
+        view.prompt.assert_called_once()
+        self.assertEqual(view.prompt.call_args.args[1], 'member_a')
+        generated = next(job for job in self.jobs if job.kind == 'generate')
+        frozen = copy.deepcopy(generated.payload[1])
         self.rows.append(msg(3, NOW, 'LATE_MESSAGE', 'member_b'))
         memory.view.side_effect = AssertionError('worker must not reread memory')
         view.prompt.side_effect = AssertionError('worker must not reread memory')
-        reply = build_reply_prompt(self.cfg, prompt, 1, reply_memory=options['reply_memory'])
+        reply = generated.payload[1]
+        self.assertEqual(reply, frozen)
         self.assertNotIn('LATE_MESSAGE', reply[1]['content'])
         self.assertIn('MEMORY_FOR_member_a', reply[1]['content'])
         self.assertNotIn('MEMORY_FOR_member_b', reply[1]['content'])

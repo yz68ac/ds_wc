@@ -1,60 +1,35 @@
-"""参与判断与正文生成的边界、剩余期限和抢占；无真实API调用。"""
-from model_support import default_config
-from contextlib import nullcontext
-import copy
+"""Decision/generation boundary, deadlines and safe worker failures; offline only."""
 import json
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
-from model_support import ClientFixture, ModelError
-from wxbridge.ai.proactive import build_prompt, evaluate, parse_judgment, ProactiveError
-from wxbridge.config import DEFAULTS
-from synthetic import NOW, msg
+from model_support import default_config
+from wxbridge.ai.participation import ParticipationError, parse_decision
+from wxbridge.app.model_runtime import GroupModels
 import test_conversation as conversation
 
 
-def response(text):
-    return {'choices': [{'message': {'content': text, 'reasoning_content': 'PRIVATE_REASONING'}}]}
-
-
 class StageTests(unittest.TestCase):
-    def setUp(self):
-        self.cfg = default_config()
+    def test_decision_rejects_body_generation_and_old_single_reply_protocol(self):
+        for value in (dict(reply_to=[7], text='不许预生成'), dict(speak=True, reply_to=7),
+                      dict(reply_to=[True]), dict(reply_to=[0]), dict(reply_to=[8]), []):
+            with self.subTest(value=value), self.assertRaises(ParticipationError):
+                parse_decision(json.dumps(value), [7])
 
-        self.cfg['system_prompt_file'] = str(Path(__file__).resolve().parents[1]/'prompts/system.md')
-        self.prompt = build_prompt(self.cfg, [msg(7, NOW, '合成接话目标')], '合成群', opportunity=dict(source_ids=[7]))
-
-    def test_strict_judgment_does_not_accept_generated_text_or_unusable_target(self):
-        for value in (dict(speak=True, text='不许预生成', reply_to=7), dict(speak=1, reply_to=7),
-                      dict(speak=True, reply_to=True), dict(speak=True, reply_to=0),
-                      dict(speak=False, reply_to=7), dict(speak=True), []):
-            with self.subTest(value=value), self.assertRaises(ValueError):
-                parse_judgment(json.dumps(value))
-
-
-
-
-
-
-
-
-
-
-
-
-    def test_worker_preserves_only_known_error_code_and_length(self):
-        import logging
-        from wxbridge.app.workers import _work
-        for code, expected in (('proactive_invalid_reply_length', 'proactive_invalid_reply_length'),
-                               ('PRIVATE_MODEL_OUTPUT', 'proactive_worker_failed')):
-            connection = Mock()
-            prior = logging.root.manager.disable
+    def test_model_lane_preserves_fixed_error_codes_and_hides_arbitrary_model_output(self):
+        cfg = default_config()
+        for code, expected in (('participation_invalid_reply_target', 'participation_invalid_reply_target'),
+                               ('PRIVATE_MODEL_OUTPUT', 'participation_worker_failed')):
+            runtime = GroupModels(cfg)
             try:
-                with patch('wxbridge.ai.proactive.evaluate', side_effect=ProactiveError(code, reply_chars=41)):
-                    _work(connection, 'proactive', ({}, []))
+                with patch('wxbridge.ai.participation.evaluate', side_effect=ParticipationError(code)):
+                    result = runtime.submit('participation', (cfg, [], dict(source_ids=[7])), timeout=5).future.result(timeout=2)
             finally:
-                logging.disable(prior)
-            self.assertEqual(connection.send.call_args.args[0], dict(ok=False, error=expected, reply_chars=41))
+                runtime.close()
+            self.assertFalse(result['ok'])
+            self.assertEqual(result['error'], expected)
+            self.assertNotIn('reply_chars', result)
+            self.assertNotIn('PRIVATE_MODEL_OUTPUT', json.dumps(result))
 
 
 class StagePipelineTests(unittest.TestCase):
@@ -64,68 +39,85 @@ class StagePipelineTests(unittest.TestCase):
     sends = conversation.ConversationTests.sends
     restart = conversation.ConversationTests.restart
     ordinary = conversation.ConversationTests.ordinary
-    decision = conversation.ConversationTests.decision
     confirm = conversation.ConversationTests.confirm
 
     def start_reply(self):
-        self.ordinary('ds这局怎么看')
-        job = self.bot.proactive.job[0]
-        job.result = dict(event='proactive_reply_started', reply_to=1,
+        row = self.ordinary('这局怎么看')
+        job = self.bot.participation.job
+        self.assertFalse(any(worker.kind == 'generate' for worker in self.jobs))
+        job.result = dict(ok=True, decision=dict(reply_to=[row['local_id']]),
                           model_metrics=[dict(role='participation', elapsed_ms=10, usage={})])
         with patch.object(self.bot.metrics, 'record_models', wraps=self.bot.metrics.record_models) as record:
             self.bot.tick()
-        self.assertEqual(record.call_count, 1)
-        job.result = None  # 模拟Pipe事件已消费。
-        self.assertFalse(job.closed)
-        self.assertEqual(self.bot.proactive.state()['outcome'], 'generating_reply')
-        self.assertEqual(self.bot.proactive.state()['model_role'], 'reply')
+        self.assertTrue(any(call.args[0] == job.result['model_metrics'] for call in record.call_args_list))
+        self.assertTrue(job.closed)
+        self.assertIsNone(self.bot.participation.job)
         self.assertFalse(self.sends())
-        return job
+        return next(worker for worker in self.jobs if worker.kind == 'generate' and not worker.closed)
 
-    def test_phase_event_keeps_worker_and_final_response_uses_send_confirmation(self):
+    def test_approved_message_starts_separate_full_reply_and_uses_send_confirmation(self):
         job = self.start_reply()
+        body = '这是需要完整解释的回复。'*8
         self.now += 1
-        self.decision(text='这局你可真敢打')
+        job.result = dict(ok=True, reply=body)
+        self.bot.tick()
         self.assertTrue(job.closed)
         self.assertEqual(len(self.sends()), 1)
+        self.assertEqual(self.sends()[0].payload[2], body)
         self.confirm()
-        self.assertTrue(self.bot.journal.status()['conversation']['active'])
+        self.assertFalse(self.bot.journal.tasks())
 
-    def test_real_mention_can_preempt_body_generation(self):
-        job = self.start_reply()
+    def test_new_real_mention_does_not_preempt_valid_body_generation(self):
+        first = self.start_reply()
         self.add(2)
         self.bot.tick()
-        self.assertTrue(job.closed)
-        self.assertIsNone(self.bot.proactive.job)
-        self.assertFalse(self.sends())
-        self.assertEqual(self.bot.journal.head()['trigger_kind'], 'mention')
+        self.assertFalse(first.closed)
+        self.assertIsNotNone(self.bot.participation.job)
+        self.assertEqual(self.bot.participation.pending['source_ids'], [2])
+        first.result = dict(ok=True, reply='第一条仍然有效')
+        self.bot.tick()
+        self.assertEqual(len(self.sends()), 1)
+        self.assertEqual(self.sends()[0].payload[2], '第一条仍然有效')
 
-    def test_body_failure_or_late_result_never_sends_placeholder(self):
-        self.start_reply().result = dict(ok=False, error='connection_failed')
+    def test_expired_judgment_cannot_start_generation_or_send(self):
+        row = self.ordinary('想听听你的看法')
+        job = self.bot.participation.job
+        self.now += self.cfg['target']['max_message_age_seconds']+1
+        job.result = dict(ok=True, decision=dict(reply_to=[row['local_id']]))
         self.bot.tick()
         self.assertFalse(self.sends())
-        self.assertEqual(self.bot.proactive.state()['outcome'], 'error')
-        self.now += 10
-        self.ordinary('那ds怎么看后面的')
-        self.now += self.cfg['proactive']['reply_ttl_seconds']+1
-        self.decision()
-        self.assertFalse(self.sends())
-        self.assertEqual(self.bot.proactive.state()['outcome'], 'expired')
+        self.assertFalse(any(worker.kind == 'generate' for worker in self.jobs))
+        self.assertEqual(self.bot.journal.participation_status()['counts'].get('expired'), 1)
 
-    def test_body_length_failure_reaches_status_without_body_and_without_send(self):
-        self.start_reply().result = dict(ok=False, error='proactive_invalid_reply_length', reply_chars=41,
-                                        body='PRIVATE_MODEL_OUTPUT')
+    def test_generation_transient_failure_uses_existing_retry_queue(self):
+        worker = self.start_reply()
+        worker.result = dict(ok=False, error='connection_failed', retryable=True)
         self.bot.tick()
-        state = self.bot.proactive.state()
-        self.assertEqual(state['error'], 'proactive_invalid_reply_length')
-        self.assertEqual(state['reply_chars'], 41)
+        self.assertFalse(self.sends())
+        task = self.bot.journal.head()
+        self.assertEqual(task['trigger_kind'], 'participation')
+        self.assertEqual(task['generation'], 'pending')
+        self.assertGreater(task['generation_retry_at'], self.now)
+
+    def test_failed_decision_keeps_fixed_error_metadata_without_any_reply(self):
+        self.ordinary('需要判断')
+        self.bot.participation.job.result = dict(ok=False, error='PRIVATE_MODEL_OUTPUT',
+            reply_chars='PRIVATE_MODEL_OUTPUT', body='PRIVATE_MODEL_OUTPUT')
+        self.bot.tick()
+        state = self.bot.journal.participation_status()
+        self.assertEqual(state['error'], 'participation_worker_failed')
         self.assertNotIn('PRIVATE_MODEL_OUTPUT', json.dumps(state))
         self.assertFalse(self.sends())
+        self.assertFalse(any(worker.kind == 'generate' for worker in self.jobs))
 
-    def test_unknown_worker_error_and_invalid_metadata_cannot_leak_to_status(self):
-        self.start_reply().result = dict(ok=False, error='PRIVATE_MODEL_OUTPUT', reply_chars='PRIVATE_MODEL_OUTPUT')
+    def test_invalid_decision_target_never_enters_reply_queue(self):
+        self.ordinary('候选问题')
+        self.bot.participation.job.result = dict(ok=True, decision=dict(reply_to=[999]))
         self.bot.tick()
-        state = self.bot.proactive.state()
-        self.assertEqual(state['error'], 'proactive_worker_failed')
-        self.assertIsNone(state['reply_chars'])
-        self.assertNotIn('PRIVATE_MODEL_OUTPUT', json.dumps(state))
+        self.assertFalse(self.bot.journal.tasks())
+        self.assertFalse(self.sends())
+        self.assertEqual(self.bot.journal.participation_status()['error'], 'participation_invalid_reply_target')
+
+
+if __name__ == '__main__':
+    unittest.main()

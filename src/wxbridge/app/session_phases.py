@@ -13,12 +13,13 @@ class SessionPhases:
         return self._poll_messages(force=force)
 
     def prioritize(self):
-        if self.proactive:
-            self.proactive.priority(time.time())
+        self.participation.priority(time.time())
 
     def collect_background_results(self):
         with self.metrics.measure('memory'):
             self._memory_step(collect_only=True)
+        if self.profile:
+            self.profile.step(collect_only=True)
 
     def collect_results(self):
         with self.metrics.measure('generation'):
@@ -29,25 +30,18 @@ class SessionPhases:
             self._confirm_step()
         # Apply completed work before a new foreground request can preempt it.
         self.collect_background_results()
-        self._participation_collected = bool(self.proactive and self.proactive.addressed_judgment())
-        if self._participation_collected:
-            # Explicit invitations are accepted into the durable foreground
-            # queue once judged, even when a newer real mention is waiting.
-            # Source identity and the original TTL are still checked there.
-            with self.metrics.measure('participation'):
-                self.proactive.step(time.time(), collect_only=True)
+        with self.metrics.measure('participation'):
+            self.participation.step(time.time(), collect_only=True)
 
     def start_foreground(self, *, max_new=None):
         with self.metrics.measure('generation'):
             return self._start_generations(max_new=max_new)
 
     def participate(self):
-        if getattr(self, '_participation_collected', False):
-            self._participation_collected = False
-            return
-        if self.proactive:
-            with self.metrics.measure('participation'):
-                self.proactive.step(time.time())
+        with self.metrics.measure('participation'):
+            self.participation.step(time.time())
+        # Immediate diagnostics/fakes may complete a decision in the same turn.
+        self.start_foreground()
 
     def deliver(self):
         with self.metrics.measure('delivery'):
@@ -56,10 +50,13 @@ class SessionPhases:
     def background(self):
         with self.metrics.measure('memory'):
             self._memory_step()
+        if self.profile:
+            self.profile.step()
 
     def worker_counts(self):
         return dict(generation=len(self.generators), memory=int(self.memory_job is not None),
-                    participation=int(bool(self.proactive and self.proactive.job)))
+                    participation=int(self.participation.job is not None),
+                    profile=int(bool(self.profile and self.profile.job)))
 
     def foreground_pending(self, now=None):
         head = self.journal.head()
@@ -67,10 +64,10 @@ class SessionPhases:
             return False
         now = time.time() if now is None else now
         return any(t['generation'] == 'pending' and now >= t.get('generation_retry_at', 0)
-                   and t.get('trigger_kind') != 'proactive' for t in self.journal.tasks())
+                   for t in self.journal.tasks())
 
     def has_foreground_tasks(self):
-        return any(t.get('trigger_kind') != 'proactive' for t in self.journal.tasks())
+        return bool(self.journal.tasks())
 
 
 

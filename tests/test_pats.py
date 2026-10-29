@@ -15,7 +15,7 @@ from wxbridge.wechat.store import WeChatStore
 from wxbridge.wechat.messages import display_message
 from wxbridge.ai.memory import snapshot, extract
 from wxbridge.ai.prompts import build_prompt
-from wxbridge.config import DEFAULTS, _deep_merge, load_config
+from wxbridge.config import DEFAULTS, _deep_merge, load_config, resolve_config
 from wxbridge.storage.person_memory import MemoryStore
 from test_context_pipeline import PipelineTests
 from test_memory import suggestion
@@ -97,7 +97,7 @@ class PatTests(unittest.TestCase):
             proposal = extract(self.cfg, value)
         client.assert_not_called()
         with self.assertRaisesRegex(ValueError, "memory_unknown_source"):
-            self.memory.apply(suggestion(source="m1", delta=3), value, NOW)
+            self.memory.apply(suggestion(label='wxid_friend', source="m1", delta=3), value, NOW)
         self.memory.apply(proposal, value, NOW)
         person = self.memory.data["members"]["wxid_friend"]
         self.assertEqual(person["last_interaction"], NOW)
@@ -119,16 +119,17 @@ class PatTests(unittest.TestCase):
 
     def test_config_window_and_pat_flag_validated(self):
         path = Path(self.temp.name)/"config.json"
-        for target in [dict(context_window_seconds=600), dict(context_window_seconds=300, trigger=dict(pat_enabled=False))]:
-            path.write_text(json.dumps(dict(target=target)))
+        for change in [dict(target=dict(context_window_seconds=600)),
+                       dict(target=dict(context_window_seconds=300), participation=dict(pat_enabled=False))]:
+            path.write_text(json.dumps(change))
             with nullcontext():
-                cfg = load_config(path)
-            self.assertEqual(cfg["target"]["context_window_seconds"], target["context_window_seconds"])
-        for target in [dict(context_window_seconds=True), dict(context_window_seconds=0), dict(context_window_seconds="300"),
-                       dict(trigger=dict(pat_enabled="true"))]:
-            path.write_text(json.dumps(dict(target=target)))
+                cfg = resolve_config(_deep_merge(default_config(),change),path,environment=False)
+            self.assertEqual(cfg["target"]["context_window_seconds"], change['target']['context_window_seconds'])
+        for change in [dict(target=dict(context_window_seconds=True)), dict(target=dict(context_window_seconds=0)),
+                       dict(target=dict(context_window_seconds="300")), dict(participation=dict(pat_enabled="true"))]:
+            path.write_text(json.dumps(change))
             with nullcontext(), self.assertRaises(ValueError):
-                load_config(path)
+                resolve_config(_deep_merge(default_config(),change),path,environment=False)
 
 
 class PatPipelineTests(PipelineTests):
@@ -140,17 +141,19 @@ class PatPipelineTests(PipelineTests):
         event = parsed(4)
         wrong = copy.deepcopy(event)
         wrong["pat"]["chat"] = "wrong@chatroom"
-        self.assertFalse(self.bot._triggered(wrong))
-        self.cfg["target"]["trigger"]["pat_enabled"] = False
+        self.assertEqual(self.bot._admission_reason(wrong, self.now), 'pat_not_for_bot')
+        self.cfg["participation"]["pat_enabled"] = False
         self.rows.append(event)
         self.bot.tick()
         self.assertFalse(self.jobs)
 
     def test_pat_independent_of_merge_window_and_restart_confirmed_once(self):
-        self.rows += [parsed(1), parsed(2)]
+        self.rows.append(parsed(1))
+        self.bot.tick()
+        self.rows.append(parsed(2))
         self.bot.tick()
         self.assertEqual(len(self.bot.journal.tasks()), 2)
-        self.assertEqual([t["trigger_kind"] for t in self.bot.journal.tasks()], ["pat", "pat"])
+        self.assertEqual([t["trigger_kind"] for t in self.bot.journal.tasks()], ["participation", "participation"])
         self.store.messages_in_window.assert_called_with(CHAT, NOW-300, NOW)
         self.generated("怎么，想姐了？")
         self.assertEqual(len(self.sends()), 1)
@@ -161,15 +164,15 @@ class PatPipelineTests(PipelineTests):
         self.assertEqual(len(self.sends()), 2)  # 第二次独立拍一拍的回复；首次没有重发。
         self.assertEqual(self.bot.journal.task(2)["trigger_ids"], [2])
 
-    def test_mention_and_pat_do_not_merge_or_leak_event_identity_to_status(self):
+    def test_selected_mention_and_pat_preserve_event_identity_without_leaking_to_status(self):
         self.add(1)
         self.rows.append(parsed(2))
         self.add(3)
         self.bot.tick()
         tasks = self.bot.journal.tasks()
-        self.assertEqual(len(tasks), 2)
-        self.assertEqual(tasks[0]["trigger_ids"], [1, 3])
-        self.assertEqual(tasks[1]["trigger_ids"], [2])
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(tasks[0]["trigger_ids"], [1, 2, 3])
+        self.assertTrue(is_pat(tasks[0]['triggers'][1]))
         status = self.bot.status_path.read_text(encoding="utf-8")
         for secret in ("wxid_friend", "TEMPLATE_SECRET", "wxid_outer"):
             self.assertNotIn(secret, status)

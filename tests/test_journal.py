@@ -97,16 +97,15 @@ class JournalSafetyTests(unittest.TestCase):
         finally:
             reopened.close()
 
-    def test_confirmation_policy_failure_rolls_back_ack_and_memory_job(self):
+    def test_confirmation_write_failure_rolls_back_ack_and_memory_job(self):
         journal = self.open_journal()
         task = self.task(1, 'queued', dict(part=0))
         task['triggers'] = [dict(local_id=1, time=100)]
         with journal.db:
             journal.put(task)
-        def failing(*args):
-            raise ValueError('synthetic_policy_failure')
-        with self.assertRaises(ValueError):
-            journal.acknowledge(1, 2, 101, memory=True, on_confirm=failing)
+        with patch.object(journal, 'put', side_effect=sqlite3.OperationalError('synthetic write failure')), \
+                self.assertRaises(sqlite3.OperationalError):
+            journal.acknowledge(1, 2, 101, memory=True)
         self.assertTrue(journal.task(1)['intent'])
         self.assertEqual(journal.task(1)['next_chunk'], 0)
         self.assertFalse(journal.memory_jobs())
@@ -117,11 +116,9 @@ class JournalSafetyTests(unittest.TestCase):
         task.update(generation_failed=True, triggers=[dict(local_id=1, time=100)])
         with journal.db:
             journal.put(task)
-        policy = unittest.mock.Mock()
-        journal.acknowledge(1, 2, 101, memory=True, on_confirm=policy)
+        journal.acknowledge(1, 2, 101, memory=True)
         self.assertEqual(journal.task(1)['phase'], 'done')
         self.assertFalse(journal.memory_jobs())
-        policy.assert_not_called()
 
     def test_silent_completion_does_not_update_cooldown_or_enqueue_memory(self):
         journal = self.open_journal()

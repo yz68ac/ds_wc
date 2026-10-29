@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "wechat-linux-adapter"
 version = "0.2.0"
 description = "Local Linux WeChat message, media and native submission adapter"
-readme = "docs/WECHAT_LIBRARY.md"
+readme = "docs/WECHAT_LINUX.md"
 requires-python = ">=3.11"
 classifiers = [
   "Operating System :: POSIX :: Linux",
@@ -17,6 +17,7 @@ dependencies = []
 [project.optional-dependencies]
 database = ["pycryptodome>=3.20", "zstandard>=0.22"]
 analysis = ["capstone>=5,<6"]
+login = ["zxing-cpp>=3,<4", "qrcode>=8,<9"]
 
 [dependency-groups]
 provider = ["model-provider"]

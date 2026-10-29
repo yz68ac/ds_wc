@@ -1,4 +1,4 @@
-"""Freeze per-request member labels only with current, validated source bindings."""
+"""Quarantine legacy temporary member labels; current identities are wxids."""
 import copy
 import re
 
@@ -11,6 +11,9 @@ def ambiguous_fields(record, fields):
 
 
 def bind_text(text, owner, mapping, members, source_texts):
+    # Current mappings are wxid -> wxid. A generated U token therefore cannot
+    # silently become a newly numbered member; only explicit old bindings or
+    # literal U tokens in the validated source text can be retained.
     literals=set().union(*(set(MEMBER_LABEL.findall(s)) for s in source_texts))
     used=set()
     def replace(match):
@@ -21,7 +24,7 @@ def bind_text(text, owner, mapping, members, source_texts):
         uid=mapping.get(label)
         if uid is None:
             raise ValueError('memory_unbound_label')
-        return '本人' if uid==owner else members[uid]['nickname']
+        return '本人' if uid==owner else uid
     return MEMBER_LABEL.sub(replace,text),sorted(used)
 
 

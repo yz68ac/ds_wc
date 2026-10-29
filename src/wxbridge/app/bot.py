@@ -17,12 +17,12 @@ from wxbridge.ai.context import select_context
 from wxbridge.config import PROJECT_ROOT
 from wxbridge.storage.person_memory import MemoryStore
 from wxbridge.storage.journal import Journal
-from wxbridge.wechat.messages import chunk_text, is_triggered, reply_chunks
+from wxbridge.wechat.messages import chunk_text, reply_chunks
 from wxbridge.wechat.store import StoreError, WeChatStore
 from wechat_linux.messages.pats import is_pat
 from wxbridge.app.workers import ProcessJob, WorkerLease, WorkerCleanupError
 from wxbridge.app.session_phases import SessionPhases
-from wxbridge.app.proactive import ProactiveController
+from wxbridge.app.participation import ParticipationController
 from wxbridge.app.learning import enqueue_if_active, eligible_messages
 from wxbridge.app.task_policy import GenerationFailure
 from wxbridge.app.delivery import DeliveryController
@@ -118,12 +118,26 @@ class GroupSession(SessionPhases):
         self.models = GroupModels(cfg)
         self.job_factory = self._new_job
         self.status_path = Path(cfg["state_file"]).parent / "live-status.json"
-        self.proactive = ProactiveController(self) if 'proactive' in cfg else None
+        try:
+            self.participation = ParticipationController(self)
+        except BaseException:
+            self.models.close()
+            self.journal.close()
+            raise
         self.maintenance_at = 0
         self.metrics, self.build = Metrics(), runtime_identity(cfg)
         self.status_signature, self.status_written_at = None, 0
         self.status_write_error = ''
         self.next_poll_at = 0
+        self.profile = None
+        if cfg['profile']['enabled'] and not cfg['ui'].get('dry_run') and not echo:
+            from wxbridge.app.group_profile import ProfileController
+            try:
+                self.profile = ProfileController(self)
+            except Exception:
+                self.models.close()
+                self.journal.close()
+                raise
         self.native_api = None
         if start_gateway and native_options['enabled'] and not cfg['ui'].get('dry_run'):
             from wxbridge.native.server import NativeServer
@@ -136,14 +150,6 @@ class GroupSession(SessionPhases):
     def last_local_id(self):
         return self.journal.get("cursor", 0)
 
-    def _triggered(self, msg):
-        if is_pat(msg):
-            return (self.cfg["target"]["trigger"].get("pat_enabled", True)
-                    and msg["pat"]["target"] == self.store.self_wxid and msg["pat"]["chat"] == self.chat_id)
-        if self.cfg["target"]["trigger"].get("require_mention_metadata", True):
-            return self.store.self_wxid in (msg.get("mentioned_users") or [])
-        return is_triggered(self.cfg, msg.get("text") or "")
-
     def _accept(self, msg, now):
         return self._admission_reason(msg, now) == "accepted"
 
@@ -154,9 +160,13 @@ class GroupSession(SessionPhases):
             return "unknown_sender"
         if msg["sender"] == self.store.self_wxid:
             return "own_message"
+        if not self.chat_id.endswith('@chatroom') and msg['sender'] != self.chat_id:
+            return 'private_sender_mismatch'
+        if not self.cfg['participation']['enabled']:
+            return 'participation_disabled'
         if msg.get("type") != 1 and not is_pat(msg):
             return "unsupported_type"
-        if not (msg.get("text") or "").strip():
+        if not is_pat(msg) and not (msg.get("text") or "").strip():
             return "empty_text"
         if sent is None:
             return "invalid_time"
@@ -166,10 +176,11 @@ class GroupSession(SessionPhases):
         previously_seen = deferred.get('local_id') == msg.get('local_id')
         if max_age > 0 and now - sent > max_age and not previously_seen:
             return "stale_at_intake"
-        if not self._triggered(msg):
-            if is_pat(msg):
-                return "pat_not_for_bot" if msg["pat"]["target"] != self.store.self_wxid else "pat_disabled_or_wrong_chat"
-            return "missing_mention_metadata" if msg.get("mentioned_users") is None else "not_mentioned"
+        if is_pat(msg):
+            if not self.cfg['participation']['pat_enabled']:
+                return 'pat_disabled'
+            if msg['pat']['chat'] != self.chat_id or msg['pat']['target'] != self.store.self_wxid:
+                return 'pat_not_for_bot'
         return "accepted"
 
     def _intake_metadata(self, msg, now):
@@ -185,12 +196,12 @@ class GroupSession(SessionPhases):
     def _poll_once(self):
         for _ in range(int(self.cfg['queue'].get('intake_max_pages', 4))):
             rows = self.store.messages_after(self.chat_id, self.last_local_id, limit=100)
+            if self.profile:
+                self.profile.observe(rows)
             now, old_cursor = time.time(), self.last_local_id
-            events = self.journal.intake(rows, lambda m: self._accept(m, now), now,
-                                         float(self.cfg["queue"]["debounce_seconds"]),
-                                         describe=lambda m: self._intake_metadata(m, now),
-                                         observe=(lambda m, accepted: self.proactive.observe(m, accepted, now))
-                                         if self.proactive else None, limits=self.cfg['queue'])
+            events = self.journal.intake_participation(rows, lambda m: self._accept(m, now), now,
+                ttl_seconds=float(self.cfg['target']['max_message_age_seconds']), limits=self.cfg['queue'],
+                describe=lambda m: self._intake_metadata(m, now))
             for event in events:
                 if event["real_mention"] or event["text_has_at"] or event["kind"] == "pat":
                     self.log.info("接收判定 metadata=%s", json.dumps(event, ensure_ascii=False))
@@ -202,12 +213,15 @@ class GroupSession(SessionPhases):
                 raise StoreError("消息分页游标未前进")
 
     def _new_job(self, kind, payload, *, timeout):
-        if kind in ('generate', 'memory', 'proactive', 'proactive_reply'):
+        if kind in ('generate', 'memory', 'participation', 'group_profile'):
             return self.models.submit(kind, payload, timeout=timeout)
         return ProcessJob(kind, payload, timeout=timeout)
 
     def submit_images(self, request, *, deadline=None):
         return self.models.submit_images(request, deadline=deadline)
+
+    def profile_snapshot(self, rows):
+        return self.profile.snapshot(rows) if self.profile else None
 
     def _poll_messages(self, *, force=False):
         if not force and time.monotonic() < self.next_poll_at:
@@ -215,8 +229,6 @@ class GroupSession(SessionPhases):
         with self.metrics.measure('pre_send_intake' if force else 'intake'):
             self._poll_once()
         self.next_poll_at = time.monotonic() + float(self.cfg.get('poll_interval_seconds', 2))
-        # 可选合并模式只在补齐新消息后封批，避免较长轮询跨过窗口末尾。
-        self.journal.seal(time.time())
         return True
 
     def _refresh_before_send(self):
@@ -224,8 +236,7 @@ class GroupSession(SessionPhases):
             self.account.refresh_before_send()
             return
         self._poll_messages(force=True)
-        if self.proactive:
-            self.proactive.priority(time.time())
+        self.participation.priority(time.time())
 
     def _generation_step(self):
         self._poll_generation_results()
@@ -233,7 +244,8 @@ class GroupSession(SessionPhases):
 
     def _poll_generation_results(self):
         for task_id, (version, job) in list(self.generators.items()):
-            if self.journal.task(task_id)["version"] != version:
+            current = self.journal.task(task_id)
+            if self.participation.expire_reply(current, time.time()) or current["version"] != version:
                 job.close()
                 del self.generators[task_id]
                 self.log.info("废弃生成 task=%s version=%s", task_id, version)
@@ -267,6 +279,8 @@ class GroupSession(SessionPhases):
         started = 0
         candidates = self.journal.generation_candidates(self.cfg['queue'].get('generation_lookahead', 4))
         for task in candidates:
+            if task.get('trigger_kind') == 'participation' and self.participation.expire_reply(task, time.time()):
+                continue
             head = self.journal.head()
             if head and head.get('blocked_reason'):
                 break
@@ -300,8 +314,9 @@ class GroupSession(SessionPhases):
                     except Exception as exc:
                         self.memory_error = type(exc).__name__
                         self.log.warning("跳过记忆背景 category=%s", self.memory_error)
+                profile = self.profile_snapshot([*context, *task['triggers']])
                 prompt = build_prompt(self.cfg, context, trigger, self.chat_title, task["triggers"],
-                                      memory=memory, account=self.store.self_wxid)
+                                      memory=memory, account=self.store.self_wxid, profile=profile)
                 echo = "[echo] " + "\n".join(m["text"] for m in task["triggers"]) if self.echo else None
                 timeout = float(model_settings(self.cfg)['timeout_seconds']) + 15
                 if self.cfg.get("search", {}).get("enabled", True) and not self.echo:
@@ -325,7 +340,10 @@ class GroupSession(SessionPhases):
                             task = self.journal.reserve_native_images(task_id, version,
                                 images[:self.cfg['vision']['max_images']])
                     payload += (dict(context=context, triggers=task["triggers"], chat_title=self.chat_title, images=images,
-                                     memory=memory, account=self.store.self_wxid),)
+                                     memory=memory, account=self.store.self_wxid,
+                                     profile=profile),)
+                if task.get('reply_expires_at') is not None:
+                    timeout = min(timeout, max(0, task['reply_expires_at']-time.time()))
                 with WorkerLease(self.job_factory("generate", payload, timeout=timeout)) as lease:
                     with self.journal.db:
                         task["generation"] = "running"
@@ -378,7 +396,8 @@ class GroupSession(SessionPhases):
     def _validate_delivery(self, task, now):
         if self.account is not None and not self.account.can_send(self):
             return False
-        return self.proactive.validate(task, now) if self.proactive else True
+        return (self.journal.get('identity') == dict(account=self.store.self_wxid, chat=self.chat_id)
+                and (task.get('next_chunk', 0) > 0 or now < task.get('reply_expires_at', float('inf'))))
 
     def _pause_memory(self):
         if self.memory_job:
@@ -420,7 +439,7 @@ class GroupSession(SessionPhases):
             if now-self.memory_pruned_at >= 60:
                 self.memory.prune(now)
                 self.memory_pruned_at = now
-            occupied = len(self.generators)+int(bool(self.proactive and self.proactive.job))
+            occupied = len(self.generators)+int(self.participation.job is not None)
             if not jobs or self.memory_job:
                 return
             record = jobs[0]
@@ -449,7 +468,8 @@ class GroupSession(SessionPhases):
             triggers = [m for m in context if m["local_id"] in ids]
             if len(triggers) != len(ids):
                 raise ValueError("memory_source_unavailable")
-            value = snapshot(self.cfg, context, triggers, self.journal.get("identity"), self.memory, now, window=record.get('window'))
+            value = snapshot(self.cfg, context, triggers, self.journal.get("identity"), self.memory, now,
+                             window=record.get('window'), profile=self.profile_snapshot([*context, *triggers]))
             if record.get('origin') == 'activity':
                 settings = self.cfg['memory']['learning']
                 fresh = eligible_messages([m for m in context if m['local_id'] <= max(ids)], self.store.self_wxid, end, settings,
@@ -473,7 +493,7 @@ class GroupSession(SessionPhases):
             if avatars.get("enabled"):
                 value["avatars"] = {}
                 new_labels = {m["member"] for m in [*value["messages"], *value.get("interactions", [])]}
-                for uid in sorted(value["members"], key=lambda uid: int(value["members"][uid]["label"][1:])):
+                for uid in sorted(value["members"]):
                     if uid not in self.memory.data["members"] and value["members"][uid]["label"] not in new_labels:
                         continue  # 已遗忘且只有旧发言的成员，不从旧窗口再导入头像。
                     initial = self.memory.data["members"].get(uid, {}).get("initial_impression", {})
@@ -550,8 +570,7 @@ class GroupSession(SessionPhases):
         status.update(pid=os.getpid(), updated_at=time.time(), started_at=self.started_at,
                       dry_run=bool(self.cfg["ui"].get("dry_run")), echo=self.echo,
                       model_channels=self.models.status(), generation_workers=len(self.generators), context_window_seconds=self.cfg["target"]["context_window_seconds"],
-                      require_mention_metadata=True,
-                      pat_enabled=self.cfg["target"]["trigger"].get("pat_enabled", True))
+                      pat_enabled=self.cfg['participation']['pat_enabled'])
         status.update(build=self.build, metrics=self.metrics.snapshot())
         status['configured_backend'] = self.cfg['ui']['backend']
         status['alerts'] = [name for name, present in (
@@ -560,6 +579,7 @@ class GroupSession(SessionPhases):
             ('memory_quarantined', bool(status.get('memory_quarantined')))) if present]
         status["memory"] = dict(enabled=self.memory is not None, running=self.memory_job is not None,
                                 error=self.memory_error, **(self.memory.status(time.time()) if self.memory else {}))
+        status['profile'] = self.profile.status() if self.profile else dict(enabled=False)
         status['reply_style'] = {key:self.cfg.get('reply_style', {}).get(key, default)
             for key, default in (('wechat_emoticons_enabled', False), ('omit_trailing_period', True))}
         if self.instance_id is not None:
@@ -602,8 +622,9 @@ class GroupSession(SessionPhases):
             for _, job in self.generators.values():
                 stack.callback(job.close)
             stack.callback(self._pause_memory)
-            if self.proactive:
-                stack.callback(self.proactive.cancel, 'stopped')
+            if self.profile:
+                stack.callback(self.profile.close)
+            stack.callback(self.participation.cancel, 'stopped')
             if self.native_api:
                 stack.callback(self.native_api.close)
 

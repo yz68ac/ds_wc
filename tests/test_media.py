@@ -160,7 +160,8 @@ class LocalImageTests(unittest.TestCase):
         self.path.write_bytes(png())
         generation = self.generation()
         prompt, metadata = self.prepare(generation)
-        self.assertEqual(prompt[0], dict(role="system", content="合成人格"))
+        from wxbridge.ai.prompts import system_prompt
+        self.assertEqual(prompt[0], dict(role='system', content=system_prompt(self.cfg)))
         blocks = prompt[1]["content"]
         self.assertEqual(blocks[-1]["type"], "image_url")
         uri = blocks[-1]["image_url"]["url"]
@@ -184,8 +185,9 @@ class LocalImageTests(unittest.TestCase):
                 prompt, metadata = self.prepare(generation)
                 body = prompt[1]['content']
                 text = body[0]['text'] if isinstance(body, list) else body
-                self.assertIn('[BOT（你）]: 已发出的看图说明', text)
-                self.assertNotIn(generation['account'], text)
+                self.assertIn('"sender": "'+generation['account']+'"', text)
+                self.assertIn('"is_bot": true', text)
+                self.assertNotIn('"sender": "BOT"', text)
                 self.assertEqual(metadata['images'], int(available))
 
     def test_missing_pixels_explicitly_unavailable_without_fake_image_block(self):
@@ -458,4 +460,6 @@ class VisionClientTests(unittest.TestCase):
         with nullcontext():
             cfg = load_config(Path(__file__).parent/"nonexistent.json")
         self.assertTrue(cfg["vision"]["enabled"])
-        self.assertEqual(cfg["queue"]["debounce_seconds"], 0)
+        self.assertEqual(cfg["participation"]["debounce_seconds"], 2)
+        self.assertNotIn('debounce_seconds',cfg['queue'])
+        self.assertNotIn('trigger',cfg['target'])

@@ -26,8 +26,8 @@ MESSAGES=[dict(role='system',content='PRIVATE_PERSONA'),dict(role='user',content
 
 def config(provider='openai_responses'):
     cfg=default_config()
-    cfg['models']['reply']=dict(provider=provider,base_url='https://synthetic.example/v1',api_key_env='SYNTHETIC_KEY',
-                              model='synthetic-model',thinking='enabled',reasoning_effort='max',max_tokens=4096)
+    cfg['model_clients']['reply'] = 'anthropic' if provider == 'anthropic' else 'openai'
+    cfg['models']['reply']['options'].update(thinking='enabled', reasoning_effort='max', max_tokens=4096, temperature=1)
     return cfg
 
 
@@ -252,43 +252,44 @@ class ProfileTests(unittest.TestCase):
 
 
 
-    def test_auto_search_is_selected_before_http_and_gateway_can_disable_native_tools(self):
+    def test_auto_search_is_selected_before_http_and_explicit_external_override_works(self):
         cfg=config();cfg['search']['backend']='auto';c=client(cfg)
         with patch.object(c,'_post',return_value=response()) as post,patch('wxbridge.ai.search.SearchClient') as external:
             answer_with_search(cfg,c,MESSAGES)
         self.assertEqual(post.call_args.args[0]['tools'],[dict(type='web_search')]);external.assert_not_called()
-        cfg['models']['reply']['native_search_supported']=False;c=client(cfg)
-        with patch.object(c,'_post',return_value=response()) as post:
+        cfg['search']['backend']='external';c=client(cfg)
+        with patch.object(c,'_post',return_value=response()) as post, patch('wxbridge.ai.search.SearchClient'):
             answer_with_search(cfg,c,MESSAGES)
         self.assertEqual(post.call_args.args[0]['tools'][0]['type'],'function')
-        cfg['search']['backend']='native'
-        with self.assertRaises(ValueError):validate_models(cfg)
+        cfg['model_clients']['reply']='deepseek';cfg['search']['backend']='native'
+        with self.assertRaisesRegex(ValueError, 'unsupported_native_search'):validate_models(cfg)
 
     def profile_cfg(self):
         cfg=default_config()
-        cfg['model_profiles']={'terra':dict(provider='openai_responses',base_url='https://api.openai.com/v1',
-                                          api_key_env='OPENAI_API_KEY',model='gpt-6.1-terra'),
-                               'claude':dict(provider='anthropic',base_url='https://api.anthropic.com/v1',
-                                           api_key_env='ANTHROPIC_API_KEY',model='synthetic-claude')}
-        cfg['model_profile']='terra';return cfg
+        cfg['model_clients'].update(reply='openai', background='anthropic')
+        cfg['models']['reply']['model']='synthetic-openai'
+        cfg['models']['memory']['model']='synthetic-claude'
+        return cfg
 
-    def test_global_profile_and_role_override_keep_judgment_disabled(self):
-        cfg=self.profile_cfg();cfg['models']['memory']={'profile':'claude','reasoning_effort':'high'}
+    def test_explicit_clients_and_role_options_keep_judgment_disabled(self):
+        cfg=self.profile_cfg();cfg['models']['memory']['options']['reasoning_effort']='high'
         original=deepcopy(cfg);validate_models(cfg)
-        self.assertEqual(model_settings(cfg,'reply')['model'],'gpt-6.1-terra')
+        self.assertEqual(model_settings(cfg,'reply')['model'],'synthetic-openai')
         self.assertEqual(model_settings(cfg,'participation')['thinking'],'disabled')
-        self.assertEqual(model_settings(cfg,'memory')['provider'],'anthropic')
+        self.assertEqual(model_settings(cfg,'memory')['provider'],'anthropic_messages')
         self.assertEqual(model_settings(cfg,'memory')['reasoning_effort'],'high')
         self.assertEqual(cfg,original)
 
-    def test_legacy_configuration_is_unchanged_without_profile_selection(self):
+    def test_role_token_limit_is_taken_from_explicit_model_options(self):
         cfg=default_config();validate_models(cfg)
         self.assertEqual(model_settings(cfg)['provider'],'deepseek')
-        self.assertEqual(model_settings(cfg,'memory')['max_tokens'],cfg['memory']['max_tokens'])
+        self.assertEqual(model_settings(cfg,'memory')['max_tokens'],cfg['models']['memory']['options']['max_tokens'])
 
-    def test_config_loader_accepts_selection_without_reading_env_or_replacing_persona(self):
+    def test_resolver_accepts_explicit_clients_and_rejects_removed_profiles(self):
+        from wxbridge.config import resolve_config
         cfg=self.profile_cfg()
-        with nullcontext(),patch('pathlib.Path.exists',return_value=False):
-            loaded=load_config(Path('synthetic-missing.json'))
-        self.assertEqual(model_settings(_deep_merge(loaded,cfg))['provider'],'openai_responses')
-        self.assertEqual(loaded['deepseek']['system_prompt_file'],DEFAULTS['deepseek']['system_prompt_file'] if not DEFAULTS['deepseek']['system_prompt_file'] else str((Path.cwd()/DEFAULTS['deepseek']['system_prompt_file']).resolve()))
+        loaded=resolve_config(cfg, Path('synthetic-missing.json'), environment=False)
+        self.assertEqual(model_settings(loaded)['provider'],'openai_responses')
+        for key in ('model_profile', 'model_profiles', 'deepseek', 'persona'):
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, 'obsolete_model_configuration'):
+                resolve_config(dict(cfg, **{key:{}}), Path('synthetic-missing.json'), environment=False)

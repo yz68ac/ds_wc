@@ -109,7 +109,7 @@ class SearchTests(unittest.TestCase):
         self.client.complete.side_effect = [dict(tool_calls=[call(query='合成资料')]),
             dict(tool_calls=[call('web_fetch', url='https://example.com/detail')]), dict(content='**查到了**，这次主要改了速度。')]
         text, _ = self.answer()
-        self.assertEqual(text, '查到了,这次主要改了速度')
+        self.assertEqual(text, '查到了，这次主要改了速度。')
         rules = self.client.complete.call_args.args[0][0]['content']
         self.assertTrue(rules.startswith('合成人格'))
         self.assertIn('只发纯文本', rules)
@@ -182,7 +182,8 @@ class SearchTests(unittest.TestCase):
         client = ClientFixture.__new__(ClientFixture)
         from wxbridge.ai.providers import get_protocol_adapter
         client.adapter = get_protocol_adapter('deepseek')
-        client.cfg = self.cfg['models']['reply']['options']
+        from wxbridge.ai.roles import model_settings
+        client.cfg = model_settings(self.cfg)
         client._post = Mock(return_value={"choices": [{"message": {"content": "最终回答", "tool_calls": [call(query="x")]}}]})
         self.assertTrue(client.complete([], tools=[{}])["tool_calls"])
         self.assertEqual(client.chat([]), "最终回答")
@@ -191,7 +192,8 @@ class SearchTests(unittest.TestCase):
         client = ClientFixture.__new__(ClientFixture)
         from wxbridge.ai.providers import get_protocol_adapter
         client.adapter = get_protocol_adapter('deepseek')
-        client.cfg = {**self.cfg['models']['reply']['options'], 'thinking':'enabled', 'reasoning_effort':'high'}
+        from wxbridge.ai.roles import model_settings
+        client.cfg = dict(model_settings(self.cfg), thinking='enabled', reasoning_effort='high')
         client._post = Mock(return_value={'choices':[{'message':{'content':'简短回答','reasoning_content':'PRIVATE_REASONING'}}]})
         self.assertEqual(client.chat([]),'简短回答')
         payload = client._post.call_args.args[0]

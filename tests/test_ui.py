@@ -61,8 +61,8 @@ class ChatSelectionTests(unittest.TestCase):
         first,second=Mock(),Mock()
         a.find_chat_item=Mock(return_value=second)
         a.chat_is_selected=Mock(side_effect=[False,False,True])
-        with patch('wxbridge.wechat.ui.X11') as x, patch('wxbridge.wechat.ui.time.sleep'), \
-                patch('wxbridge.wechat.ui.time.monotonic',side_effect=[0,3,4,5]):
+        with patch('wechat_linux.desktop.ui.X11') as x, patch('wechat_linux.desktop.ui.time.sleep'), \
+                patch('wechat_linux.desktop.ui.time.monotonic',side_effect=[0,3,4,5]):
             self.assertTrue(a._select_visible_chat('测试群',first))
         self.assertEqual(x.return_value.checked_click.call_count,2)
         x.return_value.key.assert_not_called()
@@ -73,7 +73,7 @@ class ChatSelectionTests(unittest.TestCase):
         a.require_app=Mock()
         a.chat_is_selected=Mock(return_value=True)
         a.find_chat_item=Mock()
-        with patch('wxbridge.wechat.ui.X11') as x:
+        with patch('wechat_linux.desktop.ui.X11') as x:
             a.select_chat('测试群')
         a.find_chat_item.assert_not_called()
         x.return_value.checked_click.assert_not_called()
@@ -85,7 +85,7 @@ class ChatSelectionTests(unittest.TestCase):
         a.chat_is_selected=Mock(return_value=None)
         a.find_chat_item=Mock(return_value=None)
         a.type_focused=Mock()
-        with patch('wxbridge.wechat.ui.X11') as x, patch('wxbridge.wechat.ui.time.sleep'):
+        with patch('wechat_linux.desktop.ui.X11') as x, patch('wechat_linux.desktop.ui.time.sleep'):
             with self.assertRaises(UIError):
                 a.select_chat('测试群')
         self.assertNotIn(('Return',),[call.args for call in x.return_value.key.call_args_list])
@@ -97,8 +97,8 @@ class ChatSelectionTests(unittest.TestCase):
         a._bounds=Mock(return_value=dict(x=260,y=160,width=240,height=65))
         a.find_chat_item=Mock(return_value=Mock())
         a.chat_is_selected=Mock(return_value=False)
-        with patch('wxbridge.wechat.ui.X11') as x, patch('wxbridge.wechat.ui.time.sleep'), \
-                patch('wxbridge.wechat.ui.time.monotonic',side_effect=[0,3,4,7]):
+        with patch('wechat_linux.desktop.ui.X11') as x, patch('wechat_linux.desktop.ui.time.sleep'), \
+                patch('wechat_linux.desktop.ui.time.monotonic',side_effect=[0,3,4,7]):
             with self.assertRaises(UIError):
                 a.select_chat('测试群')
         self.assertEqual(x.return_value.checked_click.call_count,2)
@@ -198,7 +198,7 @@ class ComposerTests(unittest.TestCase):
         self.a.type_into = Mock(return_value='xtype')
         self.a.read_text = Mock(side_effect=['', 'garbled'])
         self.a.click_node = Mock()
-        with patch('wxbridge.wechat.ui.X11'), patch('wxbridge.wechat.ui.time.sleep'):
+        with patch('wechat_linux.desktop.ui.X11'), patch('wechat_linux.desktop.ui.time.sleep'):
             with self.assertRaises(UIError):
                 self.a.send_text('完整中文', expected_chat='合成群')
         self.a.click_node.assert_not_called()
@@ -207,7 +207,7 @@ class ComposerTests(unittest.TestCase):
         self.a.composer = Mock(return_value=(Mock(), {}))
         self.a.read_text = Mock(return_value='用户未发出的草稿')
         self.a.type_into = Mock()
-        with patch('wxbridge.wechat.ui.X11'):
+        with patch('wechat_linux.desktop.ui.X11'):
             with self.assertRaises(UIError):
                 self.a.prepare_text('新的回复')
         self.a.type_into.assert_not_called()
@@ -224,7 +224,7 @@ class ComposerTests(unittest.TestCase):
     def test_post_submit_gi_exception_is_not_swallowed_or_retried(self):
         self.prepared()
         self.a.read_text = Mock(side_effect=["完整中文", UIError("GI Text 失败")])
-        with patch("wxbridge.wechat.ui.time.sleep"), patch("wxbridge.wechat.ui.X11") as x:
+        with patch("wechat_linux.desktop.ui.time.sleep"), patch("wechat_linux.desktop.ui.X11") as x:
             with self.assertRaises(UIError):
                 self.a.send_text("完整中文", "合成群")
             x.return_value.key.assert_not_called()
@@ -233,7 +233,7 @@ class ComposerTests(unittest.TestCase):
     def test_uncleared_draft_is_observable_metadata_without_resubmit(self):
         self.prepared()
         self.a.read_text = Mock(return_value="完整中文")
-        with patch("wxbridge.wechat.ui.time.sleep"):
+        with patch("wechat_linux.desktop.ui.time.sleep"):
             result = self.a.send_text("完整中文", "合成群")
         self.assertEqual(result["after_chars"], 4)
         self.a.submit_button.assert_called_once()
@@ -244,7 +244,7 @@ class ComposerTests(unittest.TestCase):
         action.get_n_actions.return_value = 1
         self.a.Atspi.Action.get_action_name.return_value = "click"
         action.do_action.return_value = True
-        with patch("wxbridge.wechat.ui.X11") as x:
+        with patch("wechat_linux.desktop.ui.X11") as x:
             self.assertEqual(self.a.submit_button(button), "atspi-action")
             x.return_value.click.assert_not_called()
             action.do_action.side_effect = RuntimeError("unknown")
@@ -259,7 +259,7 @@ class ComposerTests(unittest.TestCase):
         self.a.Atspi.Action.get_action_name.return_value = "SetFocus"
         bounds = dict(x=10, y=20, width=30, height=40)
         self.a._bounds = Mock(return_value=bounds)
-        with patch("wxbridge.wechat.ui.X11") as x:
+        with patch("wechat_linux.desktop.ui.X11") as x:
             x.return_value.checked_click.return_value = {"hit_native": True}
             self.assertEqual(self.a.submit_button(button), "x11-click")
             x.return_value.checked_click.assert_called_once_with(bounds)
@@ -280,7 +280,7 @@ class ComposerTests(unittest.TestCase):
         self.a.read_text = Mock(side_effect=["字"*41, ""])
         self.a._atspi_write = Mock(return_value=True)
         self.a.focus_editable = Mock()
-        with patch("wxbridge.wechat.ui.X11"):
+        with patch("wechat_linux.desktop.ui.X11"):
             self.assertEqual(self.a.clear_authorized_draft("合成群", 41),
                              {"before_chars": 41, "after_chars": 0})
         self.a.read_text = Mock(return_value="新草稿")
@@ -296,7 +296,7 @@ class ComposerTests(unittest.TestCase):
         self.a.read_text = Mock(side_effect=["", "文字"])
         self.a.type_into = Mock(return_value="xtype")
         self.a.focus_editable = Mock()
-        with patch("wxbridge.wechat.ui.X11"), patch("wxbridge.wechat.ui.time.sleep"):
+        with patch("wechat_linux.desktop.ui.X11"), patch("wechat_linux.desktop.ui.time.sleep"):
             self.a.prepare_text("文字")
         self.a.type_into.assert_called_once_with(node, "文字", "xtype")
 
@@ -356,16 +356,16 @@ class NativeWindowTests(unittest.TestCase):
         x._xdotool = Mock(return_value=Mock(stdout=b'3150\n'))
         paths = {'/proc/3150/exe': '/opt/wechat/RadiumWMPF/runtime/WeChatAppEx',
                  '/opt/wechat/wechat': '/opt/wechat/wechat'}
-        with patch('wxbridge.wechat.ui.os.path.realpath', side_effect=paths.get):
+        with patch('wechat_linux.desktop.ui.os.path.realpath', side_effect=paths.get):
             self.assertFalse(x._is_native_window('browser-window'))
         paths['/proc/3150/exe'] = '/opt/wechat/wechat'
-        with patch('wxbridge.wechat.ui.os.path.realpath', side_effect=paths.get):
+        with patch('wechat_linux.desktop.ui.os.path.realpath', side_effect=paths.get):
             self.assertTrue(x._is_native_window('native-window'))
 
     def test_xdotool_failure_is_not_treated_as_success(self):
         x = X11.__new__(X11)
         x.available = True
-        with patch('wxbridge.wechat.ui._run', return_value=Mock(returncode=1)):
+        with patch('wechat_linux.desktop.ui._run', return_value=Mock(returncode=1)):
             with self.assertRaises(UIError):
                 x._xdotool('click', '1')
 

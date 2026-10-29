@@ -97,7 +97,7 @@ class Coordinator:
         counts = [s.worker_counts() for s in self.sessions]
         status['generation_workers'] = sum(c['generation'] for c in counts)
         status['memory'] = dict(running=any(c['memory'] for c in counts))
-        status['proactive'] = dict(outcome='evaluating' if any(c['participation'] for c in counts) else 'idle')
+        status['participation'] = dict(outcome='evaluating' if any(c['participation'] for c in counts) else 'idle')
         status['inactive_queues'] = {s.instance_id: dict(queue_length=s.journal.pending_count(),
             unconfirmed=s.journal.has_intent()) for s in self.account.inactive}
         status['blocked_reason'] = 'account_send_unconfirmed' if status['send_blocked'] else ''
@@ -107,6 +107,8 @@ class Coordinator:
                 queue_length=value['queue_length'], cursor=value['cursor'],
                 blocked_reason=value.get('blocked_reason', ''), last_success=value['last_success'],
                 model_workers=sum(session.worker_counts().values()), model_channels=session.models.status(),
+                participation=value['participation'],
+                profile=session.profile.status() if session.profile else dict(enabled=False),
                 status_write_error=session.status_write_error)
         signature = json.dumps({k:v for k,v in status.items() if k != 'updated_at'}, sort_keys=True)
         clock = time.monotonic()

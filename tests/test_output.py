@@ -45,9 +45,8 @@ class OutputTests(unittest.TestCase):
         saved = copy.deepcopy(messages)
         prompt = response_prompt(messages)
         self.assertTrue(prompt[0]['content'].startswith('有主见的合成人格'))
-        self.assertIn('只输出纯文本', prompt[0]['content'])
-        self.assertIn('通常一句', prompt[0]['content'])
-        self.assertIn('尽量不超过30字', prompt[0]['content'])
-        self.assertIn('专业问答', prompt[0]['content'])
+        from wxbridge.ai.output import reply_rules
+        self.assertIn(reply_rules(), prompt[0]['content'])
+        self.assertNotIn('尽量不超过30字', prompt[0]['content'])
         self.assertEqual(prompt[1], messages[1])
         self.assertEqual(messages, saved)

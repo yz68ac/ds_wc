@@ -18,8 +18,8 @@ def change(delta=0, source='m1', event='一次具体互动', strength='clear', r
                 event=event if delta else '', strength=strength, revises=revises)
 
 
-def proposal(source='m1', delta=0, trust=0, event='一次具体互动', strength='clear', mood=None, revises=None):
-    return dict(updates=[dict(member='U1', memories=[], affinity=change(delta, source, event, strength, revises),
+def proposal(source='m1', delta=0, trust=0, event='一次具体互动', strength='clear', mood=None, revises=None, member='wxid_a'):
+    return dict(updates=[dict(member=member, memories=[], affinity=change(delta, source, event, strength, revises),
                              relationship=dict(trust=change(trust, source, event, strength), mood=mood))])
 
 
@@ -38,6 +38,8 @@ class RelationshipTests(unittest.TestCase):
         value = snapshot(self.cfg, [m], [m], IDENTITY, self.memory, when)
         suggestion = proposal('m'+str(identifier), delta, trust, event or f'不同事件{identifier}',
                               strength, mood, revises) if update else dict(updates=[])
+        if update:
+            suggestion['updates'][0]['member'] = who
         self.memory.apply(suggestion, value, when)
         return self.memory.data['members'][who]
 
@@ -248,9 +250,9 @@ class RelationshipTests(unittest.TestCase):
         prompt = client.return_value.complete.call_args.args[0]
         self.assertIn('不因不同意见', prompt[0]['content'])
         public = json.loads(prompt[1]['content'])
-        self.assertEqual(public['existing']['U1']['relationship']['trust'], 51)
+        self.assertEqual(public['existing']['wxid_a']['relationship']['trust'], 51)
         self.assertEqual(public['messages'][0]['id'], 'm2')
-        self.assertEqual(public['source_ids_by_member'], {'U1':['m2']})
+        self.assertEqual(public['source_ids_by_member'], {'wxid_a':['m2']})
         self.assertNotIn('avatars', public)
 
     def test_empty_historical_member_placeholder_is_ignored_without_reapplying_decay(self):
@@ -275,8 +277,8 @@ class RelationshipTests(unittest.TestCase):
             client.return_value.complete.return_value = dict(content='{"updates":[]}')
             extract(self.cfg, value)
         public = json.loads(client.return_value.complete.call_args.args[0][1]['content'])
-        self.assertEqual(set(public['members']), {value['members']['wxid_b']['label']})
-        self.assertEqual(public['source_ids_by_member'], {'U1':['m2']})
+        self.assertEqual(set(public['members']), {'wxid_a', 'wxid_b'})
+        self.assertEqual(public['source_ids_by_member'], {'wxid_b':['m2']})
 
     def test_recovery_request_explicitly_disables_expression_learning_without_extra_call(self):
         m = msg(1, NOW, '实际发言', 'wxid_a')
@@ -305,7 +307,7 @@ class RelationshipPipelineTests(unittest.TestCase):
         import test_learning as learning_tests
         self.enable()
         self.confirmed()
-        invalid = dict(updates=[], learning=[learning_tests.observation()])
+        invalid = dict(updates=[], learning=[learning_tests.observation(member='wxid_friend')])
         for attempt in range(1, 4):
             self.bot.memory_job[2].result = dict(ok=True, proposal=invalid)
             self.bot.tick()
@@ -323,7 +325,7 @@ class RelationshipPipelineTests(unittest.TestCase):
         self.assertFalse(value['learning_enabled'])
         self.assertEqual(value['learning_existing'], [])
         self.assertTrue(self.cfg['memory']['learning']['enabled'])
-        job.result = dict(ok=True, proposal=proposal(delta=1, trust=1))
+        job.result = dict(ok=True, proposal=proposal(delta=1, trust=1, member='wxid_friend'))
         self.bot.tick()
         self.assertFalse(self.bot.journal.memory_jobs())
         self.assertEqual(self.bot.journal.get('memory_error'), '')
@@ -356,7 +358,7 @@ class RelationshipPipelineTests(unittest.TestCase):
         self.enable()
         self.confirmed()
         job = self.bot.memory_job[2]
-        job.result = dict(ok=True, proposal=proposal(delta=1, trust=1, mood=emotion()))
+        job.result = dict(ok=True, proposal=proposal(delta=1, trust=1, mood=emotion(), member='wxid_friend'))
         self.bot.tick()
         p = self.bot.memory.data['members']['wxid_friend']
         self.assertEqual((p['affinity'], p['relationship']['trust']), (51, 51))

@@ -7,7 +7,6 @@ import unittest
 from wxbridge.config import DEFAULTS, _deep_merge
 from wxbridge.ai.context import ContextError, message_time, select_context
 from wxbridge.ai.prompts import build_prompt
-from wxbridge.wechat.messages import is_triggered
 from synthetic import NOW, msg
 
 
@@ -56,11 +55,6 @@ class ContextTests(unittest.TestCase):
     def test_non_text_messages_excluded(self):
         image = {**msg(1, NOW - 1, "图片占位"), "type": 3}
         self.assertEqual(select_context(self.cfg, [image], self.trigger), [])
-
-    def test_only_configured_complete_mention_triggers(self):
-        self.assertTrue(is_triggered(self.cfg, '@DeepSeek\u2005你好'))
-        for text in ('@DeepSeek123 你好', '@DeepSeeker 你好', '小d 你好', '随便聊聊'):
-            self.assertFalse(is_triggered(self.cfg, text))
 
     def test_messages_after_trigger_in_same_second_are_excluded(self):
         records = [msg(49, NOW, '同秒较早消息'), msg(51, NOW, '同秒之后消息')]

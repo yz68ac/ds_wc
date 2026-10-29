@@ -47,6 +47,7 @@ class PromptLayout:
     memory_lines: tuple[str, ...] = field(repr=False)
     max_chars: int
     budget_strategy: str
+    aliases: dict = field(default_factory=dict, repr=False)
 
 
 class PromptMessages(list):
@@ -124,7 +125,7 @@ class PromptComposer:
             start, end = slot.start, slot.end
             if inner[start:end] != slot.original:
                 raise ContextError('引用媒体内容与登记布局不匹配')
-            replacement = json.dumps(reference_data(reference, layout.labels, account), ensure_ascii=False)
+            replacement = json.dumps(reference_data(reference, layout.labels, account, aliases=layout.aliases), ensure_ascii=False)
             updated.append((start, end, replacement))
         for start, end, replacement in reversed(updated):
             inner = inner[:start]+replacement+inner[end:]

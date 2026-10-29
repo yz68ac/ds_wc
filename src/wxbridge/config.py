@@ -1,6 +1,7 @@
 """Account config and independently validated instance/<id>/config.json files."""
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 import math
 import os
@@ -28,6 +29,57 @@ def _load_defaults(path: Path) -> dict[str, Any]:
 DEFAULTS: dict[str, Any] = _load_defaults(DEFAULTS_FILE)
 
 
+def migrate_instance_data(data: dict[str, Any]) -> dict[str, Any]:
+    """Explicit one-time JSON conversion; normal loading never calls this helper.
+
+    Return an independent document and preserve identity, enable state, paths,
+    models and unknown business fields. The caller chooses where to save it.
+    """
+    if not isinstance(data, dict):
+        raise ValueError('instance_config_must_be_object')
+    result = deepcopy(data)
+    old = result.pop('proactive', None)
+    target, queue = result.get('target', {}), result.get('queue', {})
+    if not isinstance(target, dict) or not isinstance(queue, dict) or (old is not None and not isinstance(old, dict)):
+        raise ValueError('invalid_legacy_participation_configuration')
+    trigger = target.pop('trigger', None)
+    if trigger is not None and not isinstance(trigger, dict):
+        raise ValueError('invalid_legacy_participation_configuration')
+    debounce = queue.pop('debounce_seconds', None)
+    if old is None and trigger is None and debounce is None:
+        return result
+    existing = result.get('participation', {})
+    if not isinstance(existing, dict):
+        raise ValueError('invalid_participation_settings')
+    migrated = deepcopy(DEFAULTS['participation'])
+    if old is not None:
+        migrated['enabled'] = old.get('enabled', False)
+        opportunities = old.get('opportunities', {})
+        if not isinstance(opportunities, dict):
+            raise ValueError('invalid_legacy_participation_configuration')
+        names = opportunities.get('address_names', [])
+        if not isinstance(names, list) or any(not isinstance(n, str) for n in names):
+            raise ValueError('invalid_legacy_participation_configuration')
+        migrated['address_names'] = list(names)
+        if 'window_seconds' in old:
+            target.setdefault('context_window_seconds', old['window_seconds'])
+            result['target'] = target
+    if trigger is not None:
+        migrated['pat_enabled'] = trigger.get('pat_enabled', True)
+        names = trigger.get('mentions', [])
+        if not isinstance(names, list) or any(not isinstance(n, str) for n in names):
+            raise ValueError('invalid_legacy_participation_configuration')
+        migrated['address_names'] += [n.lstrip('@') for n in names if n.lstrip('@').strip()]
+        migrated['address_names'] = list(dict.fromkeys(migrated['address_names']))
+    if debounce is not None:
+        migrated['debounce_seconds'] = debounce
+        if type(debounce) in (int, float) and math.isfinite(debounce):
+            migrated['max_wait_seconds'] = max(migrated['max_wait_seconds'], debounce)
+    migrated.update(existing)
+    result['participation'] = migrated
+    return result
+
+
 def load_config(path: str | Path = "config.json") -> dict[str, Any]:
     p = Path(path)
     from wxbridge.instances import discover_instances, validate_account_fields
@@ -51,53 +103,72 @@ def resolve_config(data: dict, path: str | Path, *, environment=True, origins=No
         **field_origins(DEFAULTS, 'defaults'), **field_origins(data, 'config')}
     from wxbridge.wechat.transport import backend
     backend(cfg)
+    for section in ('queue', 'target'):
+        if not isinstance(data.get(section, {}), dict):
+            raise ValueError(section+' 必须为 JSON 对象')
     poll = cfg['poll_interval_seconds']
     if type(poll) not in (int, float) or not math.isfinite(poll) or poll <= 0:
         raise ValueError('poll_interval_seconds 必须是有限的正数')
-    obsolete = {'deepseek', 'model_profile', 'model_profiles', 'persona'} & set(data)
+    obsolete = {'deepseek', 'model_profile', 'model_profiles', 'persona', 'proactive'} & set(data)
     if 'generation_concurrency' in data.get('queue', {}):
         obsolete.add('queue.generation_concurrency')
+    if 'debounce_seconds' in data.get('queue', {}):
+        obsolete.add('queue.debounce_seconds')
+    if 'trigger' in data.get('target', {}):
+        obsolete.add('target.trigger')
     if obsolete:
         raise ValueError('obsolete_model_configuration:'+','.join(sorted(obsolete)))
+    profile = cfg['profile']
+    profile_fields = {'enabled', 'initial_history_days', 'initial_max_messages', 'batch_size',
+                      'min_new_messages', 'min_interval_seconds', 'summary_max_chars', 'analysis_max_chars'}
+    if (not isinstance(profile, dict) or set(profile) != profile_fields
+            or type(profile.get('enabled')) is not bool):
+        raise ValueError('invalid_profile_settings')
+    for key, minimum, maximum in (
+            ('initial_history_days', 1, 30), ('initial_max_messages', 1, 1000),
+            ('batch_size', 1, 100), ('min_new_messages', 1, 1000),
+            ('min_interval_seconds', 60, 86400), ('summary_max_chars', 100, 4000),
+            ('analysis_max_chars', 2000, 100000)):
+        if type(profile.get(key)) is not int or not minimum <= profile[key] <= maximum:
+            raise ValueError('invalid_profile_option:' + key)
+    if profile['min_new_messages'] > profile['batch_size']:
+        raise ValueError('profile.min_new_messages must not exceed batch_size')
     window = cfg["target"]["context_window_seconds"]
     if cfg['target'].get('context_budget_strategy', 'strict') not in ('strict', 'recent'):
         raise ValueError('target.context_budget_strategy must be strict/recent')
     if type(window) is not int or window <= 0:
         raise ValueError("target.context_window_seconds 必须是正整数")
-    if type(cfg["target"]["trigger"]["pat_enabled"]) is not bool:
-        raise ValueError("target.trigger.pat_enabled 必须为布尔值")
+    age = cfg['target']['max_message_age_seconds']
+    if type(age) not in (int, float) or not math.isfinite(age) or not 1 <= age <= 3600:
+        raise ValueError('target.max_message_age_seconds 必须为 1–3600 秒')
     style = cfg['reply_style']
     if not isinstance(style, dict):
         raise ValueError('reply_style 必须为 JSON 对象')
     for key in ('wechat_emoticons_enabled', 'omit_trailing_period'):
         if type(style[key]) is not bool:
             raise ValueError(f'reply_style.{key} 必须为布尔值')
-    proactive = cfg['proactive']
-    if not isinstance(proactive, dict) or type(proactive['enabled']) is not bool:
-        raise ValueError('proactive.enabled 必须为布尔值')
-    for key, minimum, maximum in (('window_seconds', 60, 3600), ('min_messages', 2, 100),
-            ('check_interval_seconds', 1, 60), ('evaluation_interval_seconds', 30, 3600),
-            ('min_new_messages', 1, 100), ('reply_ttl_seconds', 1, 300),
-            ('timeout_seconds', 1, 30), ('max_reply_chars', 1, 30),
-            ('entry_cooldown_seconds', 60, 3600), ('max_entries_per_hour', 0, 12)):
-        if type(proactive[key]) is not int or not minimum <= proactive[key] <= maximum:
-            raise ValueError(f'proactive.{key} 超出范围 {minimum}–{maximum}')
-    if proactive['reply_ttl_seconds'] < proactive['timeout_seconds']:
-        raise ValueError('proactive.reply_ttl_seconds 不能小于 timeout_seconds')
-    for section in ('opportunities', 'conversation'):
-        if not isinstance(proactive[section], dict) or type(proactive[section].get('enabled')) is not bool:
-            raise ValueError(f'proactive.{section}.enabled 必须为布尔值')
-    for section, key, minimum, maximum in (
-            ('opportunities', 'min_messages', 2, 100), ('opportunities', 'min_senders', 2, 20),
-            ('conversation', 'window_seconds', 30, 300), ('conversation', 'max_followups', 0, 2)):
-        value = proactive[section].get(key)
-        if type(value) is not int or not minimum <= value <= maximum:
-            raise ValueError(f'proactive.{section}.{key} 超出范围 {minimum}–{maximum}')
-    names = proactive['opportunities'].get('address_names')
+    participation = cfg['participation']
+    fields = {'enabled', 'debounce_seconds', 'max_wait_seconds', 'max_batch_messages',
+              'address_names', 'pat_enabled'}
+    if not isinstance(participation, dict) or set(participation) != fields:
+        raise ValueError('invalid_participation_settings')
+    for key in ('enabled', 'pat_enabled'):
+        if type(participation[key]) is not bool:
+            raise ValueError('participation.'+key+' 必须为布尔值')
+    for key, minimum in (('debounce_seconds', 0), ('max_wait_seconds', 0.1)):
+        value = participation[key]
+        if type(value) not in (int, float) or not math.isfinite(value) or not minimum <= value <= 60:
+            raise ValueError('participation.'+key+' 超出允许范围')
+    if participation['max_wait_seconds'] < participation['debounce_seconds']:
+        raise ValueError('participation.max_wait_seconds 不能小于 debounce_seconds')
+    size = participation['max_batch_messages']
+    if type(size) is not int or not 1 <= size <= 32:
+        raise ValueError('participation.max_batch_messages 必须为 1–32 的整数')
+    names = participation['address_names']
     if (not isinstance(names, list) or len(names) > 10
             or any(not isinstance(n, str) or not 1 <= len(n.strip()) <= 32
                    or any(ord(c) < 32 for c in n) for n in names)):
-        raise ValueError('proactive.opportunities.address_names 必须为最多10个非空短称呼')
+        raise ValueError('participation.address_names 必须为最多10个非空短称呼')
 
     # 环境变量覆盖常用项
     if environment and os.environ.get("WX_DB_DIR"):
@@ -122,9 +193,6 @@ def resolve_config(data: dict, path: str | Path, *, environment=True, origins=No
     if not queue_path.is_absolute():
         queue_path = base / queue_path
     cfg["queue"]["file"] = str(queue_path.resolve())
-    if (type(cfg['queue']['debounce_seconds']) not in (int, float)
-            or not math.isfinite(float(cfg['queue']['debounce_seconds'])) or float(cfg["queue"]["debounce_seconds"]) < 0):
-        raise ValueError("queue.debounce_seconds 必须大于或等于 0（0 表示每次 @ 独立排队）")
     if (type(cfg['ui']['send_confirm_timeout_seconds']) not in (int, float)
             or not math.isfinite(float(cfg['ui']['send_confirm_timeout_seconds'])) or float(cfg["ui"]["send_confirm_timeout_seconds"]) <= 0):
         raise ValueError("ui.send_confirm_timeout_seconds 必须大于 0")

@@ -61,10 +61,6 @@ class AccountRuntime:
     def can_send(self, session):
         if self.sending() is not None:
             return False
-        head = session.journal.head()
-        if head and head.get('trigger_kind') == 'proactive':
-            if any(s.has_foreground_tasks() for s in self.sessions):
-                return False
         latest = max((s.journal.get('last_success', 0) for s in self.sessions), default=0)
         return time.time()-latest >= self.send_gap
 

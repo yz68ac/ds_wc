@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import test_memory as memory_tests
 import test_context_pipeline as pipeline
-import test_proactive as proactive_tests
+import test_conversation as conversation
 from synthetic import NOW, msg
 from wxbridge.ai.memory import snapshot
 from wxbridge.storage.memory_render import render_memory
@@ -82,12 +82,15 @@ class MemoryContractTests(unittest.TestCase):
             case.bot.tick()
         self.assertEqual(capture.call_count, 1)
 
-    def test_many_participation_candidates_share_one_view(self):
+    def test_participation_does_not_render_personal_memories_before_selecting_a_recipient(self):
         self.seeded()
-        case = proactive_tests.ProactivePipelineTests('runTest')
+        case = conversation.ConversationTests('runTest')
         case.setUp(); self.addCleanup(case.doCleanups)
         case.bot.memory = self.memory
         with patch.object(self.memory, 'view', wraps=self.memory.view) as capture:
-            case.chat(count=10)
-        self.assertTrue(any(job.kind == 'proactive' for job in case.jobs))
-        self.assertEqual(capture.call_count, 1)
+            case.ordinary('甲的问题', sender='wxid_a')
+            case.ordinary('乙的问题', sender='wxid_b')
+        self.assertEqual(case.decision_jobs[0].kind, 'participation')
+        self.assertEqual(capture.call_count, 0)
+        case.decision([1])
+        self.assertEqual(case.bot.journal.head()['sender'], 'wxid_a')

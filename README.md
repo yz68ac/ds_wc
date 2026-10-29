@@ -1,111 +1,41 @@
-> 模型配置与生命周期已重构：请以 [模型接口](docs/MODEL_API.md) 为准。每群三条线程通道，旧 profile/persona 和模型总额度已移除。
+# 微信适配与模型调用
 
-# 微信群聊 × DeepSeek
+源码分为三个职责：
 
-本仓库的源码分为三个部分：`provider` 是独立的模型调用层，`wxbridge` 是微信群聊机器人，`wechat_linux` 是可单独使用的 Linux 微信适配与分析库。机器人通过该库读消息和发送，模型供应商可在配置中选择。主进程轮询本机数据库，真实 @ 独立排队；模型与发送使用工作进程，发送结果以新增本人发出记录确认。
+| 模块 | 作用 | 当前文档 |
+| --- | --- | --- |
+| provider | OpenAI、Anthropic、DeepSeek 的同步调用、路由及图片生成 | [用法](docs/PROVIDER.md) |
+| wechat_linux | Linux 微信数据库、消息、媒体、原生提交与版本分析 | [状态和调用方式](docs/WECHAT_LINUX.md) |
+| wxbridge | 账号协调、群/私聊实例、模型通道、业务队列、记忆和发送确认 | [代码地图](src/wxbridge/README.md) |
 
-当前开发重点是微信版本升级、调试与分析。研究库的入口见 [wechat_linux 代码地图](src/wechat_linux/README.md) 和 [离线分析说明](docs/WECHAT_ANALYSIS.md)；机器人入口与配置说明保留在下方。
+## 从哪里开始
 
-项目目前用于受邀协作，许可证暂未选定。Windows 支持编辑和离线测试，正式运行依赖 Linux 微信；现有启动、登录和恢复保留 Xvfb / X11 / AT-SPI 环境，后台文本发送已脱离聊天窗口。已有实机验证针对 Debian 13 amd64、微信 4.1.13.26；客户端升级需要重新核对适配。拍一拍解析仍属实验功能，实时同步尚未稳定验收。
+- 调模型：安装本地 model-provider 包，配置 provider 的 .env，使用 create_client() 和 ModelRequest。
+- 接 Linux 微信：先看能力表和 Python 示例。原生图片发送已有代码，当前仍未完成实机验证。
+- 调试或升级微信：[历史参考资料](docs/reference/README.md) 保留逆向分析、版本验证、部署和故障记录；现行接口以两份当前文档为准。
 
-## 功能
-
-- 真实 @ 触发、默认五分钟上下文、队列恢复、冷却等待与逐片发送确认
-- [后台服务文本发送](docs/NATIVE_API.md)：普通回复与外部请求共用队列，不选会话、不碰草稿；[微信分析总结图](docs/NATIVE_ANALYSIS.md)
-- 引用文字和本地图片理解，按需联网搜索；等待提示由配置选择，默认关闭
-- 独立人格提示词、短答与纯文本偏好、可选微信内置表情
-- 按稳定成员 ID 隔离的记忆、关系与语境表达学习
-- [多群独立实例](docs/MULTI_GROUP.md)：共享一个微信账号，每群独立人格、模型、记忆和队列
-- 可选自然主动入场、成员新消息续期的两分钟参与窗口，以及无桌面 Linux 的会话和开机恢复脚本
-
-## 先跑离线测试
-
-需要 Git、Python 3.13 或 3.14。测试使用合成数据，不需要微信账号、API Key、SSH 或服务器。
-
-```bash
-git clone https://github.com/yz68ac/ds_wc.git
-cd ds_wc
-python -m venv .venv
-```
-
-Windows PowerShell：
-
-```powershell
-.\.venv\Scripts\python.exe -m pip install -r requirements-test.txt
-.\.venv\Scripts\python.exe -X utf8 scripts/test-offline.py
-.\.venv\Scripts\python.exe scripts/check-repository.py --history
-```
-
-Linux：
-
-```bash
-.venv/bin/python -m pip install -r requirements-test.txt
-.venv/bin/python -X utf8 scripts/test-offline.py
-.venv/bin/python scripts/check-repository.py --history
-```
-
-Linux 的原生图片解码回归还需要 `libde265` 和 FFmpeg 运行库；Debian/Ubuntu 可用 `sudo apt install libde265-0 ffmpeg`。Windows 按平台跳过 Linux 专用检查。Python 运行依赖范围见 `requirements.txt`，离线验证使用 `requirements-test.txt` 中的固定版本。
-
-VS Code 打开仓库目录或 `wechat-group-bot.code-workspace`，选择仓库内 `.venv` 解释器即可。Windows 也可用 `Open-Project.cmd` 和 `Test-Offline.ps1`。
-
-## 目录与代码入口
-
-```text
-src/wxbridge/
-  cli.py、config.py       命令入口与配置加载
-  app/                    轮询、调度、工作进程与诊断
-  ai/                     模型、提示词、搜索、图片和输出
-  wechat/、native/        机器人接入与旧路径兼容入口
-  storage/                事务队列、人物记忆和语境学习
-src/provider/             独立模型路由、协议适配与传输
-src/wechat_linux/         可独立安装的微信适配与离线分析库
-  analysis/               ELF、版本指纹、候选搜索与可选反汇编
-  storage/、messages/     微信数据库、解密和消息解析
-  native/、desktop/       原生接口与桌面兼容操作
-  media/、sending/        图片处理与发送确认
-prompts/                  人格、后台整理提示词与表情资料
-scripts/                  开发检查、Linux 会话与发布入口
-  diagnostics/            数据库诊断与显式 API 验证
-  maintenance/            历史特定故障修复
-tests/                    合成数据回归
-docs/                     配置、架构和部署说明
-.github/                  自动检查与协作模板
-```
-
-研究微信先看 [库代码地图](src/wechat_linux/README.md)；研究机器人从 `wxbridge/cli.py → app/runtime.py → app/bot.py` 沿一次收发阅读。详细职责见 [代码导读](docs/CODE_GUIDE.md)、[机器人代码地图](src/wxbridge/README.md) 和 [native 注入与发送地图](src/wxbridge/native/README.md)；脚本用途见 [脚本地图](scripts/README.md)。
-
-## 配置与实际运行
-
-账号配置修改 `config.json`，各群修改 `instance/<id>/config.json`，API 配置修改 `src/provider/.env`。账号示例见 `examples/account.config.example.jsonc`，群示例见 `examples/instance/config.example.jsonc`，通用默认值由项目维护。 从仓库根目录直接执行 `python -m wxbridge` 前，请将 `src` 加入 Python 搜索路径：Linux 使用 `export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"`，PowerShell 使用 `$env:PYTHONPATH = "$PWD\src"`。`scripts/run-live.py` 和离线检查入口会自行加入该路径。
-
-模型调用层可通过 `pip install ./src/provider` 独立安装为 `model-provider`，SDK 作为其运行依赖自动安装；仓库的 `uv sync` 也会安装这个本地库。OpenAI、DeepSeek 和 `openai_compatible` 使用 OpenAI SDK，Anthropic 使用 Anthropic SDK。SDK 内部重试关闭，仍由机器人队列管理重试。`wechat_linux` 单独打包时不依赖这些模型 SDK。
+## 配置位置
 
 | 文件 | 用途 |
 | --- | --- |
-| `config.json` | 本机账号、数据库和运行资源配置，Git 忽略 |
-| `instance/<id>/config.json` | 各群独立配置，目录名为实例 ID，整个目录 Git 忽略 |
-| `src/provider/.env` | 模型接口、API Key 和代理，Git 忽略 |
-| `config.defaults.json` | 程序默认值和内置连接，必须随代码分发 |
-| `examples/account.config.example.jsonc` | 唯一带注释完整参考，含模型与搜索示例；程序不直接加载 |
-| `prompts/system.md` | 群聊人格，每次生成重新读取 |
-| `prompts/memory.md` | 后台整理提示词 |
-| `memory/` | 本机私有记忆，Git 忽略 |
+| config.json | 本地账号、数据库和运行资源，Git 忽略 |
+| `instance/<id>/config.json` | 独立群/私聊实例；enabled 控制启用，chat 使用稳定 ID |
+| `instance/<id>/system.md` | 可选的实例系统提示词 |
+| src/provider/.env | 模型连接、密钥和代理，Git 忽略 |
+| config.defaults.json | 程序默认配置 |
+| examples/account.config.example.jsonc | 账号配置示例 |
+| examples/instance/config.example.jsonc | 实例配置示例 |
 
-初次配置按 [部署说明](docs/DEPLOYMENT.md) 准备专用用户、原生微信、私有 `tmpfs,noswap`、会话与账号绑定。完整运行不能仅靠 `pip install`。配置项变更通常需重启监听；同一路径的人格文件修改从下一次生成生效。
+各实例的 reply/image/background 通道持有自己的模型 client，首次使用时创建并复用。同一通道串行，不同通道和实例可并行。账号层共享读库和发送确认协调。
 
-`python -m wxbridge run --dry-run` 关闭发送，仍可能调用 API；纯离线检查使用上面的测试脚本。`run --send` 显式启用发送。不要同时启动两个监听器或绕过收件人、发送意图和发出确认；桌面后端还需保护草稿及焦点。只读查看可用 `python3 -m wxbridge status --once`；交互查看用 `status`，原 `queue-status` JSON 接口保留。[面板操作说明](docs/STATUS.md)。
+## 开发入口
 
-## 文档
+Python 要求 3.11+。正式微信运行依赖 Linux，原生档案针对微信 4.1.13.26 x86_64。当前源码发行版本：wechat-linux-adapter 0.2.0、model-provider 0.3.1。
 
-完整分类入口见 [文档导航](docs/README.md)。
+安装开发依赖使用 python -m pip install -r requirements-test.txt，并安装本地 provider 包。直接从源码执行模块前，将仓库 src 加入 PYTHONPATH，具体命令见两份当前文档。
 
-| 内容 | 入口 |
-| --- | --- |
-| 配置与启动 | [配置项](docs/CONFIG.md)、[Linux 部署](docs/DEPLOYMENT.md)、[开机恢复](docs/BOOT_RECOVERY.md) |
-| 原生发送与注入 | [后台发送、CLI、Python 客户端与去重](docs/NATIVE_API.md)、[native 代码地图](src/wxbridge/native/README.md) |
-| 代码与排障 | [完整流程](docs/CODE_GUIDE.md)、[架构与故障边界](docs/ARCHITECTURE.md)、[常见问题](docs/TROUBLESHOOTING.md) |
-| 模型功能 | [引用](docs/REFERENCES.md)、[图片](docs/VISION.md)、[搜索](docs/SEARCH.md)、[表情](docs/EMOTICONS.md) |
-| 记忆与主动接话 | [人物记忆](docs/MEMORY.md)、[语境学习](docs/LEARNING.md)、[主动接话](docs/PROACTIVE.md) |
-| 参与开发 | [贡献流程](CONTRIBUTING.md)、[安全与隐私](SECURITY.md) |
+仓库检查入口为 python scripts/check-repository.py；需要运行离线测试时使用 python -X utf8 scripts/test-offline.py。真实接口及微信收发由使用方显式执行。
 
-提交前检查暂存内容及 Git 历史，不上传真实配置、聊天、账号 ID、数据库、登录状态或记忆。GitHub Actions 仅运行离线回归，不连接生产服务器、不自动部署。
+[脚本入口](scripts/README.md) · [开发约定](CONTRIBUTING.md) · [安全与隐私](SECURITY.md)
+
+许可证暂未选定，目前用于受邀协作。密钥、私有实例配置、账号数据、聊天、运行目录和记忆不随源码发布。

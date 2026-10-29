@@ -16,6 +16,8 @@ from wxbridge.ai.providers import ModelRequest, ModelResult, get_protocol_adapte
 from wxbridge.ai.roles import validate_models
 from wxbridge.ai.search import SearchClient, SearchError, answer_with_search
 from wxbridge.config import DEFAULTS
+from provider import create_client, load_config as provider_config
+from wxbridge.ai.roles import model_settings
 
 ROOT=Path(__file__).resolve().parents[1]
 
@@ -54,24 +56,24 @@ class ProviderTests(unittest.TestCase):
         with nullcontext():
             return ClientFixture(cfg or default_config(),**options)
 
-    def test_legacy_names_are_identity_aliases_not_a_second_implementation(self):
-        self.assertIs(ClientFixture,ClientFixture);self.assertIs(ModelError,ModelError)
+    def test_business_boundary_reuses_provider_errors_and_request_types(self):
+        from provider import ModelError as ProviderError, ModelRequest as ProviderRequest
+        self.assertIs(ModelError,ProviderError)
+        self.assertIs(ModelRequest,ProviderRequest)
 
-    def test_chat_completions_alias_validates_and_role_key_is_independent(self):
-        cfg=default_config()
-        cfg['models']['reply']=dict(provider='openai_compatible',base_url='https://synthetic.example/v1',
-                                   api_key_env='SYNTHETIC_OTHER_KEY',model='synthetic-model',thinking='disabled',reasoning_effort=None)
-        validate_models(cfg)
-        with patch.dict(os.environ,{'DEEPSEEK_API_KEY':'original-key','SYNTHETIC_OTHER_KEY':'other-key'},clear=True):
-            client=ClientFixture(cfg);memory=ClientFixture(cfg,role='memory')
-        self.assertEqual(client.api_key,'other-key');self.assertEqual(memory.api_key,'original-key')
-        self.assertEqual(str(client._sdk_client.base_url).rstrip('/')+'/chat/completions','https://synthetic.example/v1/chat/completions')
+    def test_chat_completions_connection_and_background_credentials_are_independent(self):
+        config=provider_config(ROOT/'tests/.synthetic-provider.env', environ={
+            'OPENAI_PROTOCOL':'openai', 'OPENAI_BASE_URL':'https://synthetic.example/v1',
+            'OPENAI_API_KEY':'other-key', 'DEEPSEEK_API_KEY':'original-key'})
+        with create_client('openai',config=config) as client, create_client('deepseek',config=config) as memory:
+            self.assertEqual(client.api_key,'other-key');self.assertEqual(memory.api_key,'original-key')
+            self.assertEqual(str(client._sdk_client.base_url).rstrip('/')+'/chat/completions','https://synthetic.example/v1/chat/completions')
 
     def test_provider_payloads_keep_images_tools_and_do_not_mutate_inputs(self):
         messages=[dict(role='user',content=[dict(type='text',text='PRIVATE_CHAT'),
                   dict(type='image_url',image_url=dict(url='data:image/png;base64,AAAA',detail='original'))])]
         tools=[dict(type='function',function=dict(name='lookup',parameters={'type':'object'}))]
-        original=deepcopy((messages,tools));settings=deepcopy(DEFAULTS['deepseek'])
+        original=deepcopy((messages,tools));settings=model_settings(default_config())
         for provider in ('deepseek','openai','openai_compatible'):
             adapter=get_protocol_adapter(provider);wire=adapter.build_payload(settings,ModelRequest(messages,tools,'none'))
             self.assertEqual(wire['messages'],messages);self.assertEqual(wire['tools'],tools)
@@ -121,39 +123,41 @@ class ProviderTests(unittest.TestCase):
         self.assertNotIn('PRIVATE',repr(request));self.assertNotIn('PRIVATE',repr(result))
 
 
-    def test_explicit_search_key_never_uses_the_replacement_chat_key(self):
-        cfg=default_config();cfg['search']['api_key_env']='SYNTHETIC_SEARCH_KEY'
-        cfg['models']['reply']['options']['api_key_env']='SYNTHETIC_NEW_CHAT_KEY'
-        with patch.dict(os.environ,{'SYNTHETIC_SEARCH_KEY':'search-key','SYNTHETIC_NEW_CHAT_KEY':'chat-key'},clear=True):
-            self.assertEqual(SearchClient(cfg).api_key,'search-key')
-        with patch.dict(os.environ,{'SYNTHETIC_NEW_CHAT_KEY':'chat-key'},clear=True):
-            with self.assertRaisesRegex(SearchError,'missing_api_key'):SearchClient(cfg)
-        cfg['search']['api_key_env']=''
-        with self.assertRaisesRegex(SearchError,'invalid_api_key_env'):SearchClient(cfg)
+    def test_search_uses_its_provider_connection_instead_of_chat_credentials(self):
+        cfg=default_config();cfg['model_clients']['reply']='openai'
+        for key in ('search-key', ''):
+            config=provider_config(ROOT/'tests/.synthetic-provider.env', environ={
+                'DEEPSEEK_API_KEY':key, 'OPENAI_API_KEY':'chat-key'})
+            with patch('wxbridge.ai.search.load_config',return_value=config):
+                if key: self.assertEqual(SearchClient(cfg).api_key,'search-key')
+                else:
+                    with self.assertRaisesRegex(SearchError,'missing_api_key'):SearchClient(cfg)
 
     def test_role_proxy_is_local_to_its_client_and_keeps_background_transport(self):
-        cfg=default_config()
-        cfg['models']['reply']=dict(profile='openai',proxy_url='http://127.0.0.1:10808')
-        validate_models(cfg)
-        chat=self.client(cfg);memory=self.client(cfg,role='memory')
+        config=provider_config(ROOT/'tests/.synthetic-provider.env', environ={
+            'OPENAI_API_KEY':'synthetic-key','DEEPSEEK_API_KEY':'synthetic-key',
+            'OPENAI_PROXY_URL':'http://127.0.0.1:10808'})
         original=deepcopy(dict(os.environ))
-        with patch('provider.transport.sdk_send',return_value={'ok':True}) as sdk_send:
-            chat._post({},2);memory._post({},2)
-        self.assertEqual(chat.cfg['proxy_url'],'http://127.0.0.1:10808')
-        self.assertIs(sdk_send.call_args_list[0].args[1], chat._sdk_client)
-        self.assertEqual(sdk_send.call_args_list[1].args[2], 'deepseek')
-        self.assertFalse(memory.cfg.get('proxy_url'))
+        with create_client('openai',config=config) as chat, create_client('deepseek',config=config) as memory:
+            with patch('provider.transport.sdk_send',return_value={'ok':True}) as sdk_send:
+                chat._post({},2);memory._post({},2)
+            self.assertEqual(chat.cfg['proxy_url'],'http://127.0.0.1:10808')
+            self.assertIs(sdk_send.call_args_list[0].args[1], chat._sdk_client)
+            self.assertEqual(sdk_send.call_args_list[1].args[2], 'deepseek')
+            self.assertFalse(memory.cfg.get('proxy_url'))
         self.assertEqual(dict(os.environ),original)
 
     def test_proxy_failure_never_falls_back_or_exposes_error_contents(self):
-        cfg=default_config();cfg['models']['reply']={'proxy_url':'http://127.0.0.1:10808'}
-        client=self.client(cfg)
-        with patch('provider.transport.sdk_send',side_effect=ModelError('connection_failed', retryable=True)) as send:
-            with self.assertRaisesRegex(ModelError,'connection_failed') as caught:client._post({},2)
-        self.assertEqual(send.call_count, 1)
-        self.assertNotIn('PRIVATE',str(caught.exception))
+        config=provider_config(ROOT/'tests/.synthetic-provider.env',environ={
+            'DEEPSEEK_API_KEY':'synthetic-key','DEEPSEEK_PROXY_URL':'http://127.0.0.1:10808'})
+        with create_client('deepseek',config=config) as client:
+            with patch('provider.transport.sdk_send',side_effect=ModelError('connection_failed', retryable=True)) as send:
+                with self.assertRaisesRegex(ModelError,'connection_failed') as caught:client._post({},2)
+            self.assertEqual(client.cfg['proxy_url'],'http://127.0.0.1:10808')
+            self.assertEqual(send.call_count, 1)
+            self.assertNotIn('PRIVATE',str(caught.exception))
 
-    def test_invalid_proxy_configuration_is_rejected_without_echoing_credentials(self):
+    def test_removed_role_connection_settings_are_rejected_without_echoing_credentials(self):
         for value in ('socks5://127.0.0.1:10808','https://proxy.example:443',
                       'http://PRIVATE:SECRET@proxy.example:80','http://proxy.example/path',
                       'http://proxy.example?PRIVATE','http://proxy.example:bad','http://proxy.example:0','',False,[],
@@ -176,7 +180,7 @@ assert callable(get_protocol_adapter('deepseek').build_payload)
         self.assertEqual(run.returncode,0,run.stderr.decode())
 
     def test_business_entrypoints_use_neutral_names_and_search_has_no_vendor_replay(self):
-        for name in ('src/wxbridge/ai/avatars.py','src/wxbridge/ai/memory.py','src/wxbridge/ai/proactive.py','src/wxbridge/app/workers.py'):
+        for name in ('src/wxbridge/ai/avatars.py','src/wxbridge/ai/memory.py','src/wxbridge/ai/participation.py','src/wxbridge/app/workers.py'):
             text=(ROOT/name).read_text(encoding='utf-8')
-            self.assertNotIn('ClientFixture',text);self.assertNotIn('ModelError',text)
+            self.assertNotIn('ClientFixture',text)
         self.assertNotIn('reasoning_content',(ROOT/'src/wxbridge/ai/search.py').read_text(encoding='utf-8'))

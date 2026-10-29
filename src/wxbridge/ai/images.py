@@ -93,7 +93,7 @@ def prepare_multimodal(cfg, base_prompt, generation):
         # without the account map. Production build_prompt records quote slots.
         prompt = build_prompt(cfg, generation["context"], triggers[-1], generation["chat_title"], triggers,
                               system_text=base_prompt[0]["content"], memory=generation.get("memory"),
-                              account=generation.get('account', ''))
+                              account=generation.get('account', ''), profile=generation.get('profile'))
     if blocks:
         text = prompt[1]["content"]
         prompt[1]["content"] = [{"type": "text", "text": text}, *blocks]

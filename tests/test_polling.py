@@ -24,8 +24,7 @@ class PollingTests(unittest.TestCase):
 
     def make_bot(self):
         self.cfg['poll_interval_seconds'] = 2
-        self.cfg['queue']['debounce_seconds'] = 0
-        self.cfg['proactive']['enabled'] = False
+        self.cfg['participation'].update(enabled=True, debounce_seconds=0)
         pipeline.PipelineTests.make_bot(self)
 
     def advance(self, seconds):
@@ -110,43 +109,53 @@ class PollingTests(unittest.TestCase):
         self.add(2)
         self.bot.tick()
         self.assertEqual(self.bot.last_local_id, 2)
-        self.assertEqual(len(self.bot.journal.tasks()), 2)
+        self.assertEqual(len(self.bot.journal.tasks()), 1)
+        self.assertEqual(self.bot.journal.participation_status()['pending'], 1)
         self.assertEqual(self.sends()[0].payload[2], '第一个回答')
         self.advance(.5)
         self.bot.tick()
         self.assertEqual(self.bot.journal.task(2)['generation'], 'running')
 
-    def test_new_real_mention_preempts_proactive_reply_during_pre_send_read(self):
-        self.cfg['proactive']['enabled'] = True
-        self.add(1, text='合成闲聊', mention=False)
+    def test_new_real_mention_does_not_cancel_approved_reply_during_pre_send_read(self):
+        self.add(1)
         self.bot.tick()
-        task = self.bot.journal.enqueue_proactive('合成主动短句', 1, self.now, self.now+60)
+        task = self.bot.journal.head()
+        self.jobs[-1].result = dict(ok=True, reply='已获准的完整回复')
         self.advance(.5)
         self.add(2)
         self.bot.tick()
-        self.assertFalse(self.sends())
-        self.assertEqual(self.bot.journal.task(task['id'])['phase'], 'done')
-        self.assertEqual(self.bot.journal.head()['trigger_kind'], 'mention')
+        self.assertEqual(len(self.sends()), 1)
+        self.assertEqual(self.sends()[0].payload[2], '已获准的完整回复')
+        self.assertIsNotNone(self.bot.journal.task(task['id'])['intent'])
+        self.assertEqual(self.bot.journal.head()['trigger_kind'], 'participation')
+        self.assertEqual(self.bot.journal.participation_status()['pending'], 1)
         self.assertEqual(self.bot.last_local_id, 2)
 
-    def test_optional_merge_reads_window_tail_before_sealing_and_never_sends_old_version(self):
+    def test_later_polled_tail_gets_its_own_decision_without_rewriting_reserved_sources(self):
         self.cfg['poll_interval_seconds'] = 4
-        self.cfg['queue']['debounce_seconds'] = 3
+        self.cfg['participation']['debounce_seconds'] = 3
         self.add(1)
         self.bot.tick()
-        old = self.jobs[-1]
-        old.result = dict(ok=True, reply='STALE_REPLY')
+        self.assertFalse(self.jobs)
         self.advance(3.5)
         self.add(2, sent=int(self.now-1))
         self.bot.tick()
-        self.assertEqual(self.bot.journal.head()['phase'], 'open')
+        old = self.jobs[-1]
+        self.assertEqual(self.bot.journal.head()['trigger_ids'], [1])
         self.assertFalse(self.sends())
         self.advance(.5)
         self.bot.tick()
-        self.assertEqual(self.bot.journal.head()['version'], 2)
-        self.assertTrue(old.closed)
-        self.assertEqual(self.bot.journal.head()['generation'], 'running')
-        self.assertFalse(self.sends())
+        self.assertEqual(self.bot.journal.participation_status()['pending'], 1)
+        self.assertEqual(self.bot.journal.head()['version'], 1)
+        self.assertFalse(old.closed)
+        old.result = dict(ok=True, reply='第一批的回复')
+        self.advance(.1)
+        self.bot.tick()
+        self.assertEqual(self.sends()[0].payload[2], '第一批的回复')
+        self.advance(3)
+        self.bot.tick()
+        self.assertEqual(self.bot.journal.task(2)['trigger_ids'], [2])
+        self.assertEqual(self.bot.journal.task(2)['generation'], 'running')
 
     def test_poll_deadline_uses_monotonic_clock_and_restart_polls_immediately(self):
         self.bot.tick()

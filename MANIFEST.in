@@ -1,5 +1,5 @@
 include pyproject.toml
-include docs/WECHAT_LIBRARY.md
+include docs/WECHAT_LINUX.md
 recursive-include src/wechat_linux *.py *.js *.json *.c
 exclude README.md CONTRIBUTING.md
 prune tests

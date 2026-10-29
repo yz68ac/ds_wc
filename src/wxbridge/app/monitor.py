@@ -22,7 +22,8 @@ PHASES = {'listening':'等待新消息', 'generating':'生成回复', 'queued':'
           'evaluating':'判断是否介入', 'generating_reply':'生成接话正文', 'silent':'本轮保持沉默',
           'waiting_new_messages':'等待新消息', 'waiting_conversation_reply':'等待可接续的新话',
           'entry_cooldown':'等待自主入场冷却', 'evaluation_cooldown':'等待判断间隔',
-          'below_threshold':'未达到入场条件', 'foreground_or_disabled':'前台优先或功能关闭'}
+          'below_threshold':'未达到入场条件', 'foreground_or_disabled':'前台优先或功能关闭',
+          'reply_queued':'等待完整回复', 'waiting':'等待新消息'}
 FILE_ERRORS = {'missing':'尚未生成', 'denied':'权限不足，请使用 root 或 wxbridge 账号',
                'invalid':'格式或文件类型无效', 'large':'文件超过读取上限', 'unavailable':'读取失败'}
 EVENTS = ('接收判定', '开始生成', '生成结束', '生成失败', '生成未启动', '废弃生成', '发送意图', '发送确认',
@@ -209,7 +210,10 @@ def remaining(session, now):
 def pages(snapshot, cfg, *, now=None):
     now = snapshot['collected_at'] if now is None else now
     s, services = mapping(snapshot.get('live')), mapping(snapshot.get('services'))
-    mem, pro, session = mapping(s.get('memory')), mapping(s.get('proactive')), mapping(s.get('conversation'))
+    mem, participation = mapping(s.get('memory')), mapping(s.get('participation'))
+    decision_required = participation.get('decision_required')
+    reply_flow = ('私聊直接回复' if decision_required is False else
+                  '群聊参与判断' if decision_required is True else '按实例配置分流')
     build = mapping(s.get('build'))
     summary = [health(snapshot, now), f'阶段：{phase(s.get("phase"))}    PID：{number(s.get("pid"))}',
         f'版本：{code(build.get("commit"))[:12]}    启动：{when(s.get("started_at"))}',
@@ -225,8 +229,9 @@ def pages(snapshot, cfg, *, now=None):
         f'发送阻塞：{error(s.get("blocked_reason"))}',
         f'记忆待整理：{number(s.get("memory_pending"))}    正在整理：{yes(mem.get("running"))}',
         f'记忆错误：{error(s.get("memory_error") or mem.get("error"))}',
-        f'主动参与：{yes(pro.get("enabled"))}    {phase(pro.get("outcome"))}',
-        f'参与窗口：{yes(session.get("active"))}    剩余：{remaining(session, now)}',
+        f'自动回复：{yes(participation.get("enabled"))}    '
+        + reply_flow,
+        f'待判断：{number(participation.get("pending", 0))}    判断中：{number(participation.get("running", 0))}',
         f'开机恢复阶段：{phase(mapping(snapshot.get("boot")).get("phase"))}']
     queue = [f"发送后端：{code(s.get('configured_backend'))}    拥塞：{code(mapping(s.get('backpressure')).get('reason'))}",
              f"最近明确失败：{code(mapping(s.get('last_delivery_failure')).get('error'))}",
@@ -273,12 +278,14 @@ def pages(snapshot, cfg, *, now=None):
     if recovery:
         detail += [f'最近批次恢复：任务 {number(recovery.get("task_id"))} / {code(recovery.get("stage"))}',
                    f'  原因：{error(recovery.get("reason"))}']
-    detail += ['', f'主动参与启用：{yes(pro.get("enabled"))}    {phase(pro.get("outcome"))}',
-        f'当前角色：{code(pro.get("model_role"))}    机会：{code(pro.get("opportunity"))}',
-        f'判断次数：{number(pro.get("evaluations"))}    最近判断：{when(pro.get("last_evaluated_at"))}',
-        f'参与错误：{error(pro.get("error"))}',
-        f'窗口启用：{yes(session.get("active"))}    剩余：{remaining(session, now)}',
-        f'成员最近活动：{when(session.get("activity_at"))}    已接话：{number(session.get("followups_sent"))}']
+    counts = mapping(participation.get('counts'))
+    detail += ['', f'自动回复启用：{yes(participation.get("enabled"))}    {phase(participation.get("outcome"))}',
+        '回复流程：'+reply_flow,
+        f'待判断：{number(participation.get("pending", 0))}    判断中：{number(participation.get("running", 0))}',
+        f'获准：{number(counts.get("approved", 0))}    沉默：{number(counts.get("silent", 0))}',
+        f'过期：{number(counts.get("expired", 0))}    失败：{number(counts.get("error", 0))}    取消：{number(counts.get("cancelled", 0))}',
+        f'最近判断耗时：{milliseconds(participation.get("last_duration_ms"))}',
+        f'参与错误：{error(participation.get("error"))}']
     logs = ['近期安全运行事件（最新在前；仅显示已知事件及字段）', '不展示聊天正文、原始异常或未识别日志', '']
     logs += snapshot.get('events') or ['暂无可显示事件']
     if snapshot.get('log_error'):

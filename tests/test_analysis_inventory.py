@@ -115,7 +115,7 @@ base.add(PROFILE.missing); const x=PROFILE["descriptor_rva"];'''
         self.assertFalse(result['runtime_compatibility_proven'])
         self.assertIn('not a full JS/C parser', ' '.join(result['notes']))
         text, image = result['backends']['text'], result['backends']['image']
-        self.assertEqual(text['summary']['function_fingerprints'], 10)
+        self.assertEqual(text['summary']['function_fingerprints'], 12)
         self.assertEqual(image['summary']['function_fingerprints'], 21)
         self.assertTrue(text['module_expressions'])
         self.assertTrue(image['c_integer_literals'])

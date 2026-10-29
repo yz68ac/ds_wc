@@ -113,7 +113,7 @@ class GroupModels:
         self.lanes = {name: ModelLane(name, connection, config) for name, connection in cfg['model_clients'].items()}
 
     def submit(self, kind, payload, *, timeout):
-        lane = self.lanes['reply' if kind in ('generate', 'proactive_reply') or (kind == 'request' and payload[1] == 'reply') else 'background']
+        lane = self.lanes['reply' if kind == 'generate' or (kind == 'request' and payload[1] == 'reply') else 'background']
         payload = deepcopy(payload)
 
         def execute(job):
@@ -122,7 +122,11 @@ class GroupModels:
                 try:
                     return dict(ok=True, **self._execute(kind, payload, job), model_metrics=metrics)
                 except Exception as exc:
-                    return dict(ok=False, error=getattr(exc, 'code', type(exc).__name__), retryable=getattr(exc, 'retryable', False), model_metrics=metrics)
+                    result = dict(ok=False, error=getattr(exc, 'code', type(exc).__name__), retryable=getattr(exc, 'retryable', False), model_metrics=metrics)
+                    if kind == 'participation':
+                        from wxbridge.app.task_policy import participation_failure_code
+                        result['error'] = participation_failure_code(result)
+                    return result
                 finally:
                     _scope.reset(token)
         return lane.submit(execute, timeout)
@@ -160,12 +164,12 @@ class GroupModels:
         if kind == 'memory':
             from wxbridge.ai.memory import extract
             return dict(proposal=extract(cfg, payload[1]))
-        if kind == 'proactive':
-            from wxbridge.ai.proactive import evaluate
-            return dict(decision=evaluate(cfg, payload[1], **dict(payload[2], judgment_only=True)))
-        if kind == 'proactive_reply':
-            from wxbridge.ai.proactive import generate_reply
-            return dict(decision=generate_reply(cfg, payload[1], **payload[2]))
+        if kind == 'group_profile':
+            from wxbridge.ai.group_profile import analyze
+            return dict(proposal=analyze(cfg, payload[1], deadline=job.deadline))
+        if kind == 'participation':
+            from wxbridge.ai.participation import evaluate
+            return dict(decision=evaluate(cfg, payload[1], **payload[2]))
         raise ValueError('unknown_model_job')
 
     def submit_images(self, request, *, deadline=None):

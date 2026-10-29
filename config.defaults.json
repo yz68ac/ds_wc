@@ -27,7 +27,6 @@
     "omit_trailing_period": false
   },
   "queue": {
-    "debounce_seconds": 0,
     "max_pending": 32,
     "max_pending_per_sender": 8,
     "generation_lookahead": 4,
@@ -37,40 +36,17 @@
     "completed_retention": 200,
     "file": "/run/wxbridge-trial/queue.sqlite3"
   },
-  "proactive": {
+  "participation": {
     "enabled": false,
-    "window_seconds": 300,
-    "min_messages": 10,
-    "check_interval_seconds": 10,
-    "evaluation_interval_seconds": 60,
-    "min_new_messages": 3,
-    "reply_ttl_seconds": 60,
-    "timeout_seconds": 30,
-    "max_reply_chars": 30,
-    "entry_cooldown_seconds": 300,
-    "max_entries_per_hour": 0,
-    "opportunities": {
-      "enabled": true,
-      "min_messages": 3,
-      "min_senders": 2,
-      "address_names": []
-    },
-    "conversation": {
-      "enabled": true,
-      "window_seconds": 120,
-      "max_followups": 0
-    }
+    "debounce_seconds": 2,
+    "max_wait_seconds": 5,
+    "max_batch_messages": 8,
+    "address_names": [],
+    "pat_enabled": true
   },
   "target": {
     "chat": "",
     "bot_name": "小c",
-    "trigger": {
-      "mentions": [],
-      "prefixes": [],
-      "reply_all": false,
-      "require_mention_metadata": true,
-      "pat_enabled": true
-    },
     "cooldown_seconds": 8,
     "max_message_age_seconds": 90,
     "context_window_seconds": 300,
@@ -108,6 +84,14 @@
       "options": {
         "max_tokens": 1200,
         "timeout_seconds": 60,
+        "thinking": "disabled"
+      }
+    },
+    "group_profile": {
+      "model": "",
+      "options": {
+        "max_tokens": 1800,
+        "timeout_seconds": 45,
         "thinking": "disabled"
       }
     }
@@ -197,5 +181,15 @@
     "background": "deepseek"
   },
   "system_prompt_file": "prompts/system.md",
-  "provider_env": null
+  "provider_env": null,
+  "profile": {
+    "enabled": false,
+    "initial_history_days": 7,
+    "initial_max_messages": 300,
+    "batch_size": 60,
+    "min_new_messages": 50,
+    "min_interval_seconds": 1800,
+    "summary_max_chars": 1200,
+    "analysis_max_chars": 24000
+  }
 }

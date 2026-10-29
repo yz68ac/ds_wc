@@ -25,9 +25,10 @@ def fixture(case, cls, method):
 
 class WorkerLifecycleTests(unittest.TestCase):
     def test_spawned_generation_is_closed_if_registration_transaction_fails(self):
-        f = fixture(self, pipeline.PipelineTests, 'test_immediate_generation_merge_reset_and_single_final_send')
+        f = fixture(self, pipeline.PipelineTests, 'runTest')
         f.add(1)
         f.bot.intake()
+        f.bot.participation.step(f.now)
         put, failed = f.bot.journal.put, False
 
         def fail_registration(task):
@@ -46,7 +47,7 @@ class WorkerLifecycleTests(unittest.TestCase):
 
     def test_spawned_memory_is_closed_if_registration_transaction_fails(self):
         f = fixture(self, memory_tests.MemoryPipelineTests,
-                    'test_memory_after_final_confirmation_preempt_restart_and_recall')
+                    'test_memory_after_final_confirmation_runs_alongside_reply_then_recalls_after_restart')
         f.enable()
         f.confirmed()
         f.bot._pause_memory()
@@ -80,9 +81,10 @@ class WorkerLifecycleTests(unittest.TestCase):
         retained.close.assert_not_called()
 
     def test_failed_generation_cleanup_propagates_instead_of_admitting_more_work(self):
-        f = fixture(self, pipeline.PipelineTests, 'test_immediate_generation_merge_reset_and_single_final_send')
+        f = fixture(self, pipeline.PipelineTests, 'runTest')
         f.add(1)
         f.bot.intake()
+        f.bot.participation.step(f.now)
         put = f.bot.journal.put
 
         def fail_registration(task):
@@ -102,7 +104,7 @@ class WorkerLifecycleTests(unittest.TestCase):
 
     def test_failed_memory_cleanup_propagates_without_normal_retry(self):
         f = fixture(self, memory_tests.MemoryPipelineTests,
-                    'test_memory_after_final_confirmation_preempt_restart_and_recall')
+                    'test_memory_after_final_confirmation_runs_alongside_reply_then_recalls_after_restart')
         f.enable()
         f.confirmed()
         f.bot._pause_memory()
@@ -139,7 +141,9 @@ class WorkerLifecycleTests(unittest.TestCase):
 
     def test_session_close_attempts_every_resource_and_preserves_fatal_error(self):
         bot = GroupSession.__new__(GroupSession)
-        bot.native_api, bot.proactive, bot.journal = Mock(), Mock(), Mock()
+        bot.native_api, bot.participation, bot.journal = Mock(), Mock(), Mock()
+        bot.profile = None
+        bot.models = Mock()
         bot._pause_memory = Mock(side_effect=WorkerCleanupError())
         generator, sender = Mock(), Mock()
         bot.generators = {1: (1, generator)}
@@ -147,37 +151,32 @@ class WorkerLifecycleTests(unittest.TestCase):
         bot.save_status = Mock()
         with self.assertRaises(WorkerCleanupError):
             bot.close()
-        for close in (bot.native_api.close, bot.proactive.cancel, bot._pause_memory,
+        for close in (bot.native_api.close, bot.participation.cancel, bot._pause_memory,
                       generator.close, sender.close, bot.save_status, bot.journal.close):
             close.assert_called_once()
 
-    def test_ready_addressed_judgment_is_enqueued_when_new_real_mention_arrives(self):
-        f = fixture(self, conversation.ConversationTests,
-                    'test_recent_mention_reply_does_not_reset_entry_cooldown_but_eight_seconds_still_waits')
-        f.cfg['queue']['generation_concurrency'] = 1
+    def test_ready_judgment_is_applied_before_new_real_mention_is_judged(self):
+        f = fixture(self, conversation.ConversationTests, 'runTest')
         source = f.ordinary('这事让ds来评评')
-        worker = f.bot.proactive.job[0]
-        self.assertEqual(f.bot.proactive.pending['reason'], 'addressed')
-        worker.result = dict(ok=True, decision=dict(handoff=True, speak=True, reply_to=source['local_id']))
+        worker = f.bot.participation.job
+        worker.result = dict(ok=True, decision=dict(reply_to=[source['local_id']]))
         f.add(source['local_id']+1)
         f.bot.tick()
         self.assertTrue(worker.closed)
-        self.assertIsNone(f.bot.proactive.job)
         tasks = f.bot.journal.tasks()
-        self.assertEqual({t['trigger_kind'] for t in tasks}, {'mention', 'addressed'})
-        invitation = next(t for t in tasks if t['trigger_kind'] == 'addressed')
-        self.assertEqual(invitation['trigger_ids'], [source['local_id']])
-        self.assertEqual(f.bot.proactive.state()['outcome'], 'handed_to_reply')
-        self.assertEqual(f.bot.worker_counts()['generation'], 1)
+        self.assertEqual([t['trigger_ids'] for t in tasks], [[source['local_id']]])
+        self.assertEqual(f.bot.participation.pending['source_ids'], [source['local_id']+1])
+        f.decision([source['local_id']+1])
+        self.assertEqual({t['trigger_kind'] for t in f.bot.journal.tasks()}, {'participation'})
+        self.assertEqual(f.bot.worker_counts()['generation'], 2)
 
     def test_single_group_applies_completed_memory_before_foreground_admission(self):
         f = fixture(self, memory_tests.MemoryPipelineTests,
-                    'test_memory_after_final_confirmation_preempt_restart_and_recall')
+                    'test_memory_after_final_confirmation_runs_alongside_reply_then_recalls_after_restart')
         f.enable()
         f.confirmed()
-        f.bot.cfg['queue']['generation_concurrency'] = 1
         record, value, worker = f.bot.memory_job
-        worker.result = dict(ok=True, proposal=memory_tests.suggestion())
+        worker.result = dict(ok=True, proposal=memory_tests.suggestion(label='wxid_friend'))
         original = f.bot.memory.apply
         events = []
 
@@ -194,7 +193,7 @@ class WorkerLifecycleTests(unittest.TestCase):
         with patch.object(f.bot.memory, 'apply', side_effect=apply), patch.object(f.bot, 'job_factory', side_effect=spawn):
             f.add(3)
             f.bot.tick()
-        self.assertEqual(events[:2], ['apply', 'generate'])
+        self.assertEqual(events[:3], ['apply', 'participation', 'generate'])
         self.assertTrue(worker.closed)
         self.assertEqual(f.bot.journal.memory_jobs(), [])
         self.assertEqual(f.bot.memory.data['revision'], 2)
@@ -213,10 +212,9 @@ class WorkerLifecycleTests(unittest.TestCase):
         memory.data = dict(revision=1)
         memory.status.return_value = {}
         a.memory, a.memory_job = memory, (record, dict(synthetic=True), worker)
-        f.coordinator.account.capacity = 1
         f.add(1, 1)
         b.intake()
-        self.assertTrue(f.coordinator.account.can_start(b, 'generate'))
+        a.collect_background_results()
         memory.apply.assert_called_once_with(worker.result['proposal'], dict(synthetic=True), f.now)
         self.assertTrue(worker.closed)
         self.assertIsNone(a.memory_job)
@@ -227,7 +225,7 @@ class WorkerLifecycleTests(unittest.TestCase):
 
     def test_single_and_multi_group_use_public_phase_surface_in_same_order(self):
         single = fixture(self, pipeline.PipelineTests,
-                         'test_immediate_generation_merge_reset_and_single_final_send')
+                         'runTest')
         names = ('intake', 'collect_results', 'prioritize', 'start_foreground',
                  'participate', 'deliver', 'background', 'maintain')
         observed = []
@@ -285,14 +283,14 @@ class WorkerLifecycleTests(unittest.TestCase):
             with self.assertRaises(StoreError):
                 f.coordinator.tick()
         self.assertFalse(f.active('native_send'))
-        with patch.object(f.coordinator.sessions[0].journal, 'intake', side_effect=sqlite3.OperationalError('synthetic queue failure')):
+        with patch.object(f.coordinator.sessions[0].journal, 'intake_participation', side_effect=sqlite3.OperationalError('synthetic queue failure')):
             with self.assertRaises(sqlite3.OperationalError):
                 f.coordinator.tick()
         self.assertFalse(f.active('native_send'))
 
     def test_unknown_status_errors_are_not_silently_downgraded(self):
         f = fixture(self, pipeline.PipelineTests,
-                    'test_immediate_generation_merge_reset_and_single_final_send')
+                    'runTest')
         with patch('wxbridge.app.bot.os.replace', side_effect=ValueError('synthetic unexpected failure')):
             with self.assertRaises(ValueError):
                 f.bot.save_status()

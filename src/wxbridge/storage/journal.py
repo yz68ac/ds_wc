@@ -13,6 +13,7 @@ from wxbridge.storage.memoryfs import require_memory_directory
 from wechat_linux.messages.pats import is_pat
 from wxbridge.native.protocol import NativeError, REQUEST_ID, task_status
 from wxbridge.storage.task_state import validate_task, validate_task_states
+from wxbridge.storage.participation import ParticipationJournal
 
 
 def checked_path(value: str, *, existing: bool = False) -> Path:
@@ -29,7 +30,7 @@ def checked_path(value: str, *, existing: bool = False) -> Path:
     return path
 
 
-class Journal:
+class Journal(ParticipationJournal):
     def __init__(self, path: str, identity: dict[str, str], baseline: int):
         target = checked_path(path)
         fd = os.open(target, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
@@ -57,6 +58,11 @@ class Journal:
         if saved is not None and saved != identity:
             self.db.close()
             raise ValueError("队列的微信账号或目标群不匹配，拒绝恢复")
+        try:
+            self._init_participation()
+        except BaseException:
+            self.db.close()
+            raise
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
             self._migrate_tasks()
@@ -101,6 +107,7 @@ class Journal:
             if protected:
                 sql += ' AND id NOT IN ('+','.join('?' for _ in protected)+')'
             self.db.execute(sql, (keep, *protected))
+            self.prune_participation(keep)
 
     def close(self):
         self.db.close()
@@ -125,7 +132,10 @@ class Journal:
 
     def pending_count(self) -> int:
         phase = "json_extract(data,'$.phase')" if getattr(self, 'legacy_readonly', False) else 'phase'
-        return self.db.execute(f"SELECT COUNT(*) FROM tasks WHERE {phase} != 'done'").fetchone()[0]
+        pending = self.db.execute(f"SELECT COUNT(*) FROM tasks WHERE {phase} != 'done'").fetchone()[0]
+        if self._has_participation():
+            pending += self.db.execute("SELECT COUNT(*) FROM participation_messages WHERE state IN ('pending','running')").fetchone()[0]
+        return pending
 
     def has_intent(self) -> bool:
         if getattr(self, 'legacy_readonly', False):
@@ -229,6 +239,7 @@ class Journal:
 
     def recover(self, now: float):
         with self.db:
+            self.recover_participation(now)
             for job in self.memory_jobs():
                 if job["state"] == "running":
                     job["state"] = "pending"
@@ -334,44 +345,6 @@ class Journal:
             return task["notice"]["text"]
         return task["chunks"][task["intent"]["part"]]
 
-    def enqueue_proactive(self, text, through, now, expires, *, metadata=None):
-        with self.db:
-            if self.tasks():
-                return None
-            identifier = self._next_task_id()
-            task = dict(id=identifier, sender='', phase='queued', version=1, trigger_kind='proactive',
-                triggers=[], trigger_ids=[], generation='ready', chunks=[text], next_chunk=0,
-                intent=None, blocked_reason='', closed_at=now, deadline=now,
-                proactive=dict(snapshot_id=through, expires_at=expires))
-            self.put(task)
-            if metadata:
-                task['proactive'].update(metadata)
-                self.put(task)
-            return task
-
-    def enqueue_addressed(self, message, now, *, observe=None):
-        """Promote a model-approved explicit invitation without advancing intake."""
-        with self.db:
-            if message['local_id'] <= self.get('addressed_through', 0):
-                return None
-            question = dict(message, addressed=True)
-            task = dict(id=self._next_task_id(), sender=message['sender'], phase='queued', version=1,
-                        trigger_kind='addressed', triggers=[question], trigger_ids=[message['local_id']],
-                        generation='pending', chunks=[], next_chunk=0, intent=None, blocked_reason='',
-                        deadline=now, closed_at=now, accepted_at=now)
-            self.put(task)
-            self.set('addressed_through', message['local_id'])
-            if observe:
-                observe(question, True, now)
-            return task
-
-    def discard_proactive(self, identifier, reason):
-        with self.db:
-            task = self.task(identifier)
-            if task and task.get('trigger_kind') == 'proactive' and not task['intent']:
-                task.update(phase='done', chunks=[], triggers=[], blocked_reason='', cancelled=reason)
-                self.put(task)
-
     def generated(self, task_id: int, version: int, chunks: list[str], error: str = "", *, vision=None, search=None) -> bool:
         with self.db:
             task = self.task(task_id)
@@ -438,7 +411,7 @@ class Journal:
                 task.update(first_submit_at=now, queue_wait_seconds=max(0, now-task.get('accepted_at', now)))
             self.put(task)
 
-    def acknowledge(self, task_id: int, local_id: int, now: float, *, memory=False, on_confirm=None):
+    def acknowledge(self, task_id: int, local_id: int, now: float, *, memory=False):
         with self.db:
             task = self.task(task_id)
             if not task["intent"]:
@@ -462,17 +435,7 @@ class Journal:
             task.update(intent=None, blocked_reason="", last_ack_id=local_id)
             task.update(pre_submit_attempts=0, retry_at=0)
             self.set("last_success", now)
-            if task.get('trigger_kind') == 'proactive':
-                self.set('proactive', {**self.get('proactive', {}), 'outcome': 'sent',
-                    'last_sent_at': now, 'last_ack_id': local_id, 'error': ''})
             if task["next_chunk"] == len(task["chunks"]):
-                if on_confirm and not task.get('generation_failed') and not task.get('external_request_id'):
-                    changes = on_confirm(task, local_id, now, self.get('proactive_session'),
-                                         self.get('proactive_entries', []))
-                    if set(changes)-{'proactive_session', 'proactive_entries'}:
-                        raise ValueError('invalid_confirmation_updates')
-                    for key, value in changes.items():
-                        self.set(key, value)
                 if memory and task.get('trigger_kind') not in ('proactive','external') and not task.get('generation_failed'):
                     # 与最终分片确认同事务；只留触发指针，主进程随后重读原窗口。
                     self.enqueue_memory('reply', 'reply:'+str(task_id),
@@ -508,7 +471,6 @@ class Journal:
     def status(self) -> dict:
         tasks = self.tasks()
         head = self.head()
-        session = self.get('proactive_session') or {}
         return dict(queue_length=len(tasks), cursor=self.get("cursor", 0),
                     last_success=self.get("last_success", 0),
                     phase=("blocked" if head and head["blocked_reason"] else
@@ -521,10 +483,7 @@ class Journal:
                     last_vision=self.get("last_vision"),
                     last_search=self.get("last_search"),
                     backpressure=self.get('backpressure'),
-                    proactive=self.get('proactive'),
-                    conversation=dict(active=bool(session), expires_at=session.get('expires_at'),
-                                      followups_sent=session.get('followups', 0),
-                                      activity_at=session.get('last_activity_at'), origin=session.get('origin')),
+                    participation=self.participation_status(),
                     memory_pending=len(self.memory_jobs()), memory_error=self.get("memory_error", ""),
                     memory_quarantined=[dict(id=j['id'], error=j.get('last_error'), attempts=j['attempts'])
                                         for j in self.memory_jobs(include_quarantined=True) if j['state']=='quarantined'][-20:],
@@ -536,6 +495,7 @@ class Journal:
                                 generation=t["generation"], questions=len(t["triggers"]),
                                 generation_attempts=t.get('generation_attempts', 0),
                                 generation_retry_at=t.get('generation_retry_at', 0),
+                                reply_expires_at=t.get('reply_expires_at'),
                                 generation_failed=t.get('generation_failed', False),
                                 last_generation_error=t.get('last_generation_error', ''),
                                 queue_wait_seconds=t.get('queue_wait_seconds'),

@@ -29,7 +29,7 @@ def binding():
                 width=2, height=1, observed_at=NOW)
 
 
-def update(label="U1", digest=None):
+def update(label="wxid_a", digest=None):
     return dict(member=label, digest=digest or binding()["digest"], visual=dict(VISUAL))
 
 
@@ -84,6 +84,7 @@ class AvatarTests(unittest.TestCase):
                 validate_visual(value)
 
     def test_text_judgement_never_sees_avatar_and_visual_has_no_chat_context(self):
+        self.cfg['models']['avatar']['options'].update(thinking='enabled', reasoning_effort='max')
         value = self.snap()
         response = dict(avatars=[update()])
         with patch("wxbridge.ai.client.client_for") as client:
@@ -95,10 +96,10 @@ class AvatarTests(unittest.TestCase):
             self.assertIn("data:image/png;base64,", json.dumps(second.args))
             self.assertNotIn("你好", json.dumps(second.args, ensure_ascii=False))
             self.assertEqual(result["avatar_updates"], [update()])
-            self.assertEqual(client.call_args.kwargs['role'], 'avatar')
+            self.assertEqual([c.args[0] for c in client.call_args_list], ['memory', 'avatar'])
             from wxbridge.ai.roles import model_settings
-            self.assertEqual(model_settings(client.call_args.args[0], 'avatar')['thinking'], 'enabled')
-            self.assertEqual(model_settings(client.call_args.args[0], 'avatar')['reasoning_effort'], 'max')
+            self.assertEqual(model_settings(self.cfg, 'avatar')['thinking'], 'enabled')
+            self.assertEqual(model_settings(self.cfg, 'avatar')['reasoning_effort'], 'max')
 
     def test_visual_api_failure_keeps_text_proposal(self):
         with patch("wxbridge.ai.client.client_for") as client:
@@ -174,7 +175,7 @@ class AvatarPipelineTests(PipelineTests):
         self.add(2, sender="wxid_self", text="合成回复", mention=False)
         self.bot.tick()
         self.store.avatar.assert_called_once_with("wxid_friend", max_bytes=524288)
-        self.jobs[-1].result = dict(ok=True, proposal=dict(updates=[], avatar_updates=[update()]))
+        self.jobs[-1].result = dict(ok=True, proposal=dict(updates=[], avatar_updates=[update('wxid_friend')]))
         self.bot.tick()
         self.assertEqual(self.bot.memory.status(self.now)["initial_impressions"], 1)
         self.now += 60

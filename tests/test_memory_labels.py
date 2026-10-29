@@ -14,14 +14,14 @@ class MemoryLabelTests(unittest.TestCase):
     setUp = memory_tests.MemoryTests.setUp
     snap = memory_tests.MemoryTests.snap
 
-    def test_new_summary_resolves_current_person_and_other_nickname(self):
+    def test_new_summary_keeps_current_person_and_other_wxid_without_nickname_binding(self):
         a=msg(2,NOW,'我喜欢简短回答','wxid_a');a['sender_name']='甲'
         b=msg(1,NOW,'这次我来解释','wxid_b');b['sender_name']='乙'
         value=snapshot(self.cfg,[a,b],[a],memory_tests.IDENTITY,self.memory,NOW)
         proposal=memory_tests.suggestion(source='m2')
-        proposal['updates'][0]['memories'][0]['summary']='U1喜欢U2的解释方式'
+        proposal['updates'][0]['memories'][0]['summary']='wxid_a喜欢wxid_b的解释方式'
         self.memory.apply(proposal,value,NOW)
-        self.assertEqual(self.memory.data['members']['wxid_a']['entries'][0]['summary'],'本人喜欢乙的解释方式')
+        self.assertEqual(self.memory.data['members']['wxid_a']['entries'][0]['summary'],'wxid_a喜欢wxid_b的解释方式')
 
     def test_unknown_label_rejects_only_ambiguous_summary_and_advances_sources(self):
         proposal=memory_tests.suggestion()
@@ -62,8 +62,7 @@ class MemoryLabelTests(unittest.TestCase):
         self.assertIn('成员档案：1；有可用摘要：0',text)
         self.assertEqual(len([s for s in text.splitlines() if s.startswith('## ')]),1)
         self.assertIn('# 语境表达学习（非成员档案',text)
-        self.assertIn('不要在聊天正文中用这些编号称呼人',reply_rules(self.cfg))
-        self.assertIn('真实技术编号',reply_rules(self.cfg))
+        self.assertIn('内部成员编号',reply_rules(self.cfg))
         before=self.memory.path.read_bytes()
         self.memory.write_projection(NOW+1)
         self.assertEqual(self.memory.path.read_bytes(),before)
@@ -87,16 +86,16 @@ class MemoryLabelTests(unittest.TestCase):
     def test_new_relationship_and_expression_text_resolve_current_bindings(self):
         value=self.snap();value['messages'][0]['text']='谢谢你[捂脸]'
         proposal=memory_tests.suggestion(delta=1)
-        proposal['updates'][0]['affinity']['reason']='U1表达感谢'
-        proposal['learning']=[dict(scope='member',member='U1',expression='[捂脸]',context='U1道谢',
-            meaning='U1带点不好意思',sources=['m1'],stance='support',replaces=None,basis=None)]
+        proposal['updates'][0]['affinity']['reason']='wxid_a表达感谢'
+        proposal['learning']=[dict(scope='member',member='wxid_a',expression='[捂脸]',context='wxid_a道谢',
+            meaning='wxid_a带点不好意思',sources=['m1'],stance='support',replaces=None,basis=None)]
         value['learning_enabled']=True
         self.memory.apply(proposal,value,NOW)
         p=self.memory.data['members']['wxid_a']
-        self.assertEqual(p['affinity_evidence'][0]['reason'],'本人表达感谢')
+        self.assertEqual(p['affinity_evidence'][0]['reason'],'wxid_a表达感谢')
         record=self.memory.data['learning']['records'][0]
-        self.assertEqual(record['context'],'本人道谢')
-        self.assertEqual(record['meaning'],'本人带点不好意思')
+        self.assertEqual(record['context'],'wxid_a道谢')
+        self.assertEqual(record['meaning'],'wxid_a带点不好意思')
 
     def test_deploy_pending_memory_opt_in_still_rejects_active_work(self):
         idle=runpy.run_path(str(Path(__file__).resolve().parents[1]/'scripts/deploy-release.py'))['listener_idle']

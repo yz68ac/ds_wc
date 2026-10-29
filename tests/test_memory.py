@@ -20,7 +20,7 @@ from synthetic import NOW, msg
 IDENTITY = dict(account="wxid_bot", chat="test@chatroom")
 
 
-def suggestion(label="U1", source="m1", delta=0, kind="preference", mode="real", replaces=None):
+def suggestion(label="wxid_a", source="m1", delta=0, kind="preference", mode="real", replaces=None):
     return dict(updates=[dict(member=label, memories=[dict(kind=kind, mode=mode, summary="喜欢简洁直接的答复",
         sources=[source], confidence=.8, replaces=replaces)],
         affinity=dict(delta=delta, reason="本人礼貌交流" if delta else "", sources=[source] if delta else []))])
@@ -45,7 +45,7 @@ class MemoryTests(unittest.TestCase):
     def test_rename_same_name_and_account_group_isolation(self):
         self.memory.apply(suggestion(), self.snap(), NOW)
         self.memory.apply(suggestion(source="m2"), self.snap(2, name="新名字"), NOW)
-        self.memory.apply(suggestion(source="m3"), self.snap(3, sender="wxid_b", name="新名字"), NOW)
+        self.memory.apply(suggestion(label="wxid_b", source="m3"), self.snap(3, sender="wxid_b", name="新名字"), NOW)
         self.assertEqual(len(self.memory.data["members"]), 2)
         self.assertEqual(self.memory.data["members"]["wxid_a"]["aliases"], ["同名"])
         for identity in [dict(IDENTITY, account="other"), dict(IDENTITY, chat="other@chatroom")]:
@@ -158,8 +158,8 @@ class MemoryTests(unittest.TestCase):
         self.assertIn("避免固定话术", extra)
         self.assertLessEqual(len(extra), 1200)
         prompt = build_prompt(self.cfg, [a], b, "测试", memory=dict(labels=labels, text=extra))[1]["content"]
-        self.assertIn("U1（同名）", prompt)
-        self.assertIn("U2（同名）", prompt)
+        self.assertIn('"sender": "wxid_a"', prompt)
+        self.assertIn('"sender": "wxid_b"', prompt)
         self.cfg["target"]["context_max_chars"] = len(build_prompt(self.cfg, [a], b, "测试", memory=dict(labels=labels))[1]["content"])
         short = build_prompt(self.cfg, [a], b, "测试", memory=dict(labels=labels, text=extra))[1]["content"]
         self.assertIn("完整历史", short)
@@ -167,15 +167,14 @@ class MemoryTests(unittest.TestCase):
 
     def test_extractor_uses_memory_thinking_preserves_foreground_and_uses_no_tools(self):
         self.cfg['models']['reply']['options']["reasoning_effort"] = "high"
-        self.cfg["memory"].update(thinking="enabled", reasoning_effort="max")
+        self.cfg['models']['memory']['options'].update(thinking='enabled', reasoning_effort='max')
         before = copy.deepcopy(self.cfg)
         with patch("wxbridge.ai.client.client_for") as client:
             client.return_value.complete.return_value = dict(content='{"updates":[]}', reasoning_content="PRIVATE_REASONING")
             self.assertEqual(extract(self.cfg, self.snap()), dict(updates=[]))
-            config = client.call_args.args[0]
-            self.assertEqual(client.call_args.kwargs['role'], 'memory')
+            client.assert_called_once_with('memory')
             from wxbridge.ai.roles import model_settings
-            settings = model_settings(config, 'memory')
+            settings = model_settings(self.cfg, 'memory')
             self.assertEqual(settings['thinking'], 'enabled')
             self.assertEqual(settings['reasoning_effort'], 'max')
             self.assertEqual(self.cfg['models']['reply']['options']["reasoning_effort"], "high")
@@ -192,7 +191,7 @@ class MemoryTests(unittest.TestCase):
         rebuilt, metadata = prepare_multimodal(self.cfg, prompt, dict(context=[], triggers=[a], chat_title="测试",
             images=[dict(trigger_index=0, depth=0, error="local_image_not_cached")], memory=memory))
         self.assertIn("U1 喜欢直接回答", rebuilt[1]["content"])
-        self.assertIn("U2（同名）", rebuilt[1]["content"])
+        self.assertIn('"member": "wxid_b"', rebuilt[1]["content"])
 
     @unittest.skipIf(os.name == "nt", "Linux 文件权限与 flock")
     def test_private_permissions_and_maintenance_listener_lock(self):
@@ -276,7 +275,7 @@ class MemoryPipelineTests(PipelineTests):
         self.add(2, sender="wxid_self", text="合成回复", mention=False)
         self.bot.tick()
 
-    def test_memory_after_final_confirmation_preempt_restart_and_recall(self):
+    def test_memory_after_final_confirmation_runs_alongside_reply_then_recalls_after_restart(self):
         self.enable()
         self.add(0, sender="wxid_other", text="我也喜欢简洁", mention=False)
         self.confirmed()
@@ -288,12 +287,12 @@ class MemoryPipelineTests(PipelineTests):
         self.assertEqual(len(self.bot.generators), 1)
         self.add(4)
         self.bot.tick()
-        self.assertTrue(job.closed)
-        self.assertIsNone(self.bot.memory_job)
-        self.assertEqual(self.bot.journal.memory_jobs()[0]["state"], "pending")
+        self.assertFalse(job.closed)
+        self.assertIsNotNone(self.bot.memory_job)
+        self.assertEqual(self.bot.journal.memory_jobs()[0]["state"], "running")
         self.generated()
         job = next(j for j in reversed(self.jobs) if j.kind == "memory")
-        job.result = dict(ok=True, proposal=suggestion())
+        job.result = dict(ok=True, proposal=suggestion(label='wxid_friend'))
         self.bot.tick()
         self.assertEqual(self.bot.memory.status(self.now)["revision"], 2)  # 启用学习基线与首次整理各一次修订。
         self.restart()
@@ -331,7 +330,7 @@ class MemoryPipelineTests(PipelineTests):
         self.enable()
         self.confirmed()
         record, value, job = self.bot.memory_job
-        self.bot.memory.apply(suggestion(delta=3), value, self.now)
+        self.bot.memory.apply(suggestion(label='wxid_friend', delta=3), value, self.now)
         # 模拟 JSON 已持久化而队列完成事务尚未提交时崩溃。
         self.restart()
         count = len([j for j in self.jobs if j.kind == "memory"])
@@ -343,7 +342,7 @@ class MemoryPipelineTests(PipelineTests):
     def test_background_minimum_interval_foreground_priority_and_recovery(self):
         self.enable()
         self.confirmed()
-        self.jobs[-1].result = dict(ok=True, proposal=suggestion())
+        self.jobs[-1].result = dict(ok=True, proposal=suggestion(label='wxid_friend'))
         self.bot.tick()
         self.add(3)
         self.bot.tick()

@@ -149,7 +149,8 @@ class JournalTests(unittest.TestCase):
         self.delivery.send(factory)
         kind,args=factory.call_args.args
         self.assertEqual(kind,'native_send');self.assertEqual(args[2],payload()['text'])
-        self.assertEqual(args[3:5],('filehelper',payload()['request_id']))
+        self.assertEqual(args[1],'filehelper')
+        self.assertEqual(args[3],payload()['request_id'])
         self.store.last_local_id.assert_called_once_with('filehelper')
         self.assertEqual(self.journal.external_status(payload()['request_id'])['state'],'confirming')
 
@@ -174,13 +175,13 @@ class JournalTests(unittest.TestCase):
         self.journal.intend(identifier,2,100,10)
         row=dict(local_id=3,sender='synthetic',type=1,text=payload()['text'])
         self.store.messages_after.side_effect=lambda chat,*a,**kw:[row] if chat=='filehelper' else []
-        self.journal.set('proactive_session',{'synthetic':True})
-        with patch('wxbridge.app.delivery.confirmation_updates') as policy:
+        before=self.journal.participation_status()
+        with patch.object(self.journal, 'apply_participation') as decision:
             self.delivery.confirm(memory=True)
-            policy.assert_not_called()
+            decision.assert_not_called()
         self.store.messages_after.assert_called_once_with('filehelper',2,limit=100)
         self.assertEqual(self.journal.memory_jobs(),[])
-        self.assertEqual(self.journal.get('proactive_session'),{'synthetic':True})
+        self.assertEqual(self.journal.participation_status(),before)
         self.assertIsNone(self.journal.get('last_confirmed_outbound_id'))
         self.assertEqual(self.journal.task(identifier)['chunks'],[])
         self.journal.prune_completed(0)
@@ -281,10 +282,10 @@ class JournalTests(unittest.TestCase):
         self.delivery.send(factory);self.assertEqual(factory.call_count,1)
         self.assertTrue(self.journal.task(identifier)['blocked_reason'])
 
-    def test_proactive_reply_uses_same_native_queue_path(self):
+    def test_participation_reply_uses_same_native_queue_path(self):
         identifier=self.normal_task()
         with self.journal.db:
-            task=self.journal.task(identifier);task['trigger_kind']='proactive';self.journal.put(task)
+            task=self.journal.task(identifier);task['trigger_kind']='participation';self.journal.put(task)
         factory=Mock(return_value=Mock());self.delivery.send(factory)
         self.assertEqual(factory.call_args.args[0],'native_send')
 

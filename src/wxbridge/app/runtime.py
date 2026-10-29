@@ -34,7 +34,6 @@ def run_bot(cfg, *, once=False, echo=False):
     active_configs = [cfg, *[e['config'] for e in cfg.get('instances', [])]]
     for active in active_configs:
         active['ui']['dry_run'] = cfg['ui']['dry_run']
-        active["target"]["trigger"].update(require_mention_metadata=True, reply_all=False, prefixes=[])
         active["ui"]["verify_chat_selected"] = True
         active["reply_to_backlog"] = False
         if active["ui"].get("dry_run"):

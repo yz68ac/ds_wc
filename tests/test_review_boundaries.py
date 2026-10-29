@@ -13,7 +13,7 @@ from unittest.mock import Mock, patch
 
 from wxbridge.ai.images import read_local_image
 from wxbridge.config import DEFAULTS, load_config
-from wxbridge.ai.proactive import evaluate
+from wxbridge.ai.participation import evaluate
 from wxbridge.storage.journal import Journal
 import test_memory as memories
 import test_media as media
@@ -63,23 +63,35 @@ class ReviewBoundaryTests(unittest.TestCase):
     def test_capacity_preserves_cursor_and_defers_instead_of_dropping(self):
         case=self.fixture(native.JournalTests)
         records=[msg(n,NOW,'synthetic') for n in range(89,93)]
-        case.journal.intake(records,lambda _:True,NOW,0,limits=dict(max_pending=2,max_pending_per_sender=2))
-        self.assertEqual(len(case.journal.tasks()),2)
+        limits=dict(max_pending=2,max_pending_per_sender=2)
+        case.journal.intake_participation(records,lambda _:True,NOW,ttl_seconds=90,limits=limits)
+        self.assertEqual(case.journal.participation_status()['pending'],2)
+        self.assertFalse(case.journal.tasks())
         self.assertEqual(case.journal.get('cursor'),90)
         self.assertEqual(case.journal.get('intake_deferred')['local_id'],91)
-        with case.journal.db:
-            for task in case.journal.tasks():task['phase']='done';case.journal.put(task)
-        case.journal.intake(records,lambda _:True,NOW+200,0,limits=dict(max_pending=2,max_pending_per_sender=2))
+        batch=case.journal.reserve_participation(NOW,debounce_seconds=0,max_wait_seconds=5,max_batch_messages=2)
+        case.journal.apply_participation(batch,[],NOW)
+        case.journal.intake_participation(records,lambda _:True,NOW+10,ttl_seconds=90,limits=limits)
         self.assertEqual(case.journal.get('cursor'),92)
         self.assertIsNone(case.journal.get('backpressure'))
+        self.assertEqual(case.journal.participation_status()['counts'],dict(silent=2))
 
-    def test_deferred_fresh_trigger_is_not_dropped_after_waiting_over_90_seconds(self):
+    def test_deferred_source_is_recorded_as_expired_without_resetting_original_age(self):
         case=self.fixture(pipeline.PipelineTests)
-        case.cfg['queue'].update(debounce_seconds=0,max_pending=1,max_pending_per_sender=1)
+        case.cfg['queue'].update(max_pending=1,max_pending_per_sender=1)
         case.add(1);case.add(2);case.bot.tick()
         self.assertEqual(case.bot.last_local_id,1)
         case.now+=100
         self.assertTrue(case.bot._accept(case.rows[1],case.now))
+        with case.bot.journal.db:
+            for task in case.bot.journal.tasks():
+                task.update(phase='done',version=task['version']+1)
+                case.bot.journal.put(task)
+        case.bot.tick()
+        self.assertEqual(case.bot.last_local_id,2)
+        state=case.bot.journal.participation_status()
+        self.assertEqual(state['counts'].get('expired'),1)
+        self.assertEqual(state['recent'][0]['expires_at'],NOW+90)
 
     def test_stale_and_unavailable_indexes_use_the_proven_cache(self):
         case=self.fixture(media.ImageBindingTests)
@@ -100,23 +112,30 @@ class ReviewBoundaryTests(unittest.TestCase):
             path=Path(name)/'config.json'
             for value in (dict(ui=dict(backend='native-service')),
                           dict(ui=dict(send_confirm_timeout_seconds=float('nan'))),
-                          dict(queue=dict(debounce_seconds=float('inf')))):
+                          dict(poll_interval_seconds=float('inf'))):
                 path.write_text(json.dumps(value))
                 with self.assertRaises(ValueError):load_config(path)
 
-    def test_addressed_approved_question_becomes_full_reply_task_without_advancing_cursor(self):
+    def test_approved_question_becomes_full_reply_without_rewinding_newer_intake(self):
         case=self.fixture(native.JournalTests)
-        source=msg(50,NOW,'ds 看看这张图');source['reference']=dict(kind='image',available=False,text='')
-        task=case.journal.enqueue_addressed(source,NOW)
-        self.assertEqual(task['trigger_kind'],'addressed')
+        source=msg(89,NOW,'看看这张图');source['reference']=dict(kind='image',available=False,text='')
+        limits=dict(max_pending=32,max_pending_per_sender=8)
+        case.journal.intake_participation([source],lambda _:True,NOW,ttl_seconds=90,limits=limits)
+        batch=case.journal.reserve_participation(NOW,debounce_seconds=0,max_wait_seconds=5,max_batch_messages=8)
+        case.journal.intake_participation([msg(90,NOW,'另一个问题')],lambda _:True,NOW,ttl_seconds=90,limits=limits)
+        self.assertFalse(case.journal.tasks())
+        task=case.journal.apply_participation(batch,[89],NOW)[0]
+        self.assertEqual(task['trigger_kind'],'participation')
         self.assertEqual(task['generation'],'pending')
         self.assertEqual(task['triggers'][0]['reference']['kind'],'image')
-        self.assertEqual(case.journal.get('cursor'),88)
-        self.assertIsNone(case.journal.enqueue_addressed(source,NOW))
+        self.assertEqual(case.journal.get('cursor'),90)
+        self.assertEqual(case.journal.participation_status()['pending'],1)
+        with self.assertRaises(ValueError):case.journal.apply_participation(batch,[89],NOW)
+        self.assertEqual(len(case.journal.tasks()),1)
 
-    def test_named_handoff_uses_only_the_participation_call(self):
+    def test_batch_decision_uses_only_the_participation_call(self):
         cfg=default_config()
-        client=Mock();client.complete.return_value=dict(content='{"speak":true,"reply_to":7}')
+        client=Mock();client.complete.return_value=dict(content='{"reply_to":[7,8]}')
         with patch('wxbridge.ai.client.client_for',return_value=client):
-            decision=evaluate(cfg,[],source_ids=[7],judgment_only=True)
-        self.assertTrue(decision['handoff']);self.assertEqual(client.complete.call_count,1)
+            decision=evaluate(cfg,[],source_ids=[7,8])
+        self.assertEqual(decision,dict(reply_to=[7,8]));self.assertEqual(client.complete.call_count,1)

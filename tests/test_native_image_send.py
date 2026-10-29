@@ -28,6 +28,7 @@ def response(value):
 
 
 class ImageContractTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == 'posix', 'Linux helper uses POSIX image paths')
     def test_client_and_helper_accept_the_same_bounded_shape(self):
         value = payload()
         self.assertEqual(validate_send_image(value), value)

@@ -8,6 +8,8 @@ from wxbridge.ai.roles import model_settings
 def default_config():
     cfg=deepcopy(DEFAULTS)
     cfg['provider_env']=str(Path(__file__).parent/'.synthetic-provider.env')
+    cfg['target']['bot_name']='DeepSeek'
+    cfg['participation'].update(enabled=True, debounce_seconds=0, address_names=['ds', 'deepseek'])
     for role in cfg['models']: cfg['models'][role]['model']='synthetic-model'
     return cfg
 

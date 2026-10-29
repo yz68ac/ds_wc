@@ -3,7 +3,7 @@ from copy import deepcopy
 import math
 from provider import load_config
 from provider.adapters import get_protocol_adapter
-ROLES = ('reply', 'participation', 'memory', 'avatar')
+ROLES = ('reply', 'participation', 'memory', 'avatar', 'group_profile')
 OPTIONS = {'max_tokens', 'temperature', 'timeout_seconds', 'thinking', 'reasoning_effort', 'thinking_mode', 'thinking_budget_tokens'}
 
 def model_settings(cfg, role='reply', *, provider_config=None):
@@ -24,11 +24,15 @@ def validate_models(cfg):
             raise ValueError('unknown_provider_connection')
     if set(cfg['models']) != set(ROLES):
         raise ValueError('invalid_model_roles')
+    private = cfg['target']['chat'].startswith('wxid_') and not cfg['target']['chat'].endswith('@chatroom')
     for role in ROLES:
         value = cfg['models'][role]
         if not isinstance(value, dict) or set(value) - {'model', 'options'}:
             raise ValueError('invalid_model_settings:' + role)
-        enabled = role == 'reply' or (role == 'participation' and cfg['proactive']['enabled']) or (role in ('memory', 'avatar') and cfg['memory']['enabled'] and (role != 'avatar' or cfg['memory']['avatar']['enabled']))
+        enabled = (role == 'reply' or (role == 'participation' and cfg['participation']['enabled'] and not private)
+                   or (role == 'group_profile' and cfg['profile']['enabled'])
+                   or (role in ('memory', 'avatar') and cfg['memory']['enabled']
+                       and (role != 'avatar' or cfg['memory']['avatar']['enabled'])))
         if enabled and (not isinstance(value.get('model'), str) or not value['model'].strip()):
             raise ValueError('missing_model:' + role)
         options = value.get('options', {})

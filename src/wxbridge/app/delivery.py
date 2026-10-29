@@ -5,8 +5,6 @@ import json
 import logging
 import time
 import uuid
-from functools import partial
-from wxbridge.app.conversation import confirmation_updates
 from wxbridge.app.confirmation import scan_confirmation
 from wechat_linux.native.protocol import NativeError, text_parts
 from wxbridge.app.task_policy import submission_failure
@@ -91,8 +89,7 @@ class DeliveryController:
         ack = scan_confirmation(self.store, task.get('delivery_chat_id', self.chat_id),
                                 self.store.self_wxid, text, intent, now, blocked=bool(task['blocked_reason']))
         if ack is not None:
-            self.journal.acknowledge(task['id'], ack, now, memory=memory,
-                on_confirm=partial(confirmation_updates, settings=self.cfg.get('proactive')))
+            self.journal.acknowledge(task['id'], ack, now, memory=memory)
             self.log.info('发送确认 task=%s part=%s local_id=%s', task['id'], intent['part'], ack)
             return
         if intent["deadline"] is not None and time.time() >= intent["deadline"]:

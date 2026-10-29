@@ -102,15 +102,15 @@ class MultiGroupTests(InstanceFixture):
         super().setUp()
         self.data.update(memory=dict(enabled=False, directory=str(self.root/'memory')),
                          native_api=dict(enabled=True, allowed_chat_ids=list(CHATS)), ui=dict(backend='native_service', dry_run=False),
-                         proactive=dict(enabled=False), target=dict(cooldown_seconds=0),
-                         queue=dict(file=str(self.root/'queue.sqlite3'), debounce_seconds=0),
+                         participation=dict(enabled=True, debounce_seconds=0), target=dict(cooldown_seconds=0),
+                         queue=dict(file=str(self.root/'queue.sqlite3')),
                          account=dict(send_interval_seconds=0))
         self.cfg = self.load()
         self.cfg['poll_interval_seconds'] = 0
         for e in self.cfg['instances']:
             e['config']['poll_interval_seconds'] = 0
             Path(e['config']['queue']['file']).parent.mkdir(parents=True, mode=0o700)
-        self.rows, self.now, self.jobs = {chat: [] for chat in CHATS}, float(NOW), []
+        self.rows, self.now, self.jobs, self.decision_jobs = {chat: [] for chat in CHATS}, float(NOW), [], []
         self.store = Mock()
         self.store.self_wxid = 'wxid_bot'
         self.store.resolve_chat.side_effect = lambda chat: (CHATS[0] if chat == '旧群' else chat, '合成群')
@@ -127,10 +127,19 @@ class MultiGroupTests(InstanceFixture):
     def make(self):
         coordinator = Coordinator(self.cfg, store=self.store)
         for session in coordinator.sessions:
-            def factory(kind, payload, _id=session.instance_id, **kwargs):
+            def factory(kind, payload, _id=session.instance_id, _chat=session.chat_id, **kwargs):
                 job = FakeJob(kind, payload, **kwargs)
                 job.owner = _id
-                self.jobs.append(job)
+                if kind == 'participation':
+                    source_ids = payload[2]['source_ids']
+                    rows = {m['local_id']: m for m in self.rows[_chat]}
+                    selected = [identifier for identifier in source_ids if
+                        self.store.self_wxid in (rows[identifier].get('mentioned_users') or [])
+                        or (rows[identifier].get('pat') or {}).get('target') == self.store.self_wxid]
+                    job.result = dict(ok=True, decision=dict(reply_to=selected))
+                    self.decision_jobs.append(job)
+                else:
+                    self.jobs.append(job)
                 return job
             session.job_factory = factory
         return coordinator
@@ -164,18 +173,17 @@ class MultiGroupTests(InstanceFixture):
             self.assertNotIn('ONLY_BETA' if job.owner == 'alpha' else 'ONLY_ALPHA', rendered)
         self.add(1, 2, '新问题'); self.tick()
         self.assertEqual(sessions[1].last_local_id, 2)
-        self.assertEqual(len(self.active('generate')), 2)
+        self.assertEqual(len(self.active('generate')), 3)
 
-    def test_round_robin_with_one_slot_and_slow_request_does_not_block_intake(self):
-        self.coordinator.account.capacity = 1
+    def test_slow_group_does_not_limit_another_groups_intake_or_generation(self):
         self.add(0, 1); self.add(0, 2); self.add(1, 1); self.tick()
         self.assertEqual(self.active('generate')[0].owner, 'alpha')
         self.add(1, 2); self.tick()
         self.assertEqual(self.coordinator.sessions[1].last_local_id, 2)
         self.finish('alpha')
-        # The scheduler starts at the group that did not receive the last slot.
-        self.assertEqual(len(self.active('generate')), 1)
-        self.assertEqual(self.active('generate')[0].owner, 'beta')
+        self.assertEqual(len(self.active('generate')), 2)
+        self.assertEqual({j.owner for j in self.active('generate')}, {'beta'})
+        self.assertIsNone(self.coordinator.account.status()['model_capacity'])
 
     def test_serial_sends_confirm_only_in_target_group_then_other_group_proceeds(self):
         self.add(0, 1); self.add(1, 1); self.tick()
@@ -224,19 +232,17 @@ class MultiGroupTests(InstanceFixture):
         self.now += 5; self.tick()
         self.assertEqual(self.active('native_send')[0].owner, 'beta')
 
-    def test_memory_and_optional_work_yield_to_other_groups_foreground(self):
+    def test_other_groups_foreground_does_not_cancel_running_memory(self):
         a, b = self.coordinator.sessions
         worker = FakeJob('memory', ())
         record = dict(id=1, state='running', triggers=[dict(local_id=1, time=NOW)], attempts=0, retry_at=0)
         with a.journal.db: a.journal.put_memory(record)
         a.memory_job = (record, {}, worker)
-        self.coordinator.account.capacity = 1
         self.add(1, 1); b._poll_messages()
-        self.assertFalse(self.coordinator.account.can_start(a, 'proactive'))
-        b._start_generations(max_new=1)
-        self.assertTrue(worker.closed)
-        self.assertIsNone(a.memory_job)
-        self.assertEqual(a.journal.memory_jobs()[0]['state'], 'pending')
+        b.participate()
+        self.assertFalse(worker.closed)
+        self.assertIsNotNone(a.memory_job)
+        self.assertEqual(a.journal.memory_jobs()[0]['state'], 'running')
         self.assertEqual(self.active('generate')[0].owner, 'beta')
 
     def test_external_request_ids_are_account_wide_and_routed_by_chat(self):
@@ -312,15 +318,20 @@ class MultiGroupTests(InstanceFixture):
         self.assertFalse(self.active('native_send'))
         self.assertEqual(self.coordinator.sessions[0].last_local_id, 1)
 
-    def test_pre_send_refresh_of_other_group_cancels_optional_delivery(self):
+    def test_pre_send_refresh_of_other_group_preserves_approved_delivery(self):
         a, b = self.coordinator.sessions
-        a.journal.enqueue_proactive('合成接话', 0, self.now, self.now+60, metadata={})
-        # The message arrives after the normal poll but before submission.
+        self.add(0, 1)
+        self.tick()
+        self.active('generate')[0].result = dict(ok=True, reply='合成接话')
+        a._poll_generation_results()
+        # The other group's message arrives after polling but before submission.
         self.add(1, 1)
         a._send_step()
         self.assertEqual(b.last_local_id, 1)
-        self.assertFalse(self.active('native_send'))
-        self.assertEqual(b.journal.status()['queue_length'], 1)
+        self.assertEqual(len(self.active('native_send')), 1)
+        self.assertEqual(self.active('native_send')[0].owner, 'alpha')
+        self.assertFalse(b.journal.tasks())
+
 
 
 if __name__ == '__main__':

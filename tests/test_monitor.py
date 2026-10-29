@@ -27,9 +27,10 @@ def live():
         build=dict(commit='a'*40), memory_pending=2, memory_error='',
         memory=dict(enabled=True, running=False, members=3, entries=7, revision=4, watermark=6,
                     initial_impressions=1, learning_candidates=2, learning_stable=1),
-        proactive=dict(enabled=True, outcome='generating_reply', model_role='reply', evaluations=2),
-        conversation=dict(active=True, expires_at=NOW+120, followups_sent=2),
-        tasks=[dict(id=1, version=1, phase='queued', generation='running', trigger_kind='mention',
+        participation=dict(enabled=True,outcome='evaluating',pending=3,running=1,last_duration_ms=250,
+            counts=dict(approved=4,silent=2,expired=1,error=1,cancelled=1),
+            last_decision=dict(source_ids=[9],reply_to=[9],reason='PRIVATE_CHAT')),
+        tasks=[dict(id=1, version=1, phase='queued', generation='running', trigger_kind='participation',
                     next_chunk=0, chunks=1, generation_attempts=1, text='PRIVATE_CHAT')],
         recent_intake=[dict(local_id=9, reason='accepted', text='PRIVATE_CHAT')],
         metrics=dict(models={'reply':dict(calls=2, errors=1, prompt_tokens=100, completion_tokens=20, elapsed_ms=1500)},
@@ -70,11 +71,12 @@ class MonitorTests(unittest.TestCase):
         store.assert_not_called(); client.assert_not_called()
         self.assertEqual(before,{p.name:(p.read_bytes(),p.stat().st_mtime_ns) for p in self.root.iterdir()})
 
-    def test_pages_show_generation_usage_memory_and_window_without_unselected_data(self):
+    def test_pages_show_generation_usage_memory_and_decisions_without_unselected_data(self):
         view = monitor.pages(snapshot(),self.cfg)
         text='\n'.join(line for page in view for line in page)
         configured = monitor.number(monitor.model_settings(self.cfg,'memory')['max_tokens'])
-        for expected in ('心跳正常','生成回复','123','120 秒','记忆待整理：2','100','关闭思考',configured):
+        for expected in ('心跳正常','生成回复','123','待判断：3','判断中：1','获准：4','沉默：2',
+                         '过期：1','失败：1','取消：1','记忆待整理：2','100','关闭思考',configured):
             self.assertIn(expected,text)
         self.assertNotIn('PRIVATE_CHAT',text)
         self.assertNotIn('sk-'+'a'*32,text)

@@ -328,6 +328,23 @@ class WeChatStore:
             return c.get("remark") or c.get("nick_name") or fallback or username
         return fallback or username
 
+    def group_member_aliases(self, chat_id: str) -> dict[str, str]:
+        """Current group display names, keyed by actual member username."""
+        if not isinstance(chat_id, str) or not chat_id.endswith('@chatroom'):
+            return {}
+        from wechat_linux.messages.chatrooms import parse_member_aliases
+        conn = self._connect('contact/contact.db')
+        try:
+            rows = conn.execute('SELECT ext_buffer FROM chat_room WHERE username=? LIMIT 2',
+                                (chat_id,)).fetchall()
+            if len(rows) != 1:
+                return {}
+            return parse_member_aliases(rows[0]['ext_buffer'])
+        except sqlite3.OperationalError:
+            return {}
+        finally:
+            conn.close()
+
     def avatar(self, username: str, *, max_bytes=524288) -> dict:
         """主进程按当前账号下的精确 username 读取头像缓存，不获取 URL。"""
         from wechat_linux.media.images import validate_image

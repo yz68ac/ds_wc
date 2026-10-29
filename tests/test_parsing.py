@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from wxbridge.wechat.messages import chunk_text
 from wxbridge.config import DEFAULTS, _deep_merge
 from wxbridge.ai.prompts import build_prompt
+from synthetic import msg
 
 
 def test_chunk() -> None:
@@ -21,11 +22,8 @@ def test_chunk() -> None:
 
 def test_prompt_order() -> None:
     cfg = default_config()
-    ctx = [
-        {"sender_name": "A", "text": "第一条", "time": 900},
-        {"sender_name": "B", "text": "第二条", "time": 950},
-    ]
-    trig = {"sender_name": "C", "text": "@DeepSeek 第三条", "time": 1000}
+    ctx = [msg(1,900,'第一条','A'),msg(2,950,'第二条','B')]
+    trig = msg(3,1000,'@DeepSeek 第三条','C')
     user = build_prompt(cfg, ctx, trig, "测试群")[1]["content"]
     assert user.index("第一条") < user.index("第二条") < user.index("@DeepSeek 第三条")
 

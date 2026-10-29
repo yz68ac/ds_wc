@@ -30,7 +30,8 @@ class PromptContractTests(unittest.TestCase):
         once = search_prompt(self.cfg, original)
         twice = search_prompt(self.cfg, response_prompt(once, self.cfg))
         self.assertEqual(once, twice)
-        self.assertEqual(twice[0]['content'].count('【群聊输出要求】'), 1)
+        from wxbridge.ai.output import reply_rules
+        self.assertEqual(twice[0]['content'].count(reply_rules(self.cfg)), 1)
         self.assertEqual(twice[0]['content'].count('【联网工具规则】'), 1)
         self.assertEqual(twice[-1]['_provider_state'], original[-1]['_provider_state'])
         self.assertEqual(original, expected)

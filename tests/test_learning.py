@@ -15,7 +15,7 @@ from test_context_pipeline import PipelineTests
 from synthetic import NOW, msg
 
 
-def observation(scope='member', member='U1', expression='[捂脸]', stance='support', replaces=None, basis=None, source='m1'):
+def observation(scope='member', member='wxid_a', expression='[捂脸]', stance='support', replaces=None, basis=None, source='m1'):
     return dict(scope=scope, member=member if scope == 'member' else None, expression=expression,
                 context='自嘲出糗', meaning='缓和尴尬、无奈自嘲', sources=[source], stance=stance, replaces=replaces, basis=basis)
 
@@ -96,7 +96,8 @@ class LearningTests(unittest.TestCase):
         own = msg(1,NOW-1,'[捂脸]','wxid_bot')
         human = msg(2,NOW,'这次有点好笑','wxid_a')
         value = snapshot(self.cfg,[own],[human],IDENTITY,self.memory,NOW)
-        self.assertEqual(value['dialogue'][0]['member'],'BOT')
+        self.assertEqual(value['dialogue'][0]['member'], IDENTITY['account'])
+        self.assertTrue(value['dialogue'][0]['is_bot'])
         for source in ('m1','m999'):
             with self.subTest(source=source),self.assertRaisesRegex(ValueError,'unknown_source'):
                 self.memory.apply(dict(updates=[],learning=[observation(source=source)]),value,NOW)
@@ -167,7 +168,7 @@ class LearningTests(unittest.TestCase):
         self.assertNotIn('learning',MemoryStore(self.temp.name,IDENTITY).data)
         self.memory.enable_learning(1,NOW)
         self.observe(NOW+1,stance='explicit')
-        value=json.loads(self.memory.path.read_text())
+        value=json.loads(self.memory.path.read_text(encoding='utf-8'))
         value['learning']['records'][0]['state']='invented'
         self.memory.path.write_text(json.dumps(value),encoding='utf-8')
         with self.assertRaisesRegex(ValueError,'invalid_file'):
@@ -251,7 +252,7 @@ class LearningPipelineTests(unittest.TestCase):
         self.assertEqual(self.jobs[0].kind,'memory')
         self.assertEqual(self.bot.memory_job[0]['origin'],'activity')
         self.assertEqual(len(self.bot.memory_job[1]['messages']),10)
-        self.jobs[0].result=dict(ok=True,proposal=suggestion(source='m1'))
+        self.jobs[0].result=dict(ok=True,proposal=suggestion(label='wxid_1', source='m1'))
         self.bot.tick()
         self.assertEqual(self.bot.memory.data['members']['wxid_1']['affinity'],50)
         self.assertFalse(any(j.kind=='send' for j in self.jobs))
@@ -305,7 +306,7 @@ class LearningPipelineTests(unittest.TestCase):
         self.assertTrue(all(m['local_id']<=10 for m in value['messages']))
         self.assertEqual(value['through'],10)
 
-    def test_foreground_two_requests_preempt_and_preserve_passive_job(self):
+    def test_foreground_two_requests_keep_running_passive_job_on_its_own_channel(self):
         self.enable()
         self.chat()
         self.bot.tick()
@@ -314,10 +315,10 @@ class LearningPipelineTests(unittest.TestCase):
         self.bot.tick()
         self.add(12,sender='wxid_b')
         self.bot.tick()
-        self.assertTrue(worker.closed)
-        self.assertIsNone(self.bot.memory_job)
+        self.assertFalse(worker.closed)
+        self.assertIsNotNone(self.bot.memory_job)
         self.assertEqual(len(self.bot.generators),2)
-        self.assertEqual(self.bot.journal.memory_jobs()[0]['state'],'pending')
+        self.assertEqual(self.bot.journal.memory_jobs()[0]['state'],'running')
 
     def test_passive_batches_wait_five_minutes_and_skip_processed_window(self):
         self.enable()

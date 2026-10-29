@@ -84,7 +84,7 @@ class ProfileAuditTests(unittest.TestCase):
 
     def test_packaged_profiles_normalize_both_layouts(self):
         text, image = load_profile('text'), load_profile('image')
-        self.assertEqual((len(text.functions), len(image.functions)), (10, 21))
+        self.assertEqual((len(text.functions), len(image.functions)), (12, 21))
         self.assertEqual(text.sha256, image.sha256)
         self.assertEqual(text.arch, 'x86_64')
         self.assertEqual(text.source, 'bundled')
