@@ -8,6 +8,7 @@ import hashlib
 import json
 import math
 import time
+from threading import RLock
 
 from .adapters import ModelError, ModelRequest, ModelResult, get_protocol_adapter
 from .transport import send, send_images
@@ -39,9 +40,36 @@ class Client:
         self.base_url = self.cfg['base_url'].rstrip('/')
         self.name = name or {'openai_responses': 'openai', 'anthropic_messages': 'anthropic'}.get(self.protocol, self.protocol)
         self._bound_connection_fingerprint = self._connection_fingerprint(self.cfg, api_key)
-        self._sdk, self._sdk_client = create_sdk_client(self.protocol, self.base_url, api_key, self.cfg,
-                                                       self.cfg.get('timeout_seconds', 60))
+        self._sdk_module = self._sdk_instance = self._gemini_images = None
+        self._sdk_lock = RLock()
         self._closed = False
+
+    def _ensure_sdk(self):
+        with self._sdk_lock:
+            self._ensure_open()
+            if self._sdk_instance is None:
+                self._sdk_module, self._sdk_instance = create_sdk_client(
+                    self.protocol, self.base_url, self.api_key, self.cfg, self.cfg.get('timeout_seconds', 60))
+
+    @property
+    def _sdk(self):
+        if self._sdk_module is None:
+            self._ensure_sdk()
+        return self._sdk_module
+
+    @_sdk.setter
+    def _sdk(self, value):
+        self._sdk_module = value
+
+    @property
+    def _sdk_client(self):
+        if self._sdk_instance is None:
+            self._ensure_sdk()
+        return self._sdk_instance
+
+    @_sdk_client.setter
+    def _sdk_client(self, value):
+        self._sdk_instance = value
 
     @staticmethod
     def _connection_fingerprint(settings, api_key):
@@ -50,7 +78,8 @@ class Client:
         base_url = settings['base_url'].rstrip('/')
         if protocol == 'anthropic_messages' and base_url.endswith('/v1'):base_url = base_url[:-3]
         values = [protocol, base_url, api_key,
-                  settings.get('proxy_url'), settings.get('anthropic_version'), settings.get('anthropic_auth')]
+                  settings.get('proxy_url'), settings.get('anthropic_version'), settings.get('anthropic_auth'),
+                  settings.get('image_protocol'), settings.get('image_base_url')]
         return hashlib.sha256(json.dumps(values).encode('utf-8')).hexdigest()
 
     def check_connection(self, settings, *, api_key):
@@ -62,9 +91,14 @@ class Client:
             raise ModelError('client_closed')
 
     def close(self):
-        if not self._closed:
-            self._sdk_client.close()
-            self._closed = True
+        from contextlib import ExitStack
+        with self._sdk_lock:
+            if not self._closed:
+                self._closed = True
+                with ExitStack() as stack:
+                    for client in (self._sdk_instance, self._gemini_images):
+                        if client is not None:
+                            stack.callback(client.close)
 
     def __enter__(self):
         self._ensure_open()
@@ -88,21 +122,35 @@ class Client:
         return self._generate(request, settings, deadline=deadline, require_complete=require_complete)
 
     def generate_images(self, request: ImageRequest, *, deadline=None) -> ImageResult:
-        """Generate images using this connection's existing OpenAI SDK instance."""
+        """Reuse this connection's SDK; native Gemini and OpenAI options stay separate."""
         started, usage, error = time.monotonic(), {}, ''
         try:
             self._ensure_open()
-            if self.protocol not in IMAGE_PROTOCOLS:
+            gemini = self.cfg.get('image_protocol') == 'gemini'
+            if not gemini and self.protocol not in IMAGE_PROTOCOLS:
                 raise ModelError('unsupported_image_generation')
-            payload, timeout = build_image_payload(request)
+            if gemini:
+                from .gemini_images import build_gemini_image_payload
+                payload, timeout = build_gemini_image_payload(request)
+            else:
+                payload, timeout = build_image_payload(request)
             if deadline is not None:
                 if type(deadline) not in (int, float) or not math.isfinite(deadline):
                     raise ModelError('invalid_deadline')
                 remaining = deadline-time.monotonic()
                 if remaining <= 0:raise ModelError('deadline_exceeded', retryable=True)
                 timeout = min(timeout, remaining)
-            response = send_images(self._sdk, self._sdk_client, payload, timeout)
-            result = parse_image_response(response, expected_count=payload.get('n', 1))
+            if gemini:
+                from .gemini_images import create_gemini_image_client, send_gemini_images, parse_gemini_image_response
+                with self._sdk_lock:
+                    self._ensure_open()
+                    if self._gemini_images is None:
+                        self._gemini_images = create_gemini_image_client(
+                            self.cfg.get('image_base_url'), self.api_key, proxy_url=self.cfg.get('proxy_url'))
+                result = parse_gemini_image_response(send_gemini_images(self._gemini_images, payload, timeout))
+            else:
+                response = send_images(self._sdk, self._sdk_client, payload, timeout)
+                result = parse_image_response(response, expected_count=payload.get('n', 1))
             usage = result.usage
             return result
         except ModelError as exc:
@@ -110,7 +158,7 @@ class Client:
             raise
         finally:
             if _metrics.get() is not None:
-                _metrics.get().append(dict(role=self.role, provider=self.protocol, operation='image_generation',
+                _metrics.get().append(dict(role=self.role, provider='gemini' if self.cfg.get('image_protocol') == 'gemini' else self.protocol, operation='image_generation',
                     elapsed_ms=round((time.monotonic()-started)*1000, 2), finish_reason=None, usage=usage, error=error))
 
     def _generate(self, request, settings, *, deadline=None, require_complete=False):
@@ -122,7 +170,8 @@ class Client:
         for key, lower, upper in (('timeout_seconds', 1, 300), ('max_tokens', 1, 128000), ('temperature', 0, 2)):
             value = settings.get(key)
             if value is None:
-                if key in settings and key != 'temperature':raise ModelError('invalid_model_options')
+                optional_tokens = key == 'max_tokens' and self.protocol in ('deepseek', 'openai', 'openai_compatible')
+                if key in settings and key != 'temperature' and not optional_tokens:raise ModelError('invalid_model_options')
                 continue
             if type(value) not in (int, float) or not math.isfinite(value) or not lower <= value <= upper:
                 raise ModelError('invalid_model_options')

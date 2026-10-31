@@ -84,18 +84,25 @@ class SearchClient:
         return self._post("fetch", dict(url=url), deadline)
 
 
-def answer_with_search(cfg, client, messages, on_search=None, *, search_client=None):
+def answer_with_search(cfg, client, messages, on_search=None, *, search_client=None, image_requests=None):
     """保留真实 assistant/tool 调用链；只报告一次内部进度事件，群提示由主进程控制。"""
     settings = cfg.get("search", {})
+    image_enabled = cfg.get('image_generation', {}).get('enabled', False) and image_requests is not None
+    search_enabled = settings.get('enabled', True)
+    if image_enabled:
+        from .image_generation import IMAGE_TOOL, image_tool_prompt, collect_image_request
+        messages = image_tool_prompt(messages)
     backend_kind = settings.get('backend', 'external')
     if backend_kind == 'auto':
         backend_kind = 'native' if getattr(client.adapter, 'native_search_supported', False) and client.cfg.get('native_search_supported', True) else 'external'
-    if backend_kind == 'native':
+    if backend_kind == 'native' and search_enabled:
         from .native_search import answer_with_native_search
-        return answer_with_native_search(cfg, client, messages, on_search)
-    if backend_kind != 'external':raise ModelError('unsupported_search_backend')
+        return answer_with_native_search(cfg, client, messages, on_search, image_requests=image_requests)
+    if backend_kind not in ('external', 'native'):raise ModelError('unsupported_search_backend')
     deadline = time.monotonic()+float(settings.get("total_timeout_seconds", 120))
-    conversation = search_prompt(cfg, messages)
+    from .output import response_prompt
+    conversation = search_prompt(cfg, messages) if search_enabled else response_prompt(messages, cfg)
+    tools = (TOOLS if search_enabled else []) + ([IMAGE_TOOL] if image_enabled else [])
     sources, errors = [], []
     calls = 0
     attempted = False
@@ -113,7 +120,7 @@ def answer_with_search(cfg, client, messages, on_search=None, *, search_client=N
     for turn in range(int(settings.get("max_tool_rounds", 2))+1):
         exhausted = turn >= int(settings.get("max_tool_rounds", 2)) or calls >= int(settings.get("max_requests", 3))
         try:
-            message = client.complete(conversation, tools=TOOLS, tool_choice="none" if exhausted else "auto", deadline=deadline,
+            message = client.complete(conversation, tools=tools, tool_choice="none" if exhausted else "auto", deadline=deadline,
                                       require_complete=True)
         except ModelError:
             if not attempted:
@@ -130,6 +137,8 @@ def answer_with_search(cfg, client, messages, on_search=None, *, search_client=N
         if not isinstance(tool_calls, list) or len(tool_calls) > 8:
             errors.append("invalid_tool_calls")
             return finish("这次查询指令异常，暂时没能完成，稍后再试。")
+        if not exhausted and image_enabled and collect_image_request(tool_calls, image_requests):
+            return finish('在画了，稍后发给你')
         if exhausted:
             errors.append("tool_limit")
             return finish("这次搜索已到查询上限，还没得到足够可靠的结论。" if not sources else "查到的资料还不足以确定答案，暂时给不了可靠结论。")
@@ -140,7 +149,7 @@ def answer_with_search(cfg, client, messages, on_search=None, *, search_client=N
                 function = tool.get("function") or {}
                 name = function.get("name")
                 args = json.loads(function.get("arguments") or "{}")
-                if not isinstance(args, dict) or name not in ("web_search", "web_fetch"):
+                if not search_enabled or not isinstance(args, dict) or name not in ("web_search", "web_fetch"):
                     raise SearchError("invalid_tool")
                 if calls >= int(settings.get("max_requests", 3)):
                     raise SearchError("tool_limit")

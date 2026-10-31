@@ -62,6 +62,7 @@ class GroupSession(SessionPhases):
         native_options = native_settings(cfg)
         self.cfg, self.echo = cfg, echo
         self.account, self.instance_id = account, instance_id
+        self.quiescing = False
         from wxbridge.app.logging_context import InstanceLog
         self.log = InstanceLog(log, dict(instance=instance_id)) if instance_id else log
         self.store = store if store is not None else WeChatStore(cfg["db_dir"], cfg["keys_file"], cfg["decrypted_dir"])
@@ -116,6 +117,8 @@ class GroupSession(SessionPhases):
         self.started_at = time.time()
         from wxbridge.app.model_runtime import GroupModels
         self.models = GroupModels(cfg)
+        from wxbridge.app.image_generation import ImageGenerationController
+        self.image_generation = ImageGenerationController(self)
         self.job_factory = self._new_job
         self.status_path = Path(cfg["state_file"]).parent / "live-status.json"
         try:
@@ -271,7 +274,16 @@ class GroupSession(SessionPhases):
             chunks = reply_chunks(reply, int(self.cfg["target"].get("max_reply_chars", 1800))) if not error else []
             if error:
                 self._generation_failed(task_id, version, result)
-            elif self.journal.generated(task_id, version, chunks, vision=result.get("vision"), search=result.get("search")):
+            else:
+                try:
+                    proposal = self.image_generation.proposal(result.get('image_requests'))
+                except Exception as exc:
+                    self._generation_failed(task_id, version, dict(error=getattr(exc, 'code', 'invalid_image_tool'), retryable=False))
+                    continue
+                accepted = self.journal.generated(task_id, version, chunks, vision=result.get('vision'),
+                    search=result.get('search'), image_request=proposal, now=time.time())
+                if not accepted:
+                    continue
                 self.log.info("生成结束 task=%s version=%s chunks=%s images=%s error=%s", task_id, version,
                          len(chunks), (result.get("vision") or {}).get("images", 0), error or "none")
 
@@ -548,6 +560,7 @@ class GroupSession(SessionPhases):
     def maintain(self):
         if time.time()-self.maintenance_at >= 60:
             protected = [*self.generators, *([self.ui_job[0]] if self.ui_job else [])]
+            protected.extend(t['parent_task_id'] for t in self.journal.image_tasks())
             self.journal.prune_completed(self.cfg['queue']['completed_retention'], protected)
             self.maintenance_at = time.time()
         self.save_status()
@@ -580,6 +593,8 @@ class GroupSession(SessionPhases):
         status["memory"] = dict(enabled=self.memory is not None, running=self.memory_job is not None,
                                 error=self.memory_error, **(self.memory.status(time.time()) if self.memory else {}))
         status['profile'] = self.profile.status() if self.profile else dict(enabled=False)
+        status['image_generation'] = dict(enabled=self.cfg['image_generation']['enabled'],
+            running=len(self.image_generation.jobs), last=status.get('last_image_generation'))
         status['reply_style'] = {key:self.cfg.get('reply_style', {}).get(key, default)
             for key, default in (('wechat_emoticons_enabled', False), ('omit_trailing_period', True))}
         if self.instance_id is not None:
@@ -609,6 +624,18 @@ class GroupSession(SessionPhases):
         self.status_signature, self.status_written_at = signature, clock
         return True
 
+    def begin_stop(self):
+        """Cancel model results without blocking the other account sessions."""
+        self.quiescing = True
+        self.image_generation.close()
+        self.models.begin_close()
+
+    def drain_stop(self):
+        # Keep resolving already-submitted actions. Never submit another message.
+        self._ui_result_step()
+        self._confirm_step()
+        return self.ui_job is None and self.models.stopped()
+
     def close(self):
         # A failed child cleanup must stop the runtime, but must not prevent
         # attempts to release the remaining children, gateway and database.
@@ -616,6 +643,8 @@ class GroupSession(SessionPhases):
             stack.callback(self.journal.close)
             if hasattr(self, "models"):
                 stack.callback(self.models.close)
+            if hasattr(self, 'image_generation'):
+                stack.callback(self.image_generation.close)
             stack.callback(self.save_status, stopped=True)
             if self.ui_job:
                 stack.callback(self.ui_job[2].close)

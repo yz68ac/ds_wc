@@ -61,11 +61,13 @@ class AccountRuntime:
     def can_send(self, session):
         if self.sending() is not None:
             return False
-        latest = max((s.journal.get('last_success', 0) for s in self.sessions), default=0)
+        latest = max((s.journal.get('last_success', 0) for s in self.histories()), default=0)
         return time.time()-latest >= self.send_gap
 
     def refresh_before_send(self):
         for session in self.sessions:
+            if getattr(session, 'quiescing', False):
+                continue
             session.intake(force=True)
             session.prioritize()
 

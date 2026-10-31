@@ -1,4 +1,4 @@
-"""OpenAI Images generation contracts and conversions; no file writes or downloads."""
+"""Image generation contracts and OpenAI conversions; no file writes or downloads."""
 from __future__ import annotations
 
 import base64
@@ -25,6 +25,7 @@ class GeneratedImage:
     data: bytes | None = field(default=None, repr=False)
     url: str | None = field(default=None, repr=False)
     revised_prompt: str | None = field(default=None, repr=False)
+    mime: str | None = None
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,7 @@ class ImageResult:
     size: str | None = None
     quality: str | None = None
     background: str | None = None
+    text: str = field(default='', repr=False)
 
 
 def build_image_payload(request: ImageRequest):

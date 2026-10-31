@@ -4,10 +4,11 @@ from pathlib import Path
 from wxbridge.config import load_config
 
 
-def configured_groups(app, runtime):
+def configured_groups(app, runtime, *, include_disabled=False):
     app, runtime = Path(app), Path(runtime)
     cfg = load_config(app/'config.json')
-    return [(e['id'], e['config'], False) for e in cfg['instances'] if e['enabled']]
+    return [(e['id'], e['config'], False) for e in cfg['instances']
+            if e['enabled'] or include_disabled and Path(e['config']['queue']['file']).exists()]
 
 
 def live_status_path(app, runtime):

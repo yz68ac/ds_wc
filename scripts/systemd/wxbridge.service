@@ -1,0 +1,32 @@
+[Unit]
+Description=WeChat bot with desktop, login recovery and Web management
+Wants=network-online.target
+After=network-online.target run-wxbridge\x2dtrial.mount
+Requires=run-wxbridge\x2dtrial.mount
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=root
+Group=wxbridge
+WorkingDirectory=/opt/wxbridge
+ExecStart=/opt/wxbridge/.venv/bin/python /opt/wxbridge/scripts/service.py run
+Restart=on-failure
+RestartSec=10
+KillMode=mixed
+TimeoutStopSec=infinity
+SendSIGKILL=no
+UMask=0077
+LimitCORE=0
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/run/wxbridge-trial /run/wxbridge-control /var/lib/wxbridge /var/lib/wxbridge-web /var/lib/wxbridge-service /opt/wxbridge/instance /tmp /var/tmp
+RuntimeDirectory=wxbridge-control
+RuntimeDirectoryMode=0750
+StateDirectory=wxbridge-service
+StateDirectoryMode=0700
+
+[Install]
+WantedBy=multi-user.target

@@ -2,7 +2,7 @@
 from wechat_linux.errors import StoreError
 
 
-def scan_confirmation(store,chat_id,account,text,intent,now,*,blocked=False):
+def scan_confirmation(store,chat_id,account,text,intent,now,*,blocked=False,image=None):
     scans=[('scan_cursor',max(intent['baseline'],intent.get('scan_cursor',intent['baseline'])-20),2)]
     if blocked and now>=intent.get('audit_at',0):
         scans.append(('audit_cursor',intent.get('audit_cursor',intent['baseline']),1))
@@ -10,8 +10,9 @@ def scan_confirmation(store,chat_id,account,text,intent,now,*,blocked=False):
         for _ in range(pages):
             rows=store.messages_after(chat_id,cursor,limit=100)
             for message in rows:
-                if (message['local_id']>intent['baseline'] and message.get('sender')==account
-                        and message.get('type')==1 and message.get('text')==text):
+                matches = (message.get('type') == 3 and message.get('image_md5') == image['md5']) if image else (
+                    message.get('type') == 1 and message.get('text') == text)
+                if (message['local_id']>intent['baseline'] and message.get('sender')==account and matches):
                     return message['local_id']
             if rows:
                 next_cursor=max(m['local_id'] for m in rows)

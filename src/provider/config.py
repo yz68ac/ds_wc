@@ -21,11 +21,12 @@ def env_path(path=None) -> Path:
     return (Path(path) if path is not None else default_env_path()).resolve()
 
 
-PROVIDERS = ('openai', 'anthropic', 'deepseek')
+PROVIDERS = ('openai', 'anthropic', 'deepseek', 'gemini')
 DEFAULTS = {
     'openai': ('https://api.openai.com/v1', 'openai_responses'),
     'anthropic': ('https://api.anthropic.com/v1', 'anthropic_messages'),
     'deepseek': ('https://api.deepseek.com', 'deepseek'),
+    'gemini': ('https://generativelanguage.googleapis.com/v1beta/openai', 'openai_compatible'),
 }
 
 
@@ -74,7 +75,8 @@ def load_config(path: str | Path | None = None, *, environ: Mapping[str, str] | 
         protocol = get('PROTOCOL', default_protocol).strip() or default_protocol
         allowed = {'openai': ('openai', 'openai_responses'),
                    'anthropic': ('anthropic', 'anthropic_messages'),
-                   'deepseek': ('deepseek',)}
+                   'deepseek': ('deepseek',),
+                   'gemini': ('openai', 'openai_compatible')}
         if protocol not in allowed[name]:
             raise ValueError('invalid_provider_protocol')
         key_name = prefix+'_API_KEY'
@@ -83,6 +85,13 @@ def load_config(path: str | Path | None = None, *, environ: Mapping[str, str] | 
         protocols[name] = protocol
         credentials[name] = get('API_KEY').strip()
         options[name] = {}
+        if name == 'gemini':
+            native_url = get('IMAGE_BASE_URL').strip()
+            if native_url:
+                ModelRegistry({name: ModelSpec(protocol, 'validation', name)},
+                              {name: Connection(native_url, key_name)})
+                options[name]['image_base_url'] = native_url
+            options[name]['image_protocol'] = 'gemini'
         if name == 'anthropic':
             version = get('VERSION').strip()
             auth = get('AUTH').strip()

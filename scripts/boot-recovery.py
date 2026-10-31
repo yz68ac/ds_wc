@@ -16,8 +16,6 @@ RUN = Path('/run/wxbridge-trial')
 PERSIST = Path('/var/lib/wxbridge/recovery')
 SETTINGS = Path('/etc/wxbridge-boot.json')
 SCANNER = Path('/usr/local/lib/wxbridge-recovery')
-BOT = 'wxbridge-bot.service'
-OLD_BOT = 'wxbridge-bot-live.service'
 USER = 'wxbridge'
 
 
@@ -35,10 +33,6 @@ def atomic_json(path, value, *, owner=None):
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
-
-
-def service_active(name):
-    return subprocess.run(['systemctl', 'is-active', '--quiet', name], capture_output=True).returncode == 0
 
 
 def owner():
@@ -82,10 +76,10 @@ def runtime():
     safe_status('runtime_ready')
 
 
-def configured_groups():
+def configured_groups(*, include_disabled=False):
     sys.path.insert(0, str(APP/'src' if (APP/'src').is_dir() else APP))
     from wxbridge.app.operations import configured_groups as groups
-    return groups(APP, RUN)
+    return groups(APP, RUN, include_disabled=include_disabled)
 
 
 def checkpoint_one(path, output):
@@ -110,7 +104,7 @@ def checkpoint_one(path, output):
 
 
 def checkpoint():
-    groups = configured_groups()
+    groups = configured_groups(include_disabled=True)
     results = {}
     for identifier, cfg, reuse in groups:
         output = PERSIST/'cursor.json' if reuse else PERSIST/'instances'/identifier/'cursor.json'
@@ -235,21 +229,13 @@ def database_locks():
         yield
 
 
-def recover(*, verify=False):
+def prepare(*, verify=False):
     validate_runtime()
-    if service_active(BOT) or service_active(OLD_BOT):
-        if verify:
-            raise ValueError('stop_listener_before_verification')
-        result = as_user(['/usr/bin/python3', str(APP/'scripts/boot-recovery.py'), 'checkpoint'])
-        if result.returncode:
-            return safe_status('listening', checkpoint_error=True)
-        return safe_status('listening')
     settings = json.loads(SETTINGS.read_text())
     token = process_token(settings)
     marker = RUN/'keyscan-session.json'
     cached = json.loads(marker.read_text()) if marker.exists() else None
-    # 取消监听的待重启作业，避免它在密钥校验期间重新争抢数据库锁。
-    subprocess.run(['systemctl','stop',BOT],check=True,capture_output=True)
+    # The supervisor waits for listener exit before entering preparation.
     with database_locks():
         if verify or cached != token or not (RUN/'keys.json').exists():
             scratch = RUN/'root-keyscan'
@@ -293,22 +279,20 @@ def recover(*, verify=False):
             destination.unlink(missing_ok=True)
             return safe_status('verified', key_scan=True, no_api=True, no_message_sent=True, **details)
         atomic_json(marker,token,owner=owner())
-    # 必须先释放数据库锁，随后主监听才能取得同一组锁。
-    subprocess.run(['systemctl','start',BOT],check=True,capture_output=True)
-    return safe_status('listener_starting', **details)
+    return safe_status('prepared', **details)
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('mode',choices=['runtime','recover','verify','probe','checkpoint','status'])
+    parser.add_argument('mode',choices=['runtime','prepare','verify','probe','checkpoint','status'])
     parser.add_argument('--keys',type=Path)
     parser.add_argument('--verify',action='store_true')
     args = parser.parse_args()
     try:
         if args.mode == 'runtime':
             runtime()
-        elif args.mode in ('recover','verify'):
-            recover(verify=args.mode=='verify')
+        elif args.mode in ('prepare','verify'):
+            prepare(verify=args.mode=='verify')
         elif args.mode == 'probe':
             print(json.dumps(probe(args.keys,verify=args.verify)))
         elif args.mode == 'checkpoint':
@@ -317,14 +301,14 @@ def main():
             print((RUN/'boot-status.json').read_text() if (RUN/'boot-status.json').exists() else '{"phase":"not_started"}')
     except Exception as exc:
         # 不打印含路径/账号/密钥/聊天正文的异常内容。
-        if args.mode in ('runtime','recover','verify'):
+        if args.mode in ('runtime','prepare','verify'):
             category = str(exc) if isinstance(exc,ValueError) else type(exc).__name__
             safe_status('waiting_for_login_or_repair', reason=category)
         else:
             import re
             reason=str(exc) if isinstance(exc,ValueError) and re.fullmatch('[a-z_]{1,90}',str(exc)) else type(exc).__name__
             print(json.dumps(dict(ready=False,error=reason)))
-        return 0 if args.mode == 'recover' else 1
+        return 1
     return 0
 
 

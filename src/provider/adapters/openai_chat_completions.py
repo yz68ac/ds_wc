@@ -14,11 +14,12 @@ class ChatCompletionsAdapter:
             raise ModelError('unsupported_native_search')
         if any(isinstance(m, dict) and '_provider_state' in m for m in request.messages):
             raise ModelError('continuation_provider_mismatch')
-        payload = dict(model=settings['model'], messages=deepcopy(request.messages),
-                       max_tokens=settings.get('max_tokens', 1200), stream=False)
+        payload = dict(model=settings['model'], messages=deepcopy(request.messages), stream=False)
+        if settings.get('max_tokens', 1200) is not None:
+            payload['max_tokens'] = settings.get('max_tokens', 1200)
         if settings.get('temperature', 1.0) is not None:
             payload['temperature'] = settings.get('temperature', 1.0)
-        if settings.get('thinking') != 'disabled' and settings.get('reasoning_effort') in ('low', 'high', 'max'):
+        if settings.get('thinking') != 'disabled' and settings.get('reasoning_effort') in ('none', 'low', 'medium', 'high', 'xhigh', 'max'):
             payload['reasoning_effort'] = settings['reasoning_effort']
         if request.tools:
             payload.update(tools=deepcopy(request.tools), tool_choice=deepcopy(request.tool_choice or 'auto'))

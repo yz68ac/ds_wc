@@ -86,8 +86,9 @@ class DeliveryController:
                 and intake <= intent.get('seen_intake', -1)):
             return
         text = self.journal.outgoing_text(task)
+        image = task.get('images', [])[intent['part']] if task.get('images') and intent.get('kind') != 'notice' else None
         ack = scan_confirmation(self.store, task.get('delivery_chat_id', self.chat_id),
-                                self.store.self_wxid, text, intent, now, blocked=bool(task['blocked_reason']))
+                                self.store.self_wxid, text, intent, now, blocked=bool(task['blocked_reason']), image=image)
         if ack is not None:
             self.journal.acknowledge(task['id'], ack, now, memory=memory)
             self.log.info('发送确认 task=%s part=%s local_id=%s', task['id'], intent['part'], ack)
@@ -149,7 +150,13 @@ class DeliveryController:
             self.log.info("模拟完成 task=%s version=%s", task["id"], task["version"])
             return
         native = native_transport(self.cfg, external=bool(task.get('external_request_id')))
-        if native and not notice and not task.get('external_request_id'):
+        image = task.get('images', [])[task['next_chunk']] if task.get('images') and not notice else None
+        if image and not native:
+            with self.journal.db:
+                task.update(phase='done', chunks=[], delivery_error='image_requires_native_service')
+                self.journal.put(task)
+            return
+        if native and not notice and not task.get('external_request_id') and not image:
             # Preserve acknowledged prefixes; only adapt not-yet-submitted text.
             with self.journal.db:
                 start=task['next_chunk']
@@ -168,7 +175,10 @@ class DeliveryController:
         self.journal.intend(task["id"], baseline, now, timeout, kind="notice" if notice else "reply", **options)
         try:
             current = self.journal.task(task["id"])
-            if current['intent'].get('transport')=='native_service':
+            if image:
+                job = job_factory('native_send_image', (self.cfg, current.get('delivery_chat_id', self.chat_id),
+                    image, current['intent']['request_id']), timeout=30)
+            elif current['intent'].get('transport')=='native_service':
                 job = job_factory('native_send', (self.cfg, current.get('delivery_chat_id',self.chat_id),
                     self.journal.outgoing_text(current),
                     current['intent']['request_id']), timeout=30)

@@ -5,14 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "model-provider"
 version = "0.3.1"
-description = "Provider-neutral model calls using the OpenAI and Anthropic SDKs"
+description = "Provider-neutral model calls using the OpenAI, Anthropic and Google Gen AI SDKs"
 readme = "README.md"
 requires-python = ">=3.11"
 classifiers = [
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
 ]
-dependencies = ["openai>=3.40,<4", "anthropic>=2.3,<3"]
+dependencies = ["openai>=3.40,<4", "anthropic>=2.3,<3", "google-genai>=2.34,<3"]
 
 [project.scripts]
 model-provider = "provider.__main__:main"

@@ -23,7 +23,6 @@ import zipfile
 FRIDA_VERSION='17.24.3'
 WHEEL_SHA256='2ba706b7385d56111af5c6cced55361168d3d93babdb300d2ea2b7f76d58a289'
 TARGET=Path('/opt/wxbridge-native-helper')
-UNIT=Path('/etc/systemd/system/wxbridge-native-helper.service')
 SHORTCUT=Path('/usr/local/bin/ds-native')
 TEXT_ASSETS=('helper.py','agent.js','profile.json')
 IMAGE_ASSETS=('image_worker.py','image_contract.py','image_agent.js','image_adapter.c','image_profile.json')
@@ -52,7 +51,7 @@ def install(wheel,user,allowed,*,enable_images=False,image_account=None,image_ac
     account=pwd.getpwnam(user)
     if account.pw_uid==0:raise ValueError('nonroot_client_required')
     image=image_options(enable_images,image_account,image_account_root,account.pw_uid)
-    for target in (TARGET,UNIT,SHORTCUT):
+    for target in (TARGET,SHORTCUT):
         if target.exists() or target.is_symlink():raise ValueError('installation_target_exists')
     with wheel.open('rb') as stream:
         if hashlib.file_digest(stream,'sha256').hexdigest()!=WHEEL_SHA256:
@@ -96,36 +95,11 @@ def install(wheel,user,allowed,*,enable_images=False,image_account=None,image_ac
     version=subprocess.check_output([str(python),'-I','-c','import frida;print(frida.__version__)'],text=True).strip()
     if version!=FRIDA_VERSION:raise ValueError('frida_import_mismatch')
     helper.configuration(config_file)
-    image_directories=IMAGE_RUNTIME_POLICY if image else ''
-    UNIT.write_text(f'''[Unit]
-Description=Private native WeChat text submission helper
-After=wxbridge-session.service
-Requires=wxbridge-session.service
-PartOf=wxbridge-session.service
-
-[Service]
-Type=simple
-User=root
-Group={grp.getgrgid(account.pw_gid).gr_name}
-WorkingDirectory={TARGET}
-ExecStart={python} -I {TARGET}/helper.py --serve {config_file}
-Restart=on-failure
-RestartSec=3
-UMask=0077
-NoNewPrivileges=yes
-PrivateTmp=yes
-ProtectSystem=strict
-ProtectHome=yes
-ReadWritePaths=/run/wxbridge-trial
-{image_directories}TimeoutStopSec={'infinity' if image else '8'}
-SendSIGKILL={'no' if image else 'yes'}
-StandardOutput=null
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-''')
-    UNIT.chmod(0o644)
+    if image:
+        runtime=Path('/run/wechat-linux-images')
+        if runtime.is_symlink():raise ValueError('unsafe_image_runtime')
+        runtime.mkdir(mode=0o700,exist_ok=True)
+        runtime.chmod(0o700)
     SHORTCUT.parent.mkdir(parents=True,exist_ok=True)
     SHORTCUT.write_text(f'''#!/bin/sh
 set -eu

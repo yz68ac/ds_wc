@@ -117,18 +117,16 @@ class MonitorTests(unittest.TestCase):
         self.assertLess(time.monotonic()-began,.5)
 
     def test_service_failure_is_bounded_and_does_not_forward_credentials(self):
-        with patch.object(monitor.subprocess,'run',side_effect=subprocess.TimeoutExpired('systemctl',2)) as run:
+        with patch.object(monitor,'control_request',side_effect=OSError) as run:
             self.assertEqual(monitor.read_services(),({},'unavailable'))
-        self.assertEqual(run.call_args.kwargs['timeout'],2)
-        self.assertEqual(set(run.call_args.kwargs['env']),{'PATH','LC_ALL'})
-        self.assertEqual(run.call_args.args[0][1],'show')
+        run.assert_called_once_with('status')
 
-    def test_systemd_parses_fixed_units_only(self):
-        body='Id=wxbridge-bot.service\nActiveState=active\nMainPID=123\n\nId=unrelated.service\nActiveState=active\n'
-        with patch.object(monitor.subprocess,'run',return_value=Mock(returncode=0,stdout=body)):
+    def test_supervisor_projects_fixed_components_only(self):
+        body=dict(components={monitor.BOT:dict(state='active',pid=123),'unrelated':dict(state='active',pid=1)})
+        with patch.object(monitor,'control_request',return_value=body):
             services,failure=monitor.read_services()
         self.assertFalse(failure)
-        self.assertEqual(set(services),{'wxbridge-bot.service'})
+        self.assertEqual(set(services),{monitor.BOT})
 
     def test_details_cache_and_manual_refresh_do_not_poll_systemd_every_tick(self):
         with patch.object(monitor,'read_services',return_value=({},'')) as service, \

@@ -55,6 +55,10 @@
     "max_reply_chars": 1800
   },
   "models": {
+    "image": {
+      "model": "",
+      "options": {"timeout_seconds": 180}
+    },
     "reply": {
       "model": "",
       "options": {
@@ -180,6 +184,7 @@
     "image": "openai",
     "background": "deepseek"
   },
+  "image_generation": {"enabled": false},
   "system_prompt_file": "prompts/system.md",
   "provider_env": null,
   "profile": {

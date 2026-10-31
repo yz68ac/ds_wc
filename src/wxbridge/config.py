@@ -88,6 +88,7 @@ def load_config(path: str | Path = "config.json") -> dict[str, Any]:
     cfg = resolve_config(data, p, validate_role_models=False)
     cfg['system_prompt_file'] = str((PROJECT_ROOT/DEFAULTS['system_prompt_file']).resolve())
     cfg['instances'] = discover_instances(cfg, p, resolver=resolve_config)
+    cfg['_account_config_file'] = str(p.resolve())
     return cfg
 
 
@@ -269,6 +270,10 @@ def resolve_config(data: dict, path: str | Path, *, environment=True, origins=No
     if type(delay) not in (int, float) or not 1 <= delay <= 60:
         raise ValueError('queue.generation_retry_delay_seconds 必须为 1–60 秒')
     from wxbridge.ai.roles import validate_models
+    image_generation = cfg['image_generation']
+    if (not isinstance(image_generation, dict) or set(image_generation) != {'enabled'}
+            or type(image_generation['enabled']) is not bool):
+        raise ValueError('invalid_image_generation_settings')
     if validate_role_models:
         validate_models(cfg)
     cfg['_config_origins'] = provenance

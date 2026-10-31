@@ -89,7 +89,9 @@ class ParticipationConfigTests(unittest.TestCase):
         cfg = deepcopy(DEFAULTS)
         cfg['models']['reply']['model'] = 'synthetic-reply'
         cfg['memory']['enabled'] = False
-        config = SimpleNamespace(connections={name: object() for name in ('openai', 'anthropic', 'deepseek')})
+        names = ('openai', 'anthropic', 'deepseek')
+        config = SimpleNamespace(connections={name: object() for name in names},
+                                 protocols={name: name for name in names}, options={name: {} for name in names})
         with patch('wxbridge.ai.roles.load_config', return_value=config):
             validate_models(cfg)
             cfg['participation']['enabled'] = True

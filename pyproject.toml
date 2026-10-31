@@ -21,9 +21,10 @@ login = ["zxing-cpp>=3,<4", "qrcode>=8,<9"]
 
 [dependency-groups]
 provider = ["model-provider"]
+bridge = ["Pillow>=11,<14"]
 
 [tool.uv]
-default-groups = ["provider"]
+default-groups = ["provider", "bridge"]
 
 [tool.uv.sources]
 model-provider = { path = "src/provider", editable = true }

@@ -7,12 +7,15 @@ from .citations import without_citations
 from provider.adapters.common import is_public_url_candidate
 
 
-def answer_with_native_search(cfg, client, messages, on_search=None):
+def answer_with_native_search(cfg, client, messages, on_search=None, *, image_requests=None):
     from .search_prompt import search_prompt
     settings = cfg.get('search', {})
     deadline = time.monotonic()+float(settings.get('total_timeout_seconds', 120))
     maximum = int(settings.get('max_requests', 3))
     conversation = search_prompt(cfg, messages, native=True)
+    image_enabled = cfg.get('image_generation', {}).get('enabled', False) and image_requests is not None
+    if image_enabled:
+        from .image_generation import IMAGE_TOOL, collect_image_request
     sources, errors = [], []
     attempted = notified = False
     calls = actions = 0
@@ -28,7 +31,8 @@ def answer_with_native_search(cfg, client, messages, on_search=None):
         if remaining <= 0:
             errors.append('tool_limit');return finish('这次查询到上限了，暂时还没能整理完整')
         if time.monotonic() >= deadline:raise ModelError('deadline_exceeded', retryable=True)
-        result = client.request(conversation, deadline=deadline, native_search={'max_calls': remaining})
+        result = client.request(conversation, deadline=deadline, native_search={'max_calls': remaining},
+                                **(dict(tools=[IMAGE_TOOL]) if image_enabled else {}))
         info = result.search
         if not isinstance(info, dict):raise ModelError('invalid_native_search_result')
         used, searched = info.get('actions', 0), info.get('calls', 0)
@@ -45,6 +49,8 @@ def answer_with_native_search(cfg, client, messages, on_search=None):
             conversation.append(client.assistant_message(result.message))
             continue  # Signed/opaque state is replayed unchanged, within budget.
         client.check_complete(result)
+        if image_enabled and collect_image_request(result.message.get('tool_calls') or [], image_requests):
+            return finish('在画了，稍后发给你')
         if result.message.get('tool_calls'):raise ModelError('unexpected_client_tool')
         if errors:return finish('这次联网查询没有完成，暂时核实不了')
         if attempted and not sources:return finish('这次没有查到可核对的来源，暂时核实不了')

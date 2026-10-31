@@ -20,11 +20,11 @@ APP = Path('/opt/wxbridge')
 HELPER = Path('/opt/wxbridge-native-helper')
 RUN = Path('/run/wxbridge-trial')
 PRESERVE = {'prompts/system.md', 'prompts/memory.md', 'prompts/topic_aliases.json'}
-UNITS = ('wxbridge-bot.service', 'wxbridge-recover.timer', 'wxbridge-native-helper.service')
+UNITS = ('wxbridge.service',)
 ASSETS = ('helper.py', 'agent.js', 'profile.json')
 IMAGE_ASSETS = ('image_worker.py', 'image_contract.py', 'image_agent.js', 'image_adapter.c', 'image_profile.json')
 HELPER_CONFIG = HELPER/'helper-config.json'
-HELPER_DROPIN = Path('/etc/systemd/system/wxbridge-native-helper.service.d/native-images.conf')
+HELPER_DROPIN = Path('/etc/systemd/system/wxbridge.service.d/native-images.conf')
 IMAGE_STOP_POLICY = (b'[Service]\nTimeoutStopSec=infinity\nSendSIGKILL=no\n'
                      b'RuntimeDirectory=wechat-linux-images\nRuntimeDirectoryMode=0700\n'
                      b'RuntimeDirectoryPreserve=yes\nReadWritePaths=/run/wechat-linux-images\n')
@@ -88,12 +88,12 @@ def image_helper_changes(new, installation):
 def stop_helper(*, images_enabled):
     # A Python timeout must not let rollback overwrite assets while native C
     # callbacks are still owned by WeChat. Never fall back to kill/restart.
-    if images_enabled and active(UNITS[2]):
-        policy = run('systemctl', 'show', UNITS[2], '-p', 'TimeoutStopUSec', '-p', 'SendSIGKILL').stdout
+    if images_enabled and active(UNITS[0]):
+        policy = run('systemctl', 'show', UNITS[0], '-p', 'TimeoutStopUSec', '-p', 'SendSIGKILL').stdout
         values = dict(line.split('=', 1) for line in policy.splitlines() if '=' in line)
         if values.get('TimeoutStopUSec') != 'infinity' or values.get('SendSIGKILL') != 'no':
             raise ValueError('native_image_stop_policy_unsafe')
-    return subprocess.run(['systemctl', 'stop', UNITS[2]], capture_output=True,
+    return subprocess.run(['systemctl', 'stop', UNITS[0]], capture_output=True,
                           text=True, check=True, timeout=None if images_enabled else 40)
 
 
@@ -245,12 +245,9 @@ def deploy(stage, backup, *, apply=False, update_helper=False, allow_pending_mem
     stopped = False
     mutated = False
     started = time.monotonic()
-    wechat = run('pgrep', '-x', 'wechat').stdout.strip()
     try:
         stopped = True
-        run('systemctl', 'stop', UNITS[1], 'wxbridge-recover.service', UNITS[0])
-        if helper_update:
-            stop_helper(images_enabled=images_before)
+        stop_helper(images_enabled=images_before)
         with ExitStack() as locks:
             lock_paths = {RUN/'queue.sqlite3.lock', RUN/'decrypted/.listener.lock'}
             lock_paths.update(Path(cfg['queue']['file']+'.lock') for _, cfg, _ in configured_groups())
@@ -275,9 +272,9 @@ def deploy(stage, backup, *, apply=False, update_helper=False, allow_pending_mem
             private = {n: sha(APP/n) for n in private_files if (APP/n).is_file()}
             memory = {str(p.relative_to(APP)): sha(p) for p in (APP/'memory').rglob('*') if p.is_file()}
             backup.mkdir(parents=True, mode=0o700);backup.chmod(0o700)
-            updates = {APP/n: ((stage/n).read_bytes(), 0o755 if new['files'][n]['mode']=='100755' else 0o644, user.pw_uid, user.pw_gid) for n in planned}
-            updates.update({APP/n: (None, 0, user.pw_uid, user.pw_gid) for n in removed})
-            updates[APP/'release-manifest.json'] = ((stage/'release-manifest.json').read_bytes(), 0o644, user.pw_uid, user.pw_gid)
+            updates = {APP/n: ((stage/n).read_bytes(), 0o755 if new['files'][n]['mode']=='100755' else 0o644, 0, 0) for n in planned}
+            updates.update({APP/n: (None, 0, 0, 0) for n in removed})
+            updates[APP/'release-manifest.json'] = ((stage/'release-manifest.json').read_bytes(), 0o644, 0, 0)
             if helper_update:
                 for name in helper_changed:
                     data = (stage/helper_asset(new, name)).read_bytes()
@@ -318,10 +315,9 @@ def deploy(stage, backup, *, apply=False, update_helper=False, allow_pending_mem
             run('systemctl', 'daemon-reload')
             run(str(HELPER/'venv/bin/python'), '-I', '-c',
                 "import runpy; runpy.run_path('/opt/wxbridge-native-helper/helper.py')['configuration']('/opt/wxbridge-native-helper/helper-config.json')")
-            run('systemctl', 'start', UNITS[2])
         # Readiness is a metadata-only operation, not a test message or injection.
-        wait_native_ready()
         stamp = time.time();run('systemctl', 'start', UNITS[0])
+        wait_native_ready()
         for _ in range(20):
             live = live_status()
             if active(UNITS[0]) and live.get('updated_at', 0)>=stamp and live.get('build', {}).get('commit')==new['commit'] and not live.get('blocked_reason'):
@@ -329,13 +325,12 @@ def deploy(stage, backup, *, apply=False, update_helper=False, allow_pending_mem
             time.sleep(1)
         else:
             raise ValueError('new_listener_not_ready')
-        if run('pgrep', '-x', 'wechat').stdout.strip()!=wechat or queue()['identity']!=before['identity']:
+        if queue()['identity']!=before['identity']:
             raise ValueError('client_or_identity_changed')
         report.update(applied=True, cursor_after=queue()['cursor'], phase=live.get('phase'),
                       maintenance_seconds=round(time.monotonic()-started, 3))
     except BaseException:
         if mutated:
-            run('systemctl', 'stop', UNITS[0], UNITS[1], 'wxbridge-recover.service')
             stop_helper(images_enabled=images_after)
             for name, info in records.items():
                 path = Path(name)
@@ -348,7 +343,7 @@ def deploy(stage, backup, *, apply=False, update_helper=False, allow_pending_mem
         raise
     finally:
         if stopped:
-            for unit in (UNITS[2], UNITS[0], UNITS[1]):
+            for unit in UNITS:
                 if before_units[unit] and not active(unit):
                     subprocess.run(['systemctl', 'start', unit], capture_output=True, timeout=40)
     report['services'] = {u: active(u) for u in UNITS}

@@ -1,6 +1,6 @@
 [Unit]
 Description=Private non-swappable WeChat bridge runtime
-Before=wxbridge-runtime.service
+Before=wxbridge.service
 
 [Mount]
 What=tmpfs

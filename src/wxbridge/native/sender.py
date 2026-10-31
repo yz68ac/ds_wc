@@ -20,6 +20,18 @@ def submit(cfg, chat_id, text, request_id):
     return sender.submit_text(chat_id, text, request_id=request_id).metadata
 
 
+def submit_image(cfg, chat_id, image, request_id):
+    from wxbridge.app.image_generation import artifact_path
+    sender, options = _sender(cfg, sending=True)
+    if chat_id not in options['allowed_chat_ids']:
+        raise SendError('chat not allowed', code='native_chat_not_allowed', metadata={'submitted': False})
+    try:
+        path = artifact_path(cfg, image)
+    except Exception:
+        raise SendError('image unavailable', code='native_image_unavailable', metadata={'submitted': False}) from None
+    return sender.submit_image(chat_id, path, request_id=request_id).metadata
+
+
 def readiness(cfg):
     sender, _ = _sender(cfg)
     return sender.health()

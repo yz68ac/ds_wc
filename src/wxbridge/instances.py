@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import math
 import os
 from pathlib import Path
@@ -12,7 +13,7 @@ from wxbridge.config_merge import deep_merge, field_origins
 INSTANCE_ID = re.compile(r'[a-zA-Z0-9][a-zA-Z0-9_-]{0,47}\Z')
 CHAT_ID = re.compile(r'(?:[a-zA-Z0-9_-]{1,128}@chatroom|wxid_[a-zA-Z0-9_-]{1,120})\Z')
 GROUP_FIELDS = {'system_prompt_file', 'target', 'model_clients', 'models', 'profile',
-                'reply_style', 'participation', 'memory', 'search', 'vision', 'queue'}
+                'reply_style', 'participation', 'memory', 'search', 'vision', 'queue', 'image_generation'}
 
 
 def validate_account_fields(data):
@@ -53,7 +54,8 @@ def discover_instances(cfg, path, *, resolver):
         if not INSTANCE_ID.fullmatch(identifier) or identifier.lower() in ids:
             raise ValueError('invalid_or_duplicate_instance_id:'+identifier)
         ids.add(identifier.lower())
-        entry = json.loads(file.read_text(encoding='utf-8-sig'))
+        raw = file.read_bytes()
+        entry = json.loads(raw.decode('utf-8-sig'))
         if not isinstance(entry, dict) or set(entry)-GROUP_FIELDS-{'chat', 'enabled'}:
             raise ValueError('invalid_instance_fields:'+identifier)
         enabled, chat = entry.get('enabled', True), entry.get('chat', '')
@@ -87,7 +89,8 @@ def discover_instances(cfg, path, *, resolver):
         effective['instances'] = []
         effective['_instance_id'] = identifier
         effective['_instance_config_file'] = str(file.resolve())
-        result.append(dict(id=identifier, chat=chat, enabled=enabled, reuse_legacy_state=False, config=effective))
+        result.append(dict(id=identifier, chat=chat, enabled=enabled, reuse_legacy_state=False,
+                           config_revision=hashlib.sha256(raw).hexdigest(), config=effective))
     return result
 
 

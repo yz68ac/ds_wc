@@ -24,6 +24,7 @@ class SessionPhases:
     def collect_results(self):
         with self.metrics.measure('generation'):
             self._poll_generation_results()
+        self.image_generation.step()
         with self.metrics.measure('ui_result'):
             self._ui_result_step()
         with self.metrics.measure('confirmation'):
@@ -55,6 +56,7 @@ class SessionPhases:
 
     def worker_counts(self):
         return dict(generation=len(self.generators), memory=int(self.memory_job is not None),
+                    image=len(self.image_generation.jobs),
                     participation=int(self.participation.job is not None),
                     profile=int(bool(self.profile and self.profile.job)))
 

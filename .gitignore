@@ -59,3 +59,9 @@ Thumbs.db
 
 # Local per-group configuration and prompts.
 /instance/
+/src/webui/node_modules/
+/src/webui/dist/
+/src/webui/*.tsbuildinfo
+/src/wxbridge_web/*.egg-info/
+/src/wxbridge_web/build/
+/src/wxbridge_web/dist/

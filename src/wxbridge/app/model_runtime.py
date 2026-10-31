@@ -86,7 +86,7 @@ class ModelLane:
                     self.active = None
                 self.queue.task_done()
 
-    def close(self):
+    def begin_close(self):
         with self.lock:
             if not self.closed:
                 self.closed = True
@@ -100,6 +100,12 @@ class ModelLane:
                     job.close()
                     self.queue.task_done()
                 self.queue.put(None)
+
+    def stopped(self):
+        return self.thread is None or not self.thread.is_alive()
+
+    def close(self):
+        self.begin_close()
         if self.thread:
             self.thread.join()
         if self.client:
@@ -148,17 +154,20 @@ class GroupModels:
                     prompt, vision = (value['prompt'], value['vision'])
                 finally:
                     prep.close()
+            image_requests = []
             if echo is not None:
                 answer = echo
-            elif cfg['search']['enabled']:
+            elif cfg['search']['enabled'] or cfg.get('image_generation', {}).get('enabled', False):
                 from wxbridge.ai.search import answer_with_search
-                answer, search = answer_with_search(cfg, client_for('reply'), prompt, on_search=lambda: job.events.put(dict(event='search_started')))
+                answer, search = answer_with_search(cfg, client_for('reply'), prompt,
+                    on_search=lambda: job.events.put(dict(event='search_started')),
+                    **(dict(image_requests=image_requests) if cfg.get('image_generation', {}).get('enabled', False) else {}))
             else:
                 from wxbridge.ai.output import format_reply, response_prompt
                 answer = format_reply(client_for('reply').chat(response_prompt(prompt, cfg)), cfg)
             if not answer.strip():
                 raise ModelError('empty_reply', retryable=True)
-            return dict(reply=answer, vision=vision, search=search)
+            return dict(reply=answer, vision=vision, search=search, image_requests=image_requests)
         if kind == 'request':
             return dict(result=client_for(payload[1]).request(payload[2]))
         if kind == 'memory':
@@ -183,14 +192,24 @@ class GroupModels:
         def execute(job):
             if not result.set_running_or_notify_cancel():
                 return {}
+            failure = None
+            metrics = []
             try:
-                value = lane.get_client().generate_images(request, deadline=job.deadline)
-                job.check()
-                result.set_result(value)
+                with capture_metrics() as metrics:
+                    value = lane.get_client().generate_images(request, deadline=job.deadline)
+                    job.check()
             except Exception as exc:
-                result.set_exception(exc if isinstance(exc, ModelError) else ModelError('image_generation_failed'))
+                failure = exc if isinstance(exc, ModelError) else ModelError('image_generation_failed')
+            for entry in metrics:
+                entry.update(role='image', channel='image')
+            result.model_metrics = metrics
+            if failure is not None:
+                result.set_exception(failure)
+            else:
+                result.set_result(value)
             return {}
         job = lane.submit(execute, timeout)
+        result.cancel_request = job.close
         result.add_done_callback(lambda f: job.close() if f.cancelled() else None)
 
         def complete(f):
@@ -200,7 +219,14 @@ class GroupModels:
         return result
 
     def status(self):
-        return {name: dict(running=lane.active is not None, queued=lane.queue.qsize(), client_created=lane.client is not None) for name, lane in self.lanes.items()}
+        return {name: dict(running=lane.active is not None, queued=max(0,lane.queue.qsize()-int(lane.closed)), client_created=lane.client is not None) for name, lane in self.lanes.items()}
+
+    def begin_close(self):
+        for lane in self.lanes.values():
+            lane.begin_close()
+
+    def stopped(self):
+        return all(lane.stopped() for lane in self.lanes.values())
 
     def close(self):
         from contextlib import ExitStack

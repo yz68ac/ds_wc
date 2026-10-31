@@ -32,6 +32,7 @@ class Coordinator:
         self.account = AccountRuntime(cfg, store=store)
         self.sessions = self.account.sessions
         self.native_api = None
+        self.instance_control = None
         self.closed = False
         self.rotation, self.generation_rotation, self.delivery_rotation = 0, 0, 0
         self.started_at, self.build = time.time(), runtime_identity(cfg)
@@ -58,13 +59,19 @@ class Coordinator:
                 from wxbridge.native.server import NativeServer
                 from wxbridge.app.native_gateway import AccountNativeService
                 self.native_api = NativeServer(options, AccountNativeService(self, options))
+            if cfg.get('_account_config_file'):
+                from wxbridge.app.instance_control import InstanceControl
+                self.instance_control = InstanceControl(self)
         except BaseException:
             self.close()
             raise
 
     def tick(self):
-        order = self.sessions[self.rotation:]+self.sessions[:self.rotation]
-        self.rotation = (self.rotation+1) % len(self.sessions)
+        if self.instance_control:
+            self.instance_control.tick()
+        active = [s for s in self.sessions if not getattr(s,'quiescing',False)]
+        order = active[self.rotation:]+active[:self.rotation]
+        self.rotation = (self.rotation+1) % max(1,len(active))
         # Intake all groups before giving foreground work any API slots.
         for session in order:
             session.intake()
@@ -78,12 +85,12 @@ class Coordinator:
             session.start_foreground()
         for session in order:
             session.participate()
-        send_order = self.sessions[self.delivery_rotation:]+self.sessions[:self.delivery_rotation]
+        send_order = active[self.delivery_rotation:]+active[:self.delivery_rotation]
         for session in send_order:
             free = self.account.sending() is None
             session.deliver()
             if free and self.account.sending() is not None:
-                self.delivery_rotation = (self.sessions.index(session)+1) % len(self.sessions)
+                self.delivery_rotation = (active.index(session)+1) % max(1,len(active))
                 break
         for session in order:
             session.background()
@@ -94,12 +101,15 @@ class Coordinator:
         status = dict(schema=1, pid=os.getpid(), updated_at=time.time(), started_at=self.started_at,
                       phase='stopped' if stopped else 'listening', build=self.build,
                       **self.account.status(), instances={})
+        status['features'] = dict(instance_control=self.instance_control is not None)
+        status['instance_lifecycle'] = self.instance_control.status() if self.instance_control else {}
         counts = [s.worker_counts() for s in self.sessions]
         status['generation_workers'] = sum(c['generation'] for c in counts)
         status['memory'] = dict(running=any(c['memory'] for c in counts))
         status['participation'] = dict(outcome='evaluating' if any(c['participation'] for c in counts) else 'idle')
         status['inactive_queues'] = {s.instance_id: dict(queue_length=s.journal.pending_count(),
-            unconfirmed=s.journal.has_intent()) for s in self.account.inactive}
+            unconfirmed=s.journal.has_intent(), cursor=s.journal.get('cursor',0),
+            last_success=s.journal.get('last_success',0)) for s in self.account.inactive}
         status['blocked_reason'] = 'account_send_unconfirmed' if status['send_blocked'] else ''
         for session in self.sessions:
             value = session.journal.status()
@@ -109,6 +119,10 @@ class Coordinator:
                 model_workers=sum(session.worker_counts().values()), model_channels=session.models.status(),
                 participation=value['participation'],
                 profile=session.profile.status() if session.profile else dict(enabled=False),
+                image_generation=dict(enabled=session.cfg['image_generation']['enabled'],
+                    running=len(session.image_generation.jobs), last=value.get('last_image_generation')),
+                models={role:value['model'] for role,value in session.cfg['models'].items()},
+                quiescing=getattr(session,'quiescing',False),
                 status_write_error=session.status_write_error)
         signature = json.dumps({k:v for k,v in status.items() if k != 'updated_at'}, sort_keys=True)
         clock = time.monotonic()
@@ -146,6 +160,8 @@ class Coordinator:
             return
         self.closed = True
         with ExitStack() as stack:
+            if self.instance_control:
+                stack.callback(self.instance_control.close)
             stack.callback(self.account.close)
             for session in self.sessions:
                 stack.callback(session.close)

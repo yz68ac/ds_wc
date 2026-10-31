@@ -30,14 +30,13 @@
     // 可另加 bot_name 设置机器人称呼；称呼和真实 @ 都只作为判断线索，不强制回复。
   },
 
-  // 这里填写 provider 连接名，不是模型 ID；当前内置 openai / anthropic / deepseek。
+  // 这里填写 provider 连接名，不是模型 ID；内置 openai / anthropic / deepseek / gemini。
   // 每实例的三条通道各复用自己的 client，同通道串行，跨通道和跨实例并行。
   "model_clients": {
     // 前台完整回复、联网及工具调用使用的连接。
     "reply": "deepseek",
 
-    // 图片生成接口使用的连接；模型、尺寸等通过 ImageRequest 传入。
-    // 当前没有内置群聊图片生成指令，也没有在这里配置 models.image。
+    // 图片生成连接：openai 使用 OpenAI Images；gemini 使用原生 generateContent。
     "image": "openai",
 
     // 参与判断、个人记忆、头像分类和群概况共用的连接，可分别使用不同模型。
@@ -47,6 +46,15 @@
   // 各角色的模型和生成参数。启用的角色必须填所选连接可用的模型 ID，不会自动挑选模型。
   // options 按角色独立生效，不会修改其他角色的模型或思考设置。
   "models": {
+    // 图片角色使用 model_clients.image；image_generation.enabled=true 时必须填写模型 ID。
+    // 此处示例为 GPT。改用 Gemini 时，把连接改为 gemini，模型填 gemini-3.1-flash-image，
+    // options 换成 {"aspect_ratio":"1:1","timeout_seconds":180}，可另加 image_size。
+    // Gemini 需在 provider .env 配置 GEMINI_IMAGE_BASE_URL（例如 http://127.0.0.1:8317）。
+    // size/quality 为 OpenAI 参数，aspect_ratio/image_size 为 Gemini 参数，不可混用。
+    "image": {
+      "model": "",
+      "options": {"size": "1024x1024", "quality": "low", "timeout_seconds": 180}
+    },
     // 完整回复角色：使用 model_clients.reply；实例启用时必须填写。
     "reply": {
       "model": "",
@@ -112,6 +120,10 @@
       }
     }
   },
+
+  // 当前仅支持用户明确要求的文生图，每轮一个任务；使用原生发送接口并核对发出记录。
+  // 生图独立排队，不占用文字回复线程；请求结果不确定时不会自动再生成一遍。
+  "image_generation": {"enabled": false},
 
   "memory": {
     // 个人记忆及相关学习的总开关。关闭后不向请求附加个人记忆，已有数据不会自动删除。

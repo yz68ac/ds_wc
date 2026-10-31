@@ -70,7 +70,7 @@ class AccountNativeService:
             duplicate = session.journal.external_duplicate(value)
             if duplicate is not None:
                 return duplicate
-        target = next((s for s in self.sessions if s.chat_id == value['chat_id']), None)
+        target = next((s for s in self.sessions if s.chat_id == value['chat_id'] and not getattr(s,'quiescing',False)), None)
         if target is None:
             # Unmanaged groups must not silently share somebody else's state.
             raise NativeError('chat_instance_not_enabled')

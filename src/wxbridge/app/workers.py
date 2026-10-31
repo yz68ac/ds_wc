@@ -58,6 +58,9 @@ def _work(connection, kind, payload):
                 elif kind == 'native_send':
                     from wxbridge.native.sender import submit
                     result = {'ui': submit(*payload)}
+                elif kind == 'native_send_image':
+                    from wxbridge.native.sender import submit_image
+                    result = {'ui': submit_image(*payload)}
                 else:
                     raise ValueError("unknown_worker_kind")
                 if metrics:
@@ -70,7 +73,7 @@ def _work(connection, kind, payload):
                     result.update(error=exc.code, retryable=exc.retryable)
                 if metrics:
                     result['model_metrics'] = metrics
-                if kind in ("send", "native_send"):
+                if kind in ("send", "native_send", "native_send_image"):
                     result["ui"] = {"error": getattr(exc, "code", "ui_unknown"),
                                     "operation": getattr(exc, "metadata", None)}
                     import traceback

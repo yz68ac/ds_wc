@@ -8,13 +8,13 @@ import os
 from pathlib import Path
 import re
 import stat
-import subprocess
 import time
 
 from wxbridge.ai.roles import ROLES, model_settings
+from wxbridge_web.control import BOT, SESSION, RECOVERY, request as control_request
 
 PAGES = ('概览', '收发队列', '模型用量', '记忆与参与', '运行事件')
-UNITS = ('wxbridge-bot.service', 'wxbridge-session.service', 'wxbridge-recover.timer')
+UNITS = (BOT, SESSION, RECOVERY)
 PHASES = {'listening':'等待新消息', 'generating':'生成回复', 'queued':'等待发送', 'ready':'准备发送',
           'cooldown':'等待发送冷却', 'confirming':'核对发出记录', 'blocked':'发送阻塞',
           'generation_retry_wait':'等待生成重试', 'stopped':'已停止', 'debouncing':'等待合并窗口',
@@ -109,18 +109,12 @@ def read_json(path):
 
 def read_services():
     try:
-        result = subprocess.run(['systemctl', 'show', *UNITS,
-            '--property=Id,ActiveState,SubState,MainPID,NRestarts'], capture_output=True, text=True,
-            timeout=2, env={'PATH': '/usr/bin:/bin', 'LC_ALL': 'C.UTF-8'})
-        if result.returncode:
-            return {}, 'unavailable'
-        services = {}
-        for block in result.stdout.strip().split('\n\n'):
-            fields = dict(line.split('=', 1) for line in block.splitlines() if '=' in line)
-            if fields.get('Id') in UNITS:
-                services[fields['Id']] = fields
+        values = control_request('status')['components']
+        services = {name: dict(Id=name,ActiveState=values[name]['state'],
+                    SubState=values[name].get('substate',''),MainPID=str(values[name]['pid']))
+                    for name in UNITS if name in values}
         return services, '' if services else 'unavailable'
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, ValueError, KeyError, TypeError):
         return {}, 'unavailable'
 
 
@@ -223,7 +217,7 @@ def pages(snapshot, cfg, *, now=None):
         summary.append(f'{label}：{code(value.get("ActiveState"))}/{code(value.get("SubState"))}'
                        + (f'  重启 {code(value.get("NRestarts"))} 次' if 'NRestarts' in value else ''))
     if snapshot.get('service_error'):
-        summary.append('systemd 状态不可用；仍可查看状态文件')
+        summary.append('主控状态不可用；仍可查看状态文件')
     summary += ['', f'回复队列：{number(s.get("queue_length"))}    生成进程：{number(s.get("generation_workers"))}',
         f'最近发出确认：{when(s.get("last_success"))}    接收游标：{number(s.get("cursor"))}',
         f'发送阻塞：{error(s.get("blocked_reason"))}',

@@ -85,7 +85,7 @@ class NativeImageDeploymentTests(unittest.TestCase):
                 patch.object(deployment.subprocess, 'run') as stop:
             deployment.stop_helper(images_enabled=True)
             self.assertIsNone(stop.call_args.kwargs['timeout'])
-            self.assertEqual(stop.call_args.args[0], ['systemctl', 'stop', deployment.UNITS[2]])
+            self.assertEqual(stop.call_args.args[0], ['systemctl', 'stop', deployment.UNITS[0]])
         for policy in ('TimeoutStopUSec=8s\nSendSIGKILL=yes\n', 'TimeoutStopUSec=infinity\nSendSIGKILL=yes\n'):
             with self.subTest(policy=policy), patch.object(deployment, 'active', return_value=True), \
                     patch.object(deployment, 'run', return_value=Mock(stdout=policy)), \

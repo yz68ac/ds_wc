@@ -69,12 +69,12 @@ class BootRecoveryTests(unittest.TestCase):
              patch.object(boot,'configured_groups',return_value=[(None,dict(queue=dict(file=str(Path(name)/'queue.sqlite3'))),True)]):
             self.assertFalse(boot.checkpoint()['saved'])
 
-    def test_live_listener_is_not_reopened_or_rescanned(self):
-        with patch.object(boot,'validate_runtime'),patch.object(boot,'service_active',return_value=True),\
-             patch.object(boot,'process_token') as token,patch.object(boot,'as_user') as run,patch.object(boot,'safe_status') as status:
-            run.return_value.returncode=0
-            boot.recover()
-            token.assert_not_called()
-            status.assert_called_once_with('listening')
-            with self.assertRaises(ValueError):
-                boot.recover(verify=True)
+    def test_busy_database_stops_preparation_before_scanning_or_probing(self):
+        parent=Path(__file__).resolve().parents[1]/'.test-tmp';parent.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=parent) as name:
+            directory=Path(name);settings=directory/'settings.json';settings.write_text('{}')
+            with patch.object(boot,'RUN',directory),patch.object(boot,'SETTINGS',settings),\
+                 patch.object(boot,'validate_runtime'),patch.object(boot,'process_token',return_value={'pid':123}),\
+                 patch.object(boot,'database_locks',side_effect=BlockingIOError),patch.object(boot.subprocess,'run') as run:
+                with self.assertRaises(BlockingIOError):boot.prepare()
+                run.assert_not_called()

@@ -14,6 +14,7 @@ from wechat_linux.messages.pats import is_pat
 from wxbridge.native.protocol import NativeError, REQUEST_ID, task_status
 from wxbridge.storage.task_state import validate_task, validate_task_states
 from wxbridge.storage.participation import ParticipationJournal
+from wxbridge.storage.image_generation import ImageGenerationJournal
 
 
 def checked_path(value: str, *, existing: bool = False) -> Path:
@@ -30,7 +31,7 @@ def checked_path(value: str, *, existing: bool = False) -> Path:
     return path
 
 
-class Journal(ParticipationJournal):
+class Journal(ParticipationJournal, ImageGenerationJournal):
     def __init__(self, path: str, identity: dict[str, str], baseline: int):
         target = checked_path(path)
         fd = os.open(target, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
@@ -152,7 +153,7 @@ class Journal(ParticipationJournal):
             sql = ("SELECT data FROM tasks WHERE json_extract(data,'$.phase') != 'done' "
                    "ORDER BY json_extract(data,'$.deadline'),id LIMIT ?")
         else:
-            sql = "SELECT data FROM tasks WHERE phase != 'done' ORDER BY deadline,id LIMIT ?"
+            sql = "SELECT data FROM tasks WHERE phase != 'done' AND COALESCE(json_extract(data,'$.trigger_kind'),'') != 'image_generation' ORDER BY deadline,id LIMIT ?"
         return [json.loads(row[0]) for row in self.db.execute(sql, (limit,))]
 
     def has_external_history(self) -> bool:
@@ -245,6 +246,9 @@ class Journal(ParticipationJournal):
                     job["state"] = "pending"
                     self.put_memory(job)
             for task in self.tasks():
+                if task.get('generation') == 'image_running':
+                    # A crashed request may have been charged. Never infer it is safe to regenerate.
+                    self.image_failed(task, 'image_generation_interrupted', now)
                 if task["generation"] == "running":
                     task["generation"] = "pending"
                 if task['generation'] == 'failed' and task['blocked_reason'].startswith('generation:'):
@@ -323,10 +327,12 @@ class Journal(ParticipationJournal):
     def head(self):
         # 未封批的较早窗口也占位，避免轮询/恢复时晚封批而插队。
         if getattr(self, 'legacy_readonly', False):
-            tasks = sorted(self.tasks(), key=lambda t: (not bool(t.get('intent')),
+            tasks = sorted((t for t in self.tasks() if t.get('trigger_kind') != 'image_generation'
+                            or t.get('generation') == 'ready' or t.get('intent')), key=lambda t: (not bool(t.get('intent')),
                 t.get('trigger_kind') == 'proactive', t['deadline'], t['id']))
             return tasks[0] if tasks else None
         row = self.db.execute("SELECT data FROM tasks WHERE phase != 'done' "
+            "AND (COALESCE(json_extract(data,'$.trigger_kind'),'') != 'image_generation' OR json_extract(data,'$.generation')='ready' OR has_intent=1) "
             'ORDER BY has_intent DESC, optional, deadline, id LIMIT 1').fetchone()
         return json.loads(row[0]) if row else None
 
@@ -345,7 +351,7 @@ class Journal(ParticipationJournal):
             return task["notice"]["text"]
         return task["chunks"][task["intent"]["part"]]
 
-    def generated(self, task_id: int, version: int, chunks: list[str], error: str = "", *, vision=None, search=None) -> bool:
+    def generated(self, task_id: int, version: int, chunks: list[str], error: str = "", *, vision=None, search=None, image_request=None, now=None) -> bool:
         with self.db:
             task = self.task(task_id)
             if not task or task["version"] != version or task["phase"] == "done":
@@ -363,6 +369,8 @@ class Journal(ParticipationJournal):
             if search is not None:
                 task["search"] = search  # 仅数量、阶段和错误码，不含查询词、网页、URL 或正文。
                 self.set("last_search", dict(task_id=task_id, **search))
+            if image_request is not None:
+                self.enqueue_image_generation(task, image_request, now)
             self.put(task)
         return True
 
@@ -436,7 +444,10 @@ class Journal(ParticipationJournal):
             task.update(pre_submit_attempts=0, retry_at=0)
             self.set("last_success", now)
             if task["next_chunk"] == len(task["chunks"]):
-                if memory and task.get('trigger_kind') not in ('proactive','external') and not task.get('generation_failed'):
+                if task.get('images'):
+                    self.set('last_image_generation', dict(task_id=task_id, state='confirmed',
+                        images=len(task['images']), ack_id=local_id, at=now))
+                if memory and task.get('trigger_kind') not in ('proactive','external','image_generation') and not task.get('generation_failed'):
                     # 与最终分片确认同事务；只留触发指针，主进程随后重读原窗口。
                     self.enqueue_memory('reply', 'reply:'+str(task_id),
                         [dict(local_id=m['local_id'], time=m['time']) for m in task['triggers']])
@@ -482,6 +493,7 @@ class Journal(ParticipationJournal):
                     recent_intake=self.get("recent_intake", [])[-20:],
                     last_vision=self.get("last_vision"),
                     last_search=self.get("last_search"),
+                    last_image_generation=self.get('last_image_generation'),
                     backpressure=self.get('backpressure'),
                     participation=self.participation_status(),
                     memory_pending=len(self.memory_jobs()), memory_error=self.get("memory_error", ""),
@@ -502,6 +514,7 @@ class Journal(ParticipationJournal):
                                 last_confirmation_seconds=t.get('last_confirmation_seconds'),
                                 next_chunk=t["next_chunk"], chunks=len(t["chunks"]),
                                 blocked_reason=t["blocked_reason"], vision=t.get("vision"), search=t.get("search"),
+                                image_error=t.get('image_error'), images=len(t.get('images', [])),
                                 memory_used=t.get("memory_used"),
                                 notice_state=(t.get("notice") or {}).get("state"),
                                 intent_kind=(t.get("intent") or {}).get("kind", "reply") if t.get("intent") else None) for t in tasks])
