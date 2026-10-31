@@ -175,6 +175,21 @@ class MultiGroupTests(MultiGroupFixture):
             self.assertNotIn(secret, value)
         self.assertEqual(set(json.loads(value)['instances']), {'alpha', 'beta'})
 
+    def test_account_status_keeps_each_instances_context_metrics_and_policy(self):
+        first, second = self.coordinator.sessions
+        first.cfg['target'].update(context_max_chars=7500,context_recent_messages=12)
+        reply=dict(chars=1234,selected=30,retained=10,omitted=20,scanned=200,scan_limit_hit=False)
+        participation=dict(chars=567,selected=5,retained=5,omitted=0,scanned=1000,scan_limit_hit=True)
+        with first.journal.db:first.journal.set('context',dict(reply=reply))
+        with second.journal.db:second.journal.set('context',dict(participation=participation))
+        self.coordinator.save_status()
+        rows=json.loads(self.coordinator.status_path.read_text())['instances']
+        self.assertEqual(rows['alpha']['context'],dict(reply=reply))
+        self.assertEqual(rows['beta']['context'],dict(participation=participation))
+        self.assertEqual(rows['alpha']['context_policy']['context_max_chars'],7500)
+        self.assertEqual(rows['alpha']['context_policy']['context_recent_messages'],12)
+        self.assertEqual(rows['beta']['context_policy']['context_max_chars'],15000)
+
 
     def test_memory_for_same_member_in_different_groups_is_isolated(self):
         from wxbridge.storage.person_memory import MemoryStore
