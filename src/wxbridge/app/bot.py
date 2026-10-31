@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from contextlib import ExitStack
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -383,6 +384,10 @@ class GroupSession(SessionPhases):
             fallback=format_reply('刚才没接上，等会儿再问我一下。', self.cfg))
         self.log.warning('生成失败 task=%s version=%s category=%s retryable=%s',
                     task_id, version, failure.code, failure.retryable)
+        native = next((m.get('native_finish_reason') for m in reversed(result.get('model_metrics') or [])
+                       if m.get('role') == 'reply'), None)
+        if isinstance(native, str) and re.fullmatch('[A-Z][A-Z0-9_]{0,79}', native):
+            self.log.warning('模型结束原因 task=%s native_finish_reason=%s', task_id, native)
 
     @property
     def ui_job(self):

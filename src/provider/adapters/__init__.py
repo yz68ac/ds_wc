@@ -6,6 +6,7 @@ from .openai_chat_completions import ChatCompletionsAdapter
 from .deepseek import DeepSeekAdapter
 from .openai_responses import ResponsesAdapter
 from .anthropic_messages import AnthropicAdapter
+from .gemini import GeminiAdapter
 
 _ADAPTERS = MappingProxyType({
     'deepseek': DeepSeekAdapter,
@@ -14,6 +15,7 @@ _ADAPTERS = MappingProxyType({
     'openai_responses': ResponsesAdapter,
     'anthropic': AnthropicAdapter,
     'anthropic_messages': AnthropicAdapter,
+    'gemini': GeminiAdapter,
 })
 
 

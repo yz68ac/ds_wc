@@ -33,20 +33,6 @@ def build_gemini_image_payload(request):
                 config=dict(response_modalities=['TEXT', 'IMAGE'], image_config=image)), float(timeout)
 
 
-def create_gemini_image_client(base_url, api_key, *, proxy_url=None):
-    if not base_url:
-        raise ModelError('missing_image_base_url')
-    try:
-        from google import genai
-    except ImportError:
-        raise ModelError('sdk_not_installed') from None
-    options = dict(base_url=base_url.rstrip('/'), api_version='v1beta',
-                   retry_options=dict(attempts=1), client_args={'trust_env': False})
-    if proxy_url:
-        options['client_args']['proxy'] = proxy_url
-    return genai.Client(api_key=api_key, http_options=options)
-
-
 def send_gemini_images(client, payload, timeout):
     from google.genai import errors
     request = deepcopy(payload)

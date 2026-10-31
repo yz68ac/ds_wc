@@ -3,6 +3,9 @@ from .adapters import ModelError
 
 
 def create_sdk_client(protocol, base_url, api_key, settings, timeout):
+    if protocol == 'gemini':
+        from .gemini_transport import create_gemini_client
+        return create_gemini_client(base_url, api_key, proxy_url=settings.get('proxy_url'))
     try:
         if protocol in ('anthropic', 'anthropic_messages'):
             import anthropic as sdk
@@ -31,6 +34,9 @@ def create_sdk_client(protocol, base_url, api_key, settings, timeout):
 
 
 def map_sdk_error(sdk, exc):
+    if getattr(sdk, '__name__', '') == 'google.genai':
+        from .gemini_transport import map_gemini_error
+        return map_gemini_error(exc)
     if isinstance(exc, sdk.APIResponseValidationError):
         return ModelError('invalid_response')
     if isinstance(exc, sdk.APIStatusError):
@@ -56,6 +62,9 @@ def _call_sdk(sdk, operation, parameters, timeout):
 
 def send(sdk, client, protocol, payload, timeout):
     """Use the caller's SDK instance and its normal response parsing."""
+    if protocol == 'gemini':
+        from .gemini_transport import send_gemini_content
+        return send_gemini_content(client, payload, timeout)
     if protocol in ('anthropic', 'anthropic_messages'):
         required = {k: payload[k] for k in ('model', 'messages', 'max_tokens')}
         operation = client.messages.create

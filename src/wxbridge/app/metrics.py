@@ -1,6 +1,7 @@
 """有界的阶段耗时和 API 计数；不接收正文、路径、昵称或密钥。"""
 from contextlib import contextmanager
 from copy import deepcopy
+import re
 import time
 
 
@@ -28,6 +29,9 @@ class Metrics:
                                                      prompt_tokens=0, completion_tokens=0))
             entry['calls'] += 1
             entry['errors'] += int(bool(item.get('error')))
+            native = item.get('native_finish_reason')
+            if isinstance(native, str) and re.fullmatch('[A-Z][A-Z0-9_]{0,79}', native):
+                entry['last_native_finish_reason'] = native
             elapsed = item.get('elapsed_ms', 0)
             if type(elapsed) in (int, float) and 0 <= elapsed <= 3600000:
                 entry['elapsed_ms'] = round(entry['elapsed_ms']+elapsed, 2)

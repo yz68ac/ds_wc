@@ -1,4 +1,4 @@
-"""Gemini uses the existing compatible SDK boundary; all HTTP here is synthetic."""
+"""The explicitly selected compatible Gemini protocol remains available."""
 from copy import deepcopy
 import json
 from pathlib import Path
@@ -18,6 +18,7 @@ class GeminiConnectionTests(unittest.TestCase):
         return load_config(Path(__file__).parent / '.synthetic-provider.env', environ={
             'GEMINI_API_KEY': 'synthetic-cpa-key',
             'GEMINI_BASE_URL': 'http://127.0.0.1:8317/v1',
+            'GEMINI_PROTOCOL': 'openai_compatible',
             'GEMINI_PROXY_URL': '',
             'OPENAI_API_KEY': 'synthetic-other-key',
         })

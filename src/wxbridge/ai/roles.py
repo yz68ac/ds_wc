@@ -47,7 +47,7 @@ def validate_models(cfg):
             raise ValueError('invalid_model_options:' + role)
         connection = cfg['model_clients']['reply' if role == 'reply' else 'background']
         optional_tokens = ('max_tokens' in options and options['max_tokens'] is None
-                           and config.protocols[connection] in ('deepseek', 'openai', 'openai_compatible'))
+                           and config.protocols[connection] in ('deepseek', 'openai', 'openai_compatible', 'gemini'))
         for key, lo, hi in (('max_tokens', 1, 128000), ('timeout_seconds', 1, 300), ('temperature', 0, 2)):
             v = options.get(key)
             if key == 'max_tokens' and optional_tokens:

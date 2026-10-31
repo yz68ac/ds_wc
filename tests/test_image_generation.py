@@ -34,6 +34,7 @@ class ImageProviderTests(unittest.TestCase):
     def config(self, **environ):
         return load_config(Path(__file__).parent/'.synthetic-provider.env', environ={
             'GEMINI_API_KEY': 'synthetic-cpa-key', 'GEMINI_BASE_URL': 'http://127.0.0.1:8317/v1',
+            'GEMINI_PROTOCOL': 'openai_compatible',
             'GEMINI_IMAGE_BASE_URL': 'http://127.0.0.1:8317', 'OPENAI_API_KEY': 'synthetic-gpt-key', **environ})
 
     def test_real_google_sdk_native_path_modalities_bytes_reuse_and_close(self):

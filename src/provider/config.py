@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 from typing import Mapping
+from urllib.parse import urlsplit
 
 from .registry import Connection, ModelRegistry, ModelSpec
 
@@ -26,7 +27,7 @@ DEFAULTS = {
     'openai': ('https://api.openai.com/v1', 'openai_responses'),
     'anthropic': ('https://api.anthropic.com/v1', 'anthropic_messages'),
     'deepseek': ('https://api.deepseek.com', 'deepseek'),
-    'gemini': ('https://generativelanguage.googleapis.com/v1beta/openai', 'openai_compatible'),
+    'gemini': ('https://generativelanguage.googleapis.com', 'gemini'),
 }
 
 
@@ -76,7 +77,7 @@ def load_config(path: str | Path | None = None, *, environ: Mapping[str, str] | 
         allowed = {'openai': ('openai', 'openai_responses'),
                    'anthropic': ('anthropic', 'anthropic_messages'),
                    'deepseek': ('deepseek',),
-                   'gemini': ('openai', 'openai_compatible')}
+                   'gemini': ('gemini', 'openai', 'openai_compatible')}
         if protocol not in allowed[name]:
             raise ValueError('invalid_provider_protocol')
         key_name = prefix+'_API_KEY'
@@ -86,7 +87,9 @@ def load_config(path: str | Path | None = None, *, environ: Mapping[str, str] | 
         credentials[name] = get('API_KEY').strip()
         options[name] = {}
         if name == 'gemini':
-            native_url = get('IMAGE_BASE_URL').strip()
+            if protocol == 'gemini' and urlsplit(connections[name].base_url).path.rstrip('/').endswith(('/v1', '/v1beta', '/v1beta/openai')):
+                raise ValueError('gemini_base_url_requires_server_root')
+            native_url = get('IMAGE_BASE_URL').strip() or (connections[name].base_url if protocol == 'gemini' else '')
             if native_url:
                 ModelRegistry({name: ModelSpec(protocol, 'validation', name)},
                               {name: Connection(native_url, key_name)})

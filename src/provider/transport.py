@@ -9,7 +9,7 @@ MAX_REQUEST_BYTES = 48 * 1024 * 1024
 
 SUPPORTED_PROTOCOLS = frozenset({
     'deepseek', 'openai_compatible', 'openai', 'openai_responses',
-    'anthropic', 'anthropic_messages',
+    'anthropic', 'anthropic_messages', 'gemini',
 })
 
 

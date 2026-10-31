@@ -110,7 +110,7 @@ class Client:
     def fetch_models(self, *, timeout=30):
         from .discovery import fetch_models
         self._ensure_open()
-        return fetch_models(self._sdk, self._sdk_client, self.name, timeout=timeout)
+        return fetch_models(self._sdk, self._sdk_client, self.name, timeout=timeout, protocol=self.protocol)
 
     # Compatibility alias; fetch_models() explicitly performs network I/O.
     list_models = fetch_models
@@ -141,13 +141,20 @@ class Client:
                 if remaining <= 0:raise ModelError('deadline_exceeded', retryable=True)
                 timeout = min(timeout, remaining)
             if gemini:
-                from .gemini_images import create_gemini_image_client, send_gemini_images, parse_gemini_image_response
+                from .gemini_images import send_gemini_images, parse_gemini_image_response
+                from .gemini_transport import create_gemini_client
                 with self._sdk_lock:
                     self._ensure_open()
-                    if self._gemini_images is None:
-                        self._gemini_images = create_gemini_image_client(
-                            self.cfg.get('image_base_url'), self.api_key, proxy_url=self.cfg.get('proxy_url'))
-                result = parse_gemini_image_response(send_gemini_images(self._gemini_images, payload, timeout))
+                    if self.protocol == 'gemini' and self.cfg.get('image_base_url', '').rstrip('/') == self.base_url:
+                        self._ensure_sdk()
+                        image_client = self._sdk_instance
+                    else:
+                        if self._gemini_images is None:
+                            if not self.cfg.get('image_base_url'):raise ModelError('missing_image_base_url')
+                            _, self._gemini_images = create_gemini_client(
+                                self.cfg['image_base_url'], self.api_key, proxy_url=self.cfg.get('proxy_url'))
+                        image_client = self._gemini_images
+                result = parse_gemini_image_response(send_gemini_images(image_client, payload, timeout))
             else:
                 response = send_images(self._sdk, self._sdk_client, payload, timeout)
                 result = parse_image_response(response, expected_count=payload.get('n', 1))
@@ -170,7 +177,7 @@ class Client:
         for key, lower, upper in (('timeout_seconds', 1, 300), ('max_tokens', 1, 128000), ('temperature', 0, 2)):
             value = settings.get(key)
             if value is None:
-                optional_tokens = key == 'max_tokens' and self.protocol in ('deepseek', 'openai', 'openai_compatible')
+                optional_tokens = key == 'max_tokens' and self.protocol in ('deepseek', 'openai', 'openai_compatible', 'gemini')
                 if key in settings and key != 'temperature' and not optional_tokens:raise ModelError('invalid_model_options')
                 continue
             if type(value) not in (int, float) or not math.isfinite(value) or not lower <= value <= upper:
@@ -210,7 +217,7 @@ class Client:
 
     def _request(self, messages, *, settings, tools=None, tool_choice=None, deadline=None, native_search=None,
                  require_complete=False) -> ModelResult:
-        started, usage, finish, error = time.monotonic(), {}, None, ''
+        started, usage, finish, native_finish, error = time.monotonic(), {}, None, None, ''
         try:
             self._ensure_open()
             if not isinstance(settings.get('model'), str) or not settings['model'].strip():
@@ -229,6 +236,7 @@ class Client:
             data = self._post(payload, min(timeout, remaining))
             result = self.adapter.parse_response(data)
             usage, finish = result.usage, result.finish_reason
+            native_finish = result.native_finish_reason
             if require_complete:self.check_complete(result, record_error=False)
             return result
         except ModelError as exc:
@@ -238,7 +246,7 @@ class Client:
             if _metrics.get() is not None:
                 _metrics.get().append(dict(role=getattr(self, 'role', 'reply'),
                     provider=self.cfg.get('provider', 'deepseek'), elapsed_ms=round((time.monotonic()-started)*1000, 2),
-                    finish_reason=finish, usage=usage, error=error))
+                    finish_reason=finish, native_finish_reason=native_finish, usage=usage, error=error))
 
     def complete(self, messages, *, require_complete=False, **kwargs) -> dict:
         result = self.request(messages, **kwargs)
@@ -252,8 +260,10 @@ class Client:
             code = 'output_limit'
         elif result.finish_reason == 'content_filter':
             code = 'output_filtered'
-        elif result.finish_reason == 'pause_turn':
+        elif result.finish_reason in ('pause_turn', 'incomplete_response'):
             code = 'incomplete_response'
+        elif result.finish_reason == 'invalid_tool_calls':
+            code = 'invalid_tool_calls'
         elif not result.message.get('tool_calls') and not (result.message.get('content') or '').strip():
             code = 'empty_reply'
         if code:

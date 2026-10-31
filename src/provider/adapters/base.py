@@ -29,6 +29,7 @@ class ModelResult:
     finish_reason: str | None
     usage: dict
     search: dict = field(default_factory=dict, repr=False)
+    native_finish_reason: str | None = field(default=None, repr=False)
 
 
 class ProtocolAdapter(Protocol):
