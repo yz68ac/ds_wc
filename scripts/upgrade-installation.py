@@ -27,7 +27,13 @@ LAUNCHER = Path('/usr/local/bin/wxbridge')
 STATE = Path('/var/lib/wxbridge-service/state.json')
 BACKUPS = Path('/var/backups/wxbridge')
 ENVIRONMENTS = Path('/opt/wxbridge-envs')
+SCANNER = Path('/usr/local/lib/wxbridge-recovery')
 PRESERVE = {'prompts/system.md', 'prompts/memory.md', 'prompts/topic_aliases.json'}
+RECOVERY_MODULES = (
+    'wxbridge/__init__.py', 'wxbridge/storage/__init__.py', 'wxbridge/storage/memoryfs.py',
+    'wechat_linux/__init__.py', 'wechat_linux/models.py', 'wechat_linux/errors.py',
+    'wechat_linux/storage/__init__.py', 'wechat_linux/storage/crypto.py', 'wechat_linux/storage/keyscan.py',
+)
 
 
 def digest(path):
@@ -169,6 +175,32 @@ def verify_wheels(stage, wheels):
     return result
 
 
+def recovery_updates(stage):
+    manifest = json.loads((stage/'release-manifest.json').read_text())
+    updates = {}
+    for name in RECOVERY_MODULES:
+        source = plain_path(stage/'src'/name)
+        if digest(source) != manifest['files']['src/'+name]['sha256']:
+            raise ValueError('staged_recovery_hash_mismatch')
+        updates[plain_path(SCANNER/name)] = (source.read_bytes(), 0o644)
+    return updates
+
+
+def check_recovery_projection(stage):
+    # The privileged scanner uses system Python, independently of the app venv.
+    with tempfile.TemporaryDirectory(prefix='wxbridge-recovery-', dir=stage.parent) as directory:
+        root = Path(directory)
+        for destination, (data, mode) in recovery_updates(stage).items():
+            atomic(root/destination.relative_to(SCANNER), data, mode)
+        code = ('import sys;sys.path.insert(0,sys.argv[1]);'
+                'from wechat_linux.storage.keyscan import extract_keys;'
+                'from wechat_linux.storage.crypto import AES;'
+                'from wxbridge.storage.memoryfs import is_noswap_tmpfs;'
+                'assert AES is not None;'
+                'assert not any(n in sys.modules for n in ("provider","gi","frida"))')
+        run(sys.executable, '-I', '-c', code, directory)
+
+
 class FileTransaction:
     def __init__(self, backup):
         self.backup, self.records = plain_path(backup), {}
@@ -216,6 +248,8 @@ def prepare(stage, wheels, backup, baseline, max_chars):
     if not backup.is_relative_to(BACKUPS) or backup == BACKUPS or backup.exists():
         raise ValueError('invalid_upgrade_backup')
     manifest, updates = source_updates(stage, baseline)
+    updates.update(recovery_updates(stage))
+    check_recovery_projection(stage)
     wheel_hashes = verify_wheels(stage, wheels)
     environment = ENVIRONMENTS/(manifest['commit']+'-'+str(time.time_ns()))
     plain_path(environment)
@@ -240,6 +274,7 @@ def prepare(stage, wheels, backup, baseline, max_chars):
     backup.mkdir(parents=True, mode=0o700)
     record = dict(schema=1, stage=str(stage), environment=str(environment),
                   manifest=digest(stage/'release-manifest.json'), wheels=wheel_hashes,
+                  scanner_hashes={str(p):digest(p) for p in recovery_updates(stage)},
                   baseline=baseline, configurations=configurations, phase='prepared')
     save_json(backup/'upgrade.json', record)
     return dict(phase='prepared', commit=manifest['commit'], backup=str(backup),
@@ -272,6 +307,11 @@ def apply(backup):
     if any(digest(path) != value for path, value in record['wheels'].items()):
         raise ValueError('prepared_wheels_changed')
     manifest, updates = source_updates(stage, record['baseline'])
+    if 'scanner_hashes' not in record:
+        raise ValueError('upgrade_requires_reprepare')
+    if any(digest(path) != value for path, value in record['scanner_hashes'].items()):
+        raise ValueError('recovery_changed_after_prepare')
+    updates.update(recovery_updates(stage))
     for name, config in record['configurations'].items():
         path = Path(name)
         if digest(path) != config['before']:

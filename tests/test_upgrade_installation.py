@@ -91,8 +91,18 @@ class UpgradeTests(unittest.TestCase):
         shutil.copyfile(ROOT/'scripts/check-repository.py',stage/'scripts/check-repository.py')
         name='src/wxbridge/__main__.py';source=stage/name;source.parent.mkdir(parents=True);source.write_bytes(b'new')
         manifest=dict(format=1,commit='a'*40,files={name:dict(sha256=upgrade.digest(source),mode='100644')})
+        for relative in upgrade.RECOVERY_MODULES:
+            target=stage/'src'/relative;target.parent.mkdir(parents=True,exist_ok=True)
+            shutil.copyfile(ROOT/'src'/relative,target)
+            manifest['files']['src/'+relative]=dict(sha256=upgrade.digest(target),mode='100644')
         (stage/'release-manifest.json').write_text(json.dumps(manifest))
         return app,stage,name
+
+    def test_recovery_projection_imports_without_application_or_desktop_dependencies(self):
+        app,stage,_=self.stage()
+        with patch.object(upgrade,'APP',app),patch.object(upgrade,'SCANNER',self.root/'scanner'):
+            upgrade.check_recovery_projection(stage)
+        self.assertFalse((self.root/'scanner').exists())
 
     def test_unknown_live_changes_are_rejected_without_writing(self):
         app,stage,name=self.stage();target=app/name;target.parent.mkdir(parents=True);target.write_bytes(b'local edit')
@@ -159,11 +169,12 @@ class UpgradeTests(unittest.TestCase):
         backup=self.root/'backups/release';backup.mkdir(parents=True)
         record=dict(phase='prepared',stage=str(stage),environment=str(environment),
                     manifest=upgrade.digest(stage/'release-manifest.json'),wheels={},configurations={},
-                    baseline=dict(files={name:upgrade.digest(target)}))
+                    baseline=dict(files={name:upgrade.digest(target)}),
+                    scanner_hashes={str(self.root/'scanner'/relative):None for relative in upgrade.RECOVERY_MODULES})
         (backup/'upgrade.json').write_text(json.dumps(record))
         def run(*args,**kwargs):
             if '-I' in args:raise subprocess.CalledProcessError(1,['synthetic validation'])
-        patches=dict(APP=app,UNIT=unit,LAUNCHER=launcher,STATE=state,BACKUPS=backup.parent)
+        patches=dict(APP=app,UNIT=unit,LAUNCHER=launcher,STATE=state,BACKUPS=backup.parent,SCANNER=self.root/'scanner')
         with patch.multiple(upgrade,**patches),patch.object(upgrade,'run',side_effect=run),patch.object(upgrade,'control',return_value=dict(components=dict(bot=dict(state='inactive')))):
             with self.assertRaises(subprocess.CalledProcessError):upgrade.apply(backup)
         self.assertEqual(target.read_bytes(),b'old')
