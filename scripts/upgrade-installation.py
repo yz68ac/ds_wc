@@ -225,7 +225,10 @@ def prepare(stage, wheels, backup, baseline, max_chars):
     # Use the exported, pinned closure; no secrets or provider configuration are installed.
     run(python, '-m', 'pip', '--disable-pip-version-check', 'install', '--no-deps',
         '-r', stage/'requirements-test.txt', *wheel_hashes, timeout=1200)
-    run(python, '-m', 'pip', 'check')
+    # GI comes from Debian's system site-packages. Validate the application's
+    # complete dependency closure without treating unrelated apt metadata as pip packages.
+    run(python, '-I', '-c', 'from wxbridge_service.install import dependency_health;'
+        'failures=dependency_health();raise SystemExit(bool(failures))')
     run(python, '-I', '-c', 'from wxbridge.app.bot import GroupSession;'
         'from wechat_linux.desktop.login import LoginController;from provider import create_client')
     sys.path.insert(0, str(stage/'src'))

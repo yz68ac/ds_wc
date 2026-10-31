@@ -215,7 +215,7 @@ def fetch_frida(destination, expected, *, proxy=None):
 
 
 def dependency_health():
-    from pip._vendor.packaging.requirements import Requirement
+    from packaging.requirements import Requirement
     roots = ['wxbridge','model-provider','wechat-linux-adapter','openai','anthropic','google-genai','Pillow','fastapi','uvicorn','pycryptodome','zstandard','zxing-cpp','qrcode']
     seen, pending, failures = set(), [(n,frozenset()) for n in roots], []
     while pending:

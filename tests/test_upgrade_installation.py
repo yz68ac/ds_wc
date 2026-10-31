@@ -2,6 +2,7 @@
 from copy import deepcopy
 import hashlib
 import importlib.util
+import importlib.metadata
 import json
 import os
 from pathlib import Path
@@ -129,6 +130,23 @@ class UpgradeTests(unittest.TestCase):
         with patch.object(upgrade,'BACKUPS',backup.parent),patch.object(upgrade,'control',return_value=state) as control,patch.object(upgrade,'run') as run:
             self.assertEqual(upgrade.finish(backup)['phase'],'complete')
         control.assert_called_once_with('status');run.assert_not_called()
+
+    def test_runtime_health_checks_transitive_requirements_without_unrelated_system_packages(self):
+        from wxbridge_service.install import dependency_health
+        requires, version = importlib.metadata.requires, importlib.metadata.version
+        visited = set()
+        def requirements(name):
+            visited.add(name)
+            if name == 'synthetic-runtime':
+                return []
+            return [*(requires(name) or []), *(['synthetic-runtime>=2'] if name=='model-provider' else [])]
+        def installed(name):
+            return '1' if name=='synthetic-runtime' else version(name)
+        with patch.object(importlib.metadata,'requires',side_effect=requirements), \
+                patch.object(importlib.metadata,'version',side_effect=installed):
+            failures = dependency_health()
+        self.assertIn('synthetic-runtime: incompatible',failures)
+        self.assertNotIn('apt-listchanges',visited)
 
     @unittest.skipIf(os.name=='nt','Linux venv symlink switch and rollback')
     def test_failed_configuration_validation_restores_environment_code_and_enable_state(self):
