@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import Mock, patch
 import zlib
 
-from wxbridge.ai.wxgf import WxgfError, _chroma, decode_wxgf, extract_hevc
+from wechat_linux.media.wxgf import WxgfError, _chroma, decode_wxgf, extract_hevc
 from wxbridge.ai.images import validate_image
 
 # 现有 FFmpeg/libx265 生成的红色静态图；只保留 VPS/SPS/PPS/IDR，无外部素材。
@@ -38,7 +38,7 @@ class WxgfTests(unittest.TestCase):
         self.assertEqual(extract_hevc(container(MASK+b'X'*500+RED)),RED)
 
     def test_transport_uses_pipes_timeout_and_no_business_environment(self):
-        with patch('wxbridge.ai.wxgf.subprocess.run',return_value=Mock(returncode=0,stdout=b'\x89PNG\r\n\x1a\nsynthetic')) as run:
+        with patch('wechat_linux.media.wxgf.subprocess.run',return_value=Mock(returncode=0,stdout=b'\x89PNG\r\n\x1a\nsynthetic')) as run:
             decode_wxgf(container(),1000)
         args = run.call_args.kwargs
         self.assertEqual(args['input'],RED)
@@ -53,7 +53,7 @@ class WxgfTests(unittest.TestCase):
                  (Mock(returncode=-11,stdout=b'PRIVATE'),'wxgf_decoder_failed'),
                  (Mock(returncode=0,stdout=b'X'*100),'image_size_limit')]
         for result,code in cases:
-            with self.subTest(code=code), patch('wxbridge.ai.wxgf.subprocess.run',side_effect=result if isinstance(result,Exception) else None,return_value=result):
+            with self.subTest(code=code), patch('wechat_linux.media.wxgf.subprocess.run',side_effect=result if isinstance(result,Exception) else None,return_value=result):
                 with self.assertRaisesRegex(WxgfError,'^'+code+'$'):
                     decode_wxgf(container(),50)
 

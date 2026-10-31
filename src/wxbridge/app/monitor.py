@@ -251,6 +251,13 @@ def pages(snapshot, cfg, *, now=None):
         models.append(f'{role:<13} {number(value.get("calls", 0)):>4} {number(value.get("errors", 0)):>5}'
                       f' {number(value.get("prompt_tokens", 0)):>12} {number(value.get("completion_tokens", 0)):>12}'
                       f' {elapsed/1000 if numeric(elapsed) else 0:>12.1f}')
+    models += ['', '最近聊天上下文（字符数，不含系统提示词和工具）']
+    for role in ('participation', 'reply'):
+        value = mapping(mapping(s.get('context')).get(role))
+        models.append(f'{role}: 字符 {number(value.get("chars"))}  历史 {number(value.get("retained"))}'
+                      f'/{number(value.get("selected"))}  裁剪 {number(value.get("omitted"))}'
+                      f'  扫描 {number(value.get("scanned"))}  扫描上限 {yes(value.get("scan_limit_hit"))}'
+                      f'  错误 {error(value.get("error"))}')
     models += ['', '面板启动时的配置参考；配置变更需重启监听生效']
     for role in ROLES:
         setting = model_settings(cfg, role)

@@ -3,35 +3,58 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "wechat-linux-adapter"
-version = "0.2.0"
-description = "Local Linux WeChat message, media and native submission adapter"
-readme = "docs/WECHAT_LINUX.md"
+name = "wxbridge"
+dynamic = ["version"]
+description = "WeChat bot, instance management and local Web administration"
+readme = "README.md"
 requires-python = ">=3.11"
 classifiers = [
   "Operating System :: POSIX :: Linux",
   "Programming Language :: Python :: 3",
 ]
-dependencies = []
+dependencies = [
+  "model-provider>=0.3.1,<0.4",
+  "wechat-linux-adapter>=0.2,<0.3",
+  "Pillow>=11,<14",
+  "fastapi>=0.115,<1",
+  "uvicorn>=0.30,<1",
+]
+
+[project.scripts]
+wxbridge = "wxbridge.cli:main"
 
 [project.optional-dependencies]
-database = ["pycryptodome>=3.20", "zstandard>=0.22"]
-analysis = ["capstone>=5,<6"]
-login = ["zxing-cpp>=3,<4", "qrcode>=8,<9"]
+database = ["wechat-linux-adapter[database]"]
+analysis = ["wechat-linux-adapter[analysis]"]
+login = ["wechat-linux-adapter[login]"]
 
 [dependency-groups]
-provider = ["model-provider"]
-bridge = ["Pillow>=11,<14"]
+test = [
+  "httpx>=0.28,<1",
+  "httpx2>=2,<3",
+]
 
 [tool.uv]
-default-groups = ["provider", "bridge"]
+required-version = ">=0.11"
+default-groups = []
 
 [tool.uv.sources]
 model-provider = { path = "src/provider", editable = true }
+wechat-linux-adapter = { path = "src/wechat_linux", editable = true }
+
+[tool.setuptools]
+include-package-data = false
+
+[tool.setuptools.dynamic]
+version = { attr = "wxbridge.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["wechat_linux", "wechat_linux.*"]
+include = ["wxbridge", "wxbridge.*", "wxbridge_service", "wxbridge_service.*", "wxbridge_web", "wxbridge_web.*"]
+namespaces = false
 
-[tool.setuptools.package-data]
-"wechat_linux.native" = ["agent.js", "profile.json", "image_agent.js", "image_adapter.c", "image_profile.json"]
+[tool.setuptools.data-files]
+"share/wxbridge" = ["config.defaults.json"]
+"share/wxbridge/prompts" = ["prompts/*.md", "prompts/*.json"]
+"share/wxbridge/webui" = ["src/webui/dist/*.html"]
+"share/wxbridge/webui/assets" = ["src/webui/dist/assets/*"]

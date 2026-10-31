@@ -27,6 +27,7 @@ def participation_failure_code(result):
              'provider_failed', 'incomplete_response', 'unsupported_response_item', 'unsupported_native_search',
              'invalid_native_search_result', 'invalid_tool_result', 'continuation_provider_mismatch',
              'ValueError', 'JSONDecodeError', 'ContextError'}
+    known.add('context_required_too_large')
     if isinstance(code, str) and (code in known or re.fullmatch(r'http_[0-9]{3}', code)):
         return code
     return 'participation_worker_failed'

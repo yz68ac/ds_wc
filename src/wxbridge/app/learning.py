@@ -22,11 +22,11 @@ def eligible_messages(rows, account, now, settings, floor, processed=()):
 
 def enqueue_if_active(bot, now):
     settings = bot.cfg['memory']['learning']
-    if (not settings['enabled'] or not settings['passive_enabled'] or not bot.memory
-            or bot.journal.tasks() or bot.generators or bot.ui_job):
+    if (not settings['enabled'] or not settings['passive_enabled'] or not bot.memory.store
+            or bot.journal.tasks() or bot.replies.jobs or bot.ui_job):
         return
     state = bot.journal.get('passive_learning', {})
-    floor = max(bot.memory.data['watermark'], bot.memory.data.get('learning', {}).get('started_after_id', bot.last_local_id),
+    floor = max(bot.memory.store.data['watermark'], bot.memory.store.data.get('learning', {}).get('started_after_id', bot.last_local_id),
                 state.get('started_after_id', 0))
     if bot.last_local_id <= floor:
         return
@@ -36,7 +36,7 @@ def enqueue_if_active(bot, now):
         return
     start, end = int(now-settings['window_seconds']), int(now)
     rows = [m for m in bot.store.messages_in_window(bot.chat_id, start, end) if m['local_id'] <= bot.last_local_id]
-    messages = eligible_messages(rows, bot.store.self_wxid, now, settings, floor, bot.memory.data.get('processed_ids', []))
+    messages = eligible_messages(rows, bot.store.self_wxid, now, settings, floor, bot.memory.store.data.get('processed_ids', []))
     with bot.journal.db:
         state.update(checked_id=bot.last_local_id, checked_at=now, new_messages=len(messages), error='')
         if len(messages) >= settings['min_new_messages'] and len({m['sender'] for m in messages}) >= settings['min_senders']:

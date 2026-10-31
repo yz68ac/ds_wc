@@ -27,19 +27,29 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python }}
-          cache: pip
-          cache-dependency-path: requirements-test.txt
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: '0.12.24'
+          enable-cache: true
+          cache-dependency-glob: |
+            uv.lock
+            **/pyproject.toml
       - name: Native image libraries
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libde265-0 ffmpeg
-      - name: Test dependencies
-        run: python -m pip install -r requirements-test.txt
+      - name: Locked test dependencies
+        run: uv sync --locked --extra database --extra login --group test --python ${{ matrix.python }}
+      - name: Dependency consistency
+        run: uv run --locked --no-sync python scripts/dependencies.py --check
+      - name: Installed dependencies
+        run: uv pip check
       - name: Repository hygiene
-        run: python scripts/check-repository.py --history
+        run: uv run --locked --no-sync python scripts/check-repository.py --history
       - name: Offline regression
-        run: python -X utf8 scripts/test-offline.py
+        run: uv run --locked --no-sync python -X utf8 scripts/test-offline.py
       - name: Whitespace
         run: git diff --check
 
@@ -58,6 +68,36 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - name: Build SDK wheel
-        run: python -m pip wheel --no-deps --wheel-dir dist .
+        run: python -m pip wheel --no-deps --wheel-dir dist ./src/wechat_linux
       - name: Install without dependencies and check isolated imports and resources
         run: python scripts/smoke-wheel.py dist/wechat_linux_adapter-*.whl
+
+  app-wheel:
+    name: Installed app / Python ${{ matrix.python }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        python: ['3.11', '3.14']
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: src/webui/package-lock.json
+      - name: Frontend dependencies
+        working-directory: src/webui
+        run: npm ci --no-audit --no-fund
+      - name: Build frontend
+        working-directory: src/webui
+        run: npm run build
+      - name: Build application wheel
+        run: python -m pip wheel --no-deps --wheel-dir dist .
+      - name: Check installed CLI and resources outside the source checkout
+        run: python scripts/smoke-app-wheel.py dist/wxbridge-*.whl

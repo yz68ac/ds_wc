@@ -1,5 +1,5 @@
 """合成头像、内存 SQLite、假 API；头像不能作为人格或好感证据。"""
-from model_support import default_config
+from tests.support.model_support import default_config
 from contextlib import nullcontext
 import copy
 import hashlib
@@ -15,10 +15,10 @@ from wxbridge.ai.memory import extract, snapshot
 from wxbridge.config import DEFAULTS, _deep_merge
 from wxbridge.storage.person_memory import MemoryStore, DAY
 from wxbridge.wechat.store import WeChatStore
-from test_media import png
-from test_memory import IDENTITY
-from test_context_pipeline import PipelineTests
-from synthetic import NOW, msg
+from tests.support.media import png
+from tests.support.memory import IDENTITY
+from tests.support.pipeline import PipelineFixture
+from tests.support.synthetic import NOW, msg
 
 VISUAL = dict(subject="animal", medium="illustration", palette="warm", composition="simple")
 
@@ -161,7 +161,7 @@ class AvatarTests(unittest.TestCase):
         self.assertEqual(self.memory.data["members"]["wxid_a"]["initial_impression"]["state"], "forgotten")
 
 
-class AvatarPipelineTests(PipelineTests):
+class AvatarPipelineTests(PipelineFixture):
     def test_avatars_only_after_confirm_and_known_initial_not_requested_again(self):
         self.bot.close()
         self.cfg["memory"].update(enabled=True, directory=str(Path(self.temp.name)/"memory"))
@@ -177,7 +177,7 @@ class AvatarPipelineTests(PipelineTests):
         self.store.avatar.assert_called_once_with("wxid_friend", max_bytes=524288)
         self.jobs[-1].result = dict(ok=True, proposal=dict(updates=[], avatar_updates=[update('wxid_friend')]))
         self.bot.tick()
-        self.assertEqual(self.bot.memory.status(self.now)["initial_impressions"], 1)
+        self.assertEqual(self.bot.memory.store.status(self.now)["initial_impressions"], 1)
         self.now += 60
         self.add(3)
         self.bot.tick()

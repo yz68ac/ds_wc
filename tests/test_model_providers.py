@@ -1,5 +1,5 @@
 """Provider boundary contract tests; synthetic HTTP and tools only."""
-from model_support import default_config
+from tests.support.model_support import default_config
 from contextlib import nullcontext
 from copy import deepcopy
 import json
@@ -11,8 +11,8 @@ import urllib.error
 import unittest
 from unittest.mock import Mock, patch
 
-from model_support import ClientFixture, ModelError, ClientFixture, ModelError, capture_metrics
-from wxbridge.ai.providers import ModelRequest, ModelResult, get_protocol_adapter
+from tests.support.model_support import ClientFixture, ModelError, capture_metrics
+from provider.adapters import ModelRequest, ModelResult, get_protocol_adapter
 from wxbridge.ai.roles import validate_models
 from wxbridge.ai.search import SearchClient, SearchError, answer_with_search
 from wxbridge.config import DEFAULTS
@@ -170,7 +170,7 @@ class ProviderTests(unittest.TestCase):
         code='''
 import sys
 sys.path.insert(0,sys.argv[1])
-from wxbridge.ai.providers import get_protocol_adapter, ModelRequest
+from provider.adapters import get_protocol_adapter, ModelRequest
 assert 'wxbridge.config' not in sys.modules
 assert 'wxbridge.ai.client' not in sys.modules
 assert not any(n.startswith(('frida','gi','wechat_linux')) for n in sys.modules)

@@ -1,25 +1,17 @@
 """Private chats batch directly into full replies; no real models or WeChat."""
 from copy import deepcopy
+import json
 import unittest
 from unittest.mock import patch
 
-from model_support import default_config
-import test_context_pipeline as pipeline
+from tests.support.model_support import default_config
+import tests.support.pipeline as pipeline
 from wxbridge.ai.roles import validate_models
+from tests.support.private import PrivateReplyFixture
 
 
-class PrivateReplyTests(unittest.TestCase):
-    setUp = pipeline.PipelineTests.setUp
-    add = pipeline.PipelineTests.add
-    sends = pipeline.PipelineTests.sends
-    generated = pipeline.PipelineTests.generated
-    restart = pipeline.PipelineTests.restart
+class PrivateReplyTests(PrivateReplyFixture):
 
-    def make_bot(self):
-        self.cfg['target']['chat'] = 'wxid_friend'
-        self.cfg['models']['participation']['model'] = ''
-        self.store.resolve_chat.return_value = ('wxid_friend', '合成私聊')
-        pipeline.PipelineTests.make_bot(self)
 
     def test_private_message_starts_full_reply_without_decision_or_mention(self):
         self.add(1, text='你好，聊聊今天的事吧', mention=False)
@@ -28,7 +20,10 @@ class PrivateReplyTests(unittest.TestCase):
         self.assertEqual([job.kind for job in self.jobs], ['generate'])
         self.assertFalse(self.decision_jobs)
         self.assertEqual(self.bot.journal.head()['trigger_ids'], [1])
-        self.assertIn('私聊：合成私聊', self.jobs[0].payload[1][1]['content'])
+        prompt = self.jobs[0].payload[1]
+        from wxbridge.ai.output import response_prompt
+        self.assertEqual(json.loads(prompt[1]['content'])['chat'], '合成私聊')
+        self.assertIn('本轮是微信私聊', response_prompt(prompt)[0]['content'])
         self.assertFalse(self.bot.journal.participation_status()['decision_required'])
         self.assertIsNone(self.bot.models.lanes['background'].client)
 

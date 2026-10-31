@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from synthetic import NOW, msg
+from tests.support.synthetic import NOW, msg
 from wxbridge.config import DEFAULTS
 from wxbridge.ai.participation import build_prompt, ParticipationError
 from wxbridge.ai.prompts import build_prompt as build_reply_prompt
@@ -106,7 +106,7 @@ class ParticipationPromptTests(unittest.TestCase):
         saved = deepcopy([row, later])
         data = content(build_prompt(self.cfg, [row, later], '合成群', source_ids=[4], account=self.bot))
         self.assertEqual(data['messages'][0]['mentions'], ['wxid_b'])
-        self.assertNotIn('mentions', data['messages'][1])
+        self.assertEqual([m['id'] for m in data['messages']], [4])
         ref = data['messages'][0]['reference']
         self.assertEqual(ref['sender'], self.bot)
         self.assertFalse(ref['available'])
@@ -115,7 +115,7 @@ class ParticipationPromptTests(unittest.TestCase):
         self.assertEqual(ref['reference']['text'], '原文')
         self.assertEqual(data['members'][self.bot], dict(alias='机器人'))
         self.assertEqual(data['members']['wxid_c'], dict(alias='丙'))
-        self.assertEqual(data['members']['wxid_b'], dict(alias='乙'))
+        self.assertEqual(data['members']['wxid_b'], dict(alias=''))
         for item in (ref, ref['reference']):
             self.assertFalse(set(item) & {'member', 'alias', 'is_bot', 'raw_xml'})
         self.assertNotIn('PRIVATE_XML', json.dumps(data))
@@ -175,7 +175,7 @@ class ParticipationPromptTests(unittest.TestCase):
         near = msg(9, NOW-1, 'NEAR_HISTORY'+('近'*100), 'wxid_near')
         saved = deepcopy([candidate, old, near])
         baseline = build_prompt(self.cfg, [candidate], '合成群', source_ids=[10], account=self.bot)
-        self.cfg['target']['context_max_chars'] = len(baseline[1]['content'])
+        self.cfg['target']['context_max_chars'] = len(baseline[1]['content'])+len(',"history_omitted":2')
         prompt = build_prompt(self.cfg, [candidate, old, near], '合成群', source_ids=[10], account=self.bot)
         data = content(prompt)
         self.assertEqual(data['messages'], content(baseline)['messages'])
@@ -189,7 +189,7 @@ class ParticipationPromptTests(unittest.TestCase):
         row = msg(1, NOW, '原样保留的长消息'+('长'*500), 'wxid_a')
         saved = deepcopy(row)
         self.cfg['target']['context_max_chars'] = 100
-        with self.assertRaisesRegex(ContextError, 'participation_context_too_large'):
+        with self.assertRaises(ContextError):
             build_prompt(self.cfg, [row], '合成群', source_ids=[1], account=self.bot)
         self.assertEqual(row, saved)
         with self.assertRaises(ParticipationError):

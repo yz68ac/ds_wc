@@ -6,17 +6,17 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
-import test_memory as memory_tests
-import test_context_pipeline as pipeline
-import test_conversation as conversation
-from synthetic import NOW, msg
+import tests.support.memory as memory_tests
+import tests.support.pipeline as pipeline
+import tests.support.conversation as conversation
+from tests.support.synthetic import NOW, msg
 from wxbridge.ai.memory import snapshot
 from wxbridge.storage.memory_render import render_memory
 
 
 class MemoryContractTests(unittest.TestCase):
-    setUp = memory_tests.MemoryTests.setUp
-    snap = memory_tests.MemoryTests.snap
+    setUp = memory_tests.MemoryFixture.setUp
+    snap = memory_tests.MemoryFixture.snap
 
     def seeded(self):
         self.memory.apply(memory_tests.suggestion(), self.snap(), NOW)
@@ -74,9 +74,9 @@ class MemoryContractTests(unittest.TestCase):
 
     def test_foreground_render_and_relationship_share_one_view(self):
         self.seeded()
-        case = pipeline.PipelineTests('runTest')
+        case = pipeline.PipelineFixture('runTest')
         case.setUp(); self.addCleanup(case.doCleanups)
-        case.bot.memory = self.memory
+        case.bot.memory.store = self.memory
         case.add(2, sender='wxid_a')
         with patch.object(self.memory, 'view', wraps=self.memory.view) as capture:
             case.bot.tick()
@@ -84,9 +84,9 @@ class MemoryContractTests(unittest.TestCase):
 
     def test_participation_does_not_render_personal_memories_before_selecting_a_recipient(self):
         self.seeded()
-        case = conversation.ConversationTests('runTest')
+        case = conversation.ConversationFixture('runTest')
         case.setUp(); self.addCleanup(case.doCleanups)
-        case.bot.memory = self.memory
+        case.bot.memory.store = self.memory
         with patch.object(self.memory, 'view', wraps=self.memory.view) as capture:
             case.ordinary('甲的问题', sender='wxid_a')
             case.ordinary('乙的问题', sender='wxid_b')

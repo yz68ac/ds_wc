@@ -1,6 +1,6 @@
 """Synthetic native API tests. No live config, Frida attachment, models or WeChat sends."""
 from __future__ import annotations
-from model_support import default_config
+from tests.support.model_support import default_config
 from contextlib import nullcontext
 
 import copy
@@ -19,15 +19,12 @@ from unittest.mock import Mock, patch
 
 from wxbridge.app.delivery import DeliveryController
 from wxbridge.config import DEFAULTS
-from wxbridge.native import helper
+from wechat_linux.native import helper
 from wxbridge.native.api import NativeAPI
 from wxbridge.native.client import NativeClient
 from wxbridge.native.protocol import NativeError, decode, encode, receive, settings, validate_send
 from wxbridge.storage.journal import Journal
-
-
-def payload(identifier='native-synthetic-1', text='中文第一行[偷笑]\n第二行😀', chat='filehelper'):
-    return dict(op='send_text',request_id=identifier,chat_id=chat,text=text)
+from tests.support.native_api import payload, JournalFixture
 
 
 class ProtocolTests(unittest.TestCase):
@@ -93,25 +90,8 @@ class ProtocolTests(unittest.TestCase):
             helper.validate(payload(text='\ud800'),['filehelper'])
 
 
-class JournalTests(unittest.TestCase):
-    def setUp(self):
-        parent=Path(__file__).resolve().parents[1]/'.test-tmp';parent.mkdir(exist_ok=True)
-        self.temp=tempfile.TemporaryDirectory(dir=parent);self.addCleanup(self.temp.cleanup)
-        self.path=Path(self.temp.name)/'queue.sqlite3'
-        self.identity={'account':'synthetic','chat':'synthetic@chatroom'}
-        self.journal=self.open();self.addCleanup(lambda:self.journal.close())
-        self.cfg=default_config();self.cfg['ui']['dry_run']=False
-        self.cfg['target']['cooldown_seconds']=0
-        self.store=Mock(self_wxid='synthetic');self.store.last_local_id.return_value=2
-        self.delivery=DeliveryController(self.cfg,self.journal,self.store,'synthetic@chatroom','合成群')
+class JournalTests(JournalFixture):
 
-    def open(self):
-        with patch('wxbridge.storage.journal.checked_path',side_effect=lambda p,**kw:Path(p)):
-            return Journal(str(self.path),self.identity,88)
-
-    def enqueue(self,value=None):
-        return self.journal.enqueue_external(value or payload(),'File Transfer',100,
-                                             max_pending=16,max_requests=1024)
 
     def test_transactional_enqueue_does_not_advance_group_cursor(self):
         accepted=self.enqueue();task=self.journal.task(accepted['task_id'])
@@ -156,9 +136,10 @@ class JournalTests(unittest.TestCase):
 
     def test_external_ready_task_never_calls_model_generation(self):
         from wxbridge.app.bot import GroupSession
+        from wxbridge.app.reply import ReplyController
         self.enqueue();bot=GroupSession.__new__(GroupSession)
-        bot.cfg=self.cfg;bot.journal=self.journal;bot.generators={};bot.job_factory=Mock()
-        bot._generation_step();bot.job_factory.assert_not_called()
+        bot.cfg=self.cfg;bot.journal=self.journal;bot.replies=ReplyController(bot);bot.job_factory=Mock()
+        bot.replies.collect();bot.replies.start();bot.job_factory.assert_not_called()
 
     def test_confirmation_before_worker_result_remains_confirmed(self):
         accepted=self.enqueue();job=Mock();factory=Mock(return_value=job)
@@ -227,18 +208,6 @@ class JournalTests(unittest.TestCase):
         self.assertTrue(api.handle(payload())['duplicate']);api.bot.store.last_local_id.assert_not_called()
         with self.assertRaisesRegex(NativeError,'chat_not_allowed'):api.handle(payload(chat='other@chatroom'))
 
-    def normal_task(self,chunks=None,notice=False):
-        self.cfg['ui']['backend']='native_service'
-        with self.journal.db:
-            identifier=self.journal._next_task_id()
-            task=dict(id=identifier,phase='queued',version=1,sender='other',trigger_kind='mention',
-                deadline=0,accepted_at=0,triggers=[],intent=None,blocked_reason='',generation='ready',
-                next_chunk=0,chunks=chunks or ['合成回复'])
-            if notice:
-                self.cfg['search']['feedback_enabled']=True
-                task['notice']=dict(state='pending',text='合成搜索提示')
-            self.journal.put(task)
-        return identifier
 
     def test_normal_reply_uses_explicit_group_and_persisted_native_intent(self):
         identifier=self.normal_task();factory=Mock(return_value=Mock())
@@ -395,7 +364,7 @@ class HelperTests(unittest.TestCase):
         self.device=Mock();self.device.attach.return_value=self.session
         self.frida=types.SimpleNamespace(get_local_device=lambda:self.device)
         patcher=patch.dict(sys.modules,frida=self.frida);patcher.start();self.addCleanup(patcher.stop)
-        patcher=patch('wxbridge.native.helper.find_client',return_value=123)
+        patcher=patch('wechat_linux.native.helper.find_client',return_value=123)
         self.find=patcher.start();self.addCleanup(patcher.stop)
 
     def test_unicode_and_script_like_text_are_json_data_and_only_one_call_is_armed(self):
@@ -453,7 +422,7 @@ class HelperTests(unittest.TestCase):
 
     def test_parent_timeout_never_claims_not_submitted(self):
         import subprocess
-        with patch('wxbridge.native.helper.subprocess.run',side_effect=subprocess.TimeoutExpired('synthetic',10)):
+        with patch('wechat_linux.native.helper.subprocess.run',side_effect=subprocess.TimeoutExpired('synthetic',10)):
             result=helper.run_child('/synthetic/config.json',payload(),10)
         self.assertIsNone(result['ui']['operation']['submitted'])
         self.assertEqual(result['ui']['error'],'native_helper_timeout')

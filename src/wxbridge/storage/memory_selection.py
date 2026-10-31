@@ -3,6 +3,7 @@ import re
 import json
 from pathlib import Path
 from functools import lru_cache
+from wxbridge.paths import resource_path
 
 
 @lru_cache(maxsize=4)
@@ -22,7 +23,7 @@ def _read_aliases(path, stamp):
 
 
 def topic_aliases():
-    path = Path(__file__).resolve().parents[3]/'prompts/topic_aliases.json'
+    path = resource_path('prompts/topic_aliases.json')
     try:
         return _read_aliases(str(path), path.stat().st_mtime_ns)
     except OSError:

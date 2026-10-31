@@ -19,9 +19,9 @@ from provider.gemini_images import build_gemini_image_payload, parse_gemini_imag
 from wxbridge.ai.roles import validate_models
 from wxbridge.ai.search import answer_with_search
 from wxbridge.app.image_generation import checked_image, artifact_path
-from model_support import default_config
-import test_context_pipeline as pipeline
-from synthetic import msg
+from tests.support.model_support import default_config
+import tests.support.pipeline as pipeline
+from tests.support.synthetic import msg
 
 
 def picture(fmt='PNG'):
@@ -181,9 +181,9 @@ class ImageProviderTests(unittest.TestCase):
 
 
 class ImagePipelineTests(unittest.TestCase):
-    setUp = pipeline.PipelineTests.setUp
-    make_bot = pipeline.PipelineTests.make_bot
-    add = pipeline.PipelineTests.add
+    setUp = pipeline.PipelineFixture.setUp
+    make_bot = pipeline.PipelineFixture.make_bot
+    add = pipeline.PipelineFixture.add
 
     def ready_image(self):
         self.cfg['image_generation']['enabled'] = True
@@ -196,7 +196,7 @@ class ImagePipelineTests(unittest.TestCase):
         self.bot.tick()
         worker = next(job for job in self.jobs if job.kind == 'generate')
         worker.result = dict(ok=True, reply='在画了', image_requests=[dict(prompt='PRIVATE_DRAWING')])
-        self.bot._poll_generation_results()
+        self.bot.replies.collect()
         image = self.bot.journal.image_tasks()[0]
         self.bot.image_generation.step()
         return image

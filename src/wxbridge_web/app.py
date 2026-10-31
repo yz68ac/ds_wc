@@ -20,6 +20,7 @@ from wxbridge_web.repository import ConfigRepository, ManagementError
 from wxbridge_web.services import BOT, Operations, ServiceManager
 from wxbridge_web.status import overview
 from wxbridge_web.models import ModelCatalog
+from wxbridge.paths import frontend_path
 
 
 class LoginBody(BaseModel):
@@ -243,7 +244,7 @@ def create_app(root, password, *, services=None, demo=False, static_dir=None, al
     def service_action(action: str):
         return operations.submit(action)
 
-    static = Path(static_dir) if static_dir else Path(__file__).resolve().parents[1]/'webui/dist'
+    static = Path(static_dir) if static_dir else frontend_path()
     if (static/'assets').is_dir():
         app.mount('/assets',StaticFiles(directory=static/'assets'),name='assets')
 

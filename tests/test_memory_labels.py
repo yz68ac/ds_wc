@@ -4,15 +4,15 @@ import unittest
 import runpy
 from pathlib import Path
 
-import test_memory as memory_tests
-from synthetic import NOW, msg
+import tests.support.memory as memory_tests
+from tests.support.synthetic import NOW, msg
 from wxbridge.ai.memory import snapshot
 from wxbridge.ai.output import reply_rules
 
 
 class MemoryLabelTests(unittest.TestCase):
-    setUp = memory_tests.MemoryTests.setUp
-    snap = memory_tests.MemoryTests.snap
+    setUp = memory_tests.MemoryFixture.setUp
+    snap = memory_tests.MemoryFixture.snap
 
     def test_new_summary_keeps_current_person_and_other_wxid_without_nickname_binding(self):
         a=msg(2,NOW,'我喜欢简短回答','wxid_a');a['sender_name']='甲'

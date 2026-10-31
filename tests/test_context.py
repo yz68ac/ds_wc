@@ -1,13 +1,13 @@
 """使用合成数据的离线测试，不联网、不发送微信消息。"""
 from __future__ import annotations
-from model_support import default_config
+from tests.support.model_support import default_config
 from contextlib import nullcontext
 
 import unittest
 from wxbridge.config import DEFAULTS, _deep_merge
 from wxbridge.ai.context import ContextError, message_time, select_context
 from wxbridge.ai.prompts import build_prompt
-from synthetic import NOW, msg
+from tests.support.synthetic import NOW, msg
 
 
 class ContextTests(unittest.TestCase):
@@ -16,14 +16,14 @@ class ContextTests(unittest.TestCase):
         self.trigger = msg(50, NOW, "@DeepSeek 请总结")
 
     def test_exact_inclusive_bounds_and_sender_order(self):
-        records = [msg(1, NOW - 301, "过期"), msg(4, NOW + 1, "未来"),
-                   msg(3, NOW, "同秒群友", "B"), msg(2, NOW - 300, "边界", "A"),
+        records = [msg(1, NOW - 1801, "过期"), msg(4, NOW + 1, "未来"),
+                   msg(3, NOW, "同秒群友", "B"), msg(2, NOW - 1800, "边界", "A"),
                    self.trigger, msg(5, None, "未知时间")]
         selected = select_context(self.cfg, records, self.trigger)
         self.assertEqual([m["text"] for m in selected], ["边界", "同秒群友"])
 
     def test_explicit_larger_window_is_respected(self):
-        self.cfg["target"]["context_window_seconds"] = 600
+        self.cfg["target"]["context_max_age_seconds"] = 600
         rows = [msg(1, NOW-600, "边界"), msg(2, NOW-601, "过期")]
         self.assertEqual([m["local_id"] for m in select_context(self.cfg, rows, self.trigger)], [1])
 
@@ -38,10 +38,11 @@ class ContextTests(unittest.TestCase):
 
     def test_no_last_20_limit_or_old_future_leak(self):
         records = [msg(i, NOW - 100 + i, f"记录{i}") for i in range(1, 41)]
-        records += [msg(98, NOW - 601, "EXPIRED_SECRET"),
+        records += [msg(98, NOW - 1801, "EXPIRED_SECRET"),
                     msg(99, NOW + 1, "FUTURE_SECRET"), self.trigger]
         prompt = build_prompt(self.cfg, records, self.trigger, "合成群")[1]["content"]
-        self.assertIn("记录1", prompt)
+        self.assertNotIn('"text":"记录1"', prompt)
+        self.assertIn('"text":"记录11"', prompt)
         self.assertIn("记录40", prompt)
         self.assertNotIn("EXPIRED_SECRET", prompt)
         self.assertNotIn("FUTURE_SECRET", prompt)

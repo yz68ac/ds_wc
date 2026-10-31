@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from synthetic import NOW, msg
+from tests.support.synthetic import NOW, msg
 from wxbridge.storage.journal import Journal, open_readonly
 
 

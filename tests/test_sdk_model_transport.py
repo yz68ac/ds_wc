@@ -7,7 +7,7 @@ import anthropic
 import httpx2
 import openai
 
-from wxbridge.ai.providers import ModelError
+from provider.adapters import ModelError
 from provider.sdk_transport import create_sdk_client, send
 
 

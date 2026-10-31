@@ -79,7 +79,7 @@ class ImageContractTests(unittest.TestCase):
 class ImageFileTests(unittest.TestCase):
     def test_sdk_description_and_helper_snapshot_detect_content_changes(self):
         from wechat_linux.native.image_send import image_request
-        from test_media import png
+        from tests.support.media import png
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)/'image.png'
             data = png()

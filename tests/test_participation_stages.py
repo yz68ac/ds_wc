@@ -3,10 +3,10 @@ import json
 import unittest
 from unittest.mock import patch
 
-from model_support import default_config
+from tests.support.model_support import default_config
 from wxbridge.ai.participation import ParticipationError, parse_decision
 from wxbridge.app.model_runtime import GroupModels
-import test_conversation as conversation
+import tests.support.conversation as conversation
 
 
 class StageTests(unittest.TestCase):
@@ -33,13 +33,13 @@ class StageTests(unittest.TestCase):
 
 
 class StagePipelineTests(unittest.TestCase):
-    setUp = conversation.ConversationTests.setUp
-    make_bot = conversation.ConversationTests.make_bot
-    add = conversation.ConversationTests.add
-    sends = conversation.ConversationTests.sends
-    restart = conversation.ConversationTests.restart
-    ordinary = conversation.ConversationTests.ordinary
-    confirm = conversation.ConversationTests.confirm
+    setUp = conversation.ConversationFixture.setUp
+    make_bot = conversation.ConversationFixture.make_bot
+    add = conversation.ConversationFixture.add
+    sends = conversation.ConversationFixture.sends
+    restart = conversation.ConversationFixture.restart
+    ordinary = conversation.ConversationFixture.ordinary
+    confirm = conversation.ConversationFixture.confirm
 
     def start_reply(self):
         row = self.ordinary('这局怎么看')

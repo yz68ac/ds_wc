@@ -1,22 +1,21 @@
 """消息接收节流与发送前补读：合成时钟、SQLite和工作进程，不访问真实微信。"""
-from model_support import default_config
-from contextlib import nullcontext
+from tests.support.model_support import default_config
 from contextlib import nullcontext
 import copy
 import unittest
 from unittest.mock import patch
 
 from wxbridge.config import DEFAULTS, load_config
-import test_context_pipeline as pipeline
+import tests.support.pipeline as pipeline
 
 
 class PollingTests(unittest.TestCase):
-    add = pipeline.PipelineTests.add
-    sends = pipeline.PipelineTests.sends
-    restart = pipeline.PipelineTests.restart
+    add = pipeline.PipelineFixture.add
+    sends = pipeline.PipelineFixture.sends
+    restart = pipeline.PipelineFixture.restart
 
     def setUp(self):
-        pipeline.PipelineTests.setUp(self)
+        pipeline.PipelineFixture.setUp(self)
         self.clock = 100.
         clock = patch('wxbridge.app.bot.time.monotonic', side_effect=lambda: self.clock)
         clock.start()
@@ -25,7 +24,7 @@ class PollingTests(unittest.TestCase):
     def make_bot(self):
         self.cfg['poll_interval_seconds'] = 2
         self.cfg['participation'].update(enabled=True, debounce_seconds=0)
-        pipeline.PipelineTests.make_bot(self)
+        pipeline.PipelineFixture.make_bot(self)
 
     def advance(self, seconds):
         self.clock += seconds
@@ -69,7 +68,7 @@ class PollingTests(unittest.TestCase):
         for _ in range(4):
             self.advance(.5)
             self.bot.tick()
-        self.assertEqual(len(self.bot.generators), 2)
+        self.assertEqual(len(self.bot.replies.jobs), 2)
         self.assertEqual(self.store.messages_after.call_count, 2)
         self.assertFalse(self.sends())
 

@@ -69,6 +69,9 @@ def _work(connection, kind, payload):
             except Exception as exc:
                 # 只返回类别，异常消息可能包含输入参数。
                 result = {"ok": False, "error": type(exc).__name__}
+                from wxbridge.ai.context import ContextError
+                if isinstance(exc, ContextError):
+                    result.update(error=exc.code, retryable=False)
                 if isinstance(exc, ModelError):
                     result.update(error=exc.code, retryable=exc.retryable)
                 if metrics:

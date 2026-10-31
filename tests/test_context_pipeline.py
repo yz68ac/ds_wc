@@ -1,6 +1,6 @@
 """真实 SQLite + 可控时钟/子进程替身，覆盖接收至发送确认，不联网。"""
 from __future__ import annotations
-from model_support import default_config
+from tests.support.model_support import default_config
 from contextlib import nullcontext
 
 import json
@@ -12,95 +12,16 @@ from unittest.mock import Mock, patch
 
 from wxbridge.app.bot import GroupSession
 from wxbridge.config import DEFAULTS, _deep_merge
-from model_support import ClientFixture
+from tests.support.model_support import ClientFixture
 from wxbridge.storage.journal import Journal
 from wxbridge.app.workers import ProcessJob
-from synthetic import NOW, msg
-from test_references import parse_message, quoted_xml
+from tests.support.synthetic import NOW, msg, history_page
+from tests.support.messages import parse_message, quoted_xml
+from tests.support.pipeline import FakeJob, PipelineFixture
 
 
-class FakeJob:
-    def __init__(self, kind, payload, **kwargs):
-        self.kind, self.payload, self.result, self.closed = kind, payload, None, False
+class PipelineTests(PipelineFixture):
 
-    def poll(self):
-        return self.result
-
-    def close(self):
-        self.closed = True
-
-
-class PipelineTests(unittest.TestCase):
-    def setUp(self):
-        parent = Path(__file__).resolve().parents[1] / ".test-tmp"
-        parent.mkdir(exist_ok=True)
-        self.temp = tempfile.TemporaryDirectory(dir=parent)
-        self.addCleanup(self.temp.cleanup)
-        self.cfg = default_config()
-        # 旧链路用例每次 tick 显式模拟接收；实际轮询节流在 test_polling 单独验证。
-        self.cfg['poll_interval_seconds'] = 0
-        self.cfg["memory"]["enabled"] = False
-        self.cfg["target"].update(chat="合成群", cooldown_seconds=0)
-        self.cfg["ui"]["dry_run"] = False
-        self.cfg["queue"]["file"] = str(Path(self.temp.name) / "queue.sqlite3")
-        self.cfg["participation"]["debounce_seconds"] = 0
-        self.cfg["state_file"] = str(Path(self.temp.name) / "state.json")
-
-        self.cfg['system_prompt_file'] = str(Path(__file__).resolve().parents[1]/'prompts/system.md')
-        self.now, self.rows, self.jobs, self.decision_jobs = float(NOW), [], [], []
-        self.store = Mock()
-        self.store.self_wxid = "wxid_self"
-        self.store.resolve_chat.return_value = ("synthetic@chatroom", "合成群")
-        self.store.last_local_id.side_effect = lambda chat: max([m["local_id"] for m in self.rows], default=0)
-        self.store.messages_after.side_effect = lambda chat, cursor, limit: [m for m in self.rows if m["local_id"] > cursor][:limit]
-        self.store.messages_in_window.side_effect = lambda chat, start, end: list(self.rows)
-        for target, value in [("wxbridge.app.bot.WeChatStore", self.store),
-                              ("wxbridge.storage.journal.checked_path", lambda value, **kw: Path(value))]:
-            p = patch(target, return_value=value) if target.endswith("WeChatStore") else patch(target, side_effect=value)
-            p.start()
-            self.addCleanup(p.stop)
-        p = patch("wxbridge.app.bot.time.time", side_effect=lambda: self.now)
-        p.start()
-        self.addCleanup(p.stop)
-        self.make_bot()
-        self.addCleanup(lambda: self.bot.close())
-
-    def make_bot(self):
-        self.bot = GroupSession(self.cfg)
-        def make(kind, payload, **kwargs):
-            job = FakeJob(kind, payload, **kwargs)
-            if kind == 'participation':
-                source_ids = payload[2]['source_ids']
-                rows = {m['local_id']: m for m in self.rows}
-                selected = [identifier for identifier in source_ids if
-                    self.store.self_wxid in (rows[identifier].get('mentioned_users') or [])
-                    or (rows[identifier].get('pat') or {}).get('target') == self.store.self_wxid]
-                job.result = dict(ok=True, decision=dict(reply_to=selected))
-                self.decision_jobs.append(job)
-            else:
-                self.jobs.append(job)
-            return job
-        self.bot.job_factory = make
-
-    def restart(self):
-        self.bot.close()
-        self.make_bot()
-
-    def add(self, identifier, sender="wxid_friend", text=None, sent=None, mention=True):
-        item = msg(identifier, int(self.now) if sent is None else sent,
-                   text or f"@DeepSeek 问题{identifier}", sender)
-        item["mentioned_users"] = ["wxid_self"] if mention else []
-        self.rows.append(item)
-        return item
-
-    def generated(self, answer="合成回复"):
-        for job in self.jobs:
-            if job.kind == "generate" and not job.closed:
-                job.result = {"ok": True, "reply": answer}
-        self.bot.tick()
-
-    def sends(self):
-        return [job for job in self.jobs if job.kind == "send"]
 
     def test_debounce_before_decision_merges_questions_and_sends_one_final_reply(self):
         self.cfg['participation']['debounce_seconds'] = 3
@@ -118,7 +39,7 @@ class PipelineTests(unittest.TestCase):
         self.bot.tick()
         self.assertEqual(len(self.decision_jobs), 1)
         self.assertEqual(self.decision_jobs[0].payload[2]['source_ids'], [1, 2])
-        self.assertEqual(len(self.bot.generators), 1)
+        self.assertEqual(len(self.bot.replies.jobs), 1)
         prompt = self.jobs[-1].payload[1][1]['content']
         self.assertEqual(prompt.count(first['text']), 1)
         self.assertEqual(prompt.count(second['text']), 1)
@@ -154,8 +75,9 @@ class PipelineTests(unittest.TestCase):
         generated = [job for job in self.jobs if job.kind == 'generate']
         self.assertEqual(len(generated), 1)
         text = generated[0].payload[1][1]['content']
-        self.assertIn('"sender": "wxid_self"', text)
-        self.assertIn('"is_bot": true', text)
+        data = json.loads(text)
+        self.assertEqual(data['bot'], 'wxid_self')
+        self.assertEqual(data['messages'][0]['sender'], data['bot'])
         self.assertEqual(text.count('之前已发出的答案'), 1)
 
     def test_vision_disabled_does_not_resolve_images(self):
@@ -174,7 +96,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(len(tasks), 1)
         self.assertEqual(tasks[0]['trigger_ids'], [1, 2])
         self.assertEqual(tasks[0]['phase'], 'queued')
-        self.assertEqual(len(self.bot.generators), 1)
+        self.assertEqual(len(self.bot.replies.jobs), 1)
         self.generated()
         self.assertEqual(len(self.sends()), 1)
 
@@ -209,14 +131,14 @@ class PipelineTests(unittest.TestCase):
         for identifier, sender in [(1, "A"), (2, "B"), (3, "C")]:
             self.add(identifier, sender=sender)
             self.bot.tick()
-        self.assertEqual(len(self.bot.generators), 3)
+        self.assertEqual(len(self.bot.replies.jobs), 3)
         self.assertEqual(self.bot.last_local_id, 3)
         self.now += 2
         self.add(4, sender="A")
         old = self.jobs[0]
         self.bot.tick()
         self.assertFalse(old.closed)
-        self.assertEqual(len(self.bot.generators), 4)
+        self.assertEqual(len(self.bot.replies.jobs), 4)
         self.assertEqual(self.bot.last_local_id, 4)
 
     def test_approved_reply_uses_reply_deadline_instead_of_candidate_age(self):
@@ -256,7 +178,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(self.bot.last_local_id, 204)
         self.assertEqual(len(self.bot.journal.tasks()), 1)
         self.assertEqual(self.bot.journal.head()['version'], 1)
-        self.assertEqual(len(self.bot.generators), 1)
+        self.assertEqual(len(self.bot.replies.jobs), 1)
         considered = [identifier for job in self.decision_jobs for identifier in job.payload[2]['source_ids']]
         self.assertEqual(considered, list(range(1, 205)))
 
@@ -273,8 +195,8 @@ class PipelineTests(unittest.TestCase):
 
     def test_merged_context_uses_latest_trigger_time_and_excludes_all_questions(self):
         self.cfg['participation']['debounce_seconds'] = 3
-        self.add(1, text='OLD_SECRET', sent=NOW-301, mention=False)
-        self.add(2, text='BOUNDARY', sent=NOW-298, mention=False)
+        self.add(1, text='OLD_SECRET', sent=NOW-1801, mention=False)
+        self.add(2, text='BOUNDARY', sent=NOW-1798, mention=False)
         first = self.add(3)
         self.bot.tick()
         self.now += 2
@@ -283,21 +205,14 @@ class PipelineTests(unittest.TestCase):
         self.assertFalse(self.jobs)
         self.now += 3
         self.bot.tick()
-        self.store.messages_in_window.assert_any_call('synthetic@chatroom', NOW-298, NOW+2)
+        self.store.messages_before.assert_any_call('synthetic@chatroom', before=(NOW+2,4),
+                                                  since=NOW-1798,max_local_id=4,limit=200)
         prompt = self.jobs[-1].payload[1][1]['content']
         self.assertIn('BOUNDARY', prompt)
         self.assertNotIn('OLD_SECRET', prompt)
         for question in (first, second):
             self.assertEqual(prompt.count(question['text']), 1)
 
-    def ready(self, answer='合成回复'):
-        self.add(1)
-        self.bot.tick()
-        for job in self.jobs:
-            if job.kind == 'generate' and not job.closed:
-                job.result = dict(ok=True, reply=answer)
-        self.bot._poll_generation_results()
-        self.now += 3
 
     def test_restart_generation_resumes_without_moving_cursor(self):
         self.add(1)
@@ -308,7 +223,7 @@ class PipelineTests(unittest.TestCase):
         self.assertTrue(old.closed)
         self.assertEqual(self.bot.last_local_id, 1)
         self.assertEqual(self.bot.journal.head()["version"], 1)
-        self.assertEqual(len(self.bot.generators), 1)
+        self.assertEqual(len(self.bot.replies.jobs), 1)
 
     def test_restart_before_submit_uses_persisted_ready_reply(self):
         self.ready()
@@ -555,7 +470,7 @@ class PipelineTests(unittest.TestCase):
         self.now += 2
         self.restart()
         self.bot.tick()
-        self.assertFalse(self.bot.generators)
+        self.assertFalse(self.bot.replies.jobs)
         self.assertFalse(self.sends())
         self.now += 1
         self.bot.tick()
@@ -657,7 +572,7 @@ class PipelineTests(unittest.TestCase):
 
     def test_reasoning_is_not_sent_as_answer(self):
         client = ClientFixture.__new__(ClientFixture)
-        from wxbridge.ai.providers import get_protocol_adapter
+        from provider.adapters import get_protocol_adapter
         client.adapter = get_protocol_adapter('deepseek')
         from wxbridge.ai.roles import model_settings
         client.cfg = dict(model_settings(self.cfg), thinking='disabled')
@@ -667,13 +582,6 @@ class PipelineTests(unittest.TestCase):
             client.chat([])
         self.assertEqual(client._post.call_args.args[0]["thinking"], {"type": "disabled"})
 
-
-    def search_started(self):
-        generator = next(job for job in self.jobs if job.kind == "generate" and not job.closed)
-        generator.result = {"event": "search_started"}
-        self.bot.tick()
-        generator.result = None
-        return generator
 
     def test_search_notice_then_final_reply_both_confirmed_and_cooldown(self):
         self.cfg['search']['feedback_enabled'] = True

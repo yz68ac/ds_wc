@@ -9,10 +9,11 @@ from pathlib import Path
 from typing import Any
 
 from wxbridge.config_merge import deep_merge as _deep_merge, field_origins
+from wxbridge.paths import SOURCE_ROOT, resource_path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = SOURCE_ROOT or Path.cwd()
 
-DEFAULTS_FILE = PROJECT_ROOT / "config.defaults.json"
+DEFAULTS_FILE = resource_path('config.defaults.json')
 
 
 def _load_defaults(path: Path) -> dict[str, Any]:
@@ -29,6 +30,27 @@ def _load_defaults(path: Path) -> dict[str, Any]:
 DEFAULTS: dict[str, Any] = _load_defaults(DEFAULTS_FILE)
 
 
+def migrate_context_data(data: dict[str, Any]) -> dict[str, Any]:
+    """Explicit conversion only; loading rejects the retired field."""
+    if not isinstance(data, dict):
+        raise ValueError('instance_config_must_be_object')
+    result = deepcopy(data)
+    target = result.get('target', {})
+    if not isinstance(target, dict):
+        raise ValueError('target 必须为 JSON 对象')
+    if 'context_window_seconds' in target:
+        seconds = target.pop('context_window_seconds')
+        if type(seconds) is not int or seconds < 1:
+            raise ValueError('invalid_legacy_context_window')
+        memory = result.setdefault('memory', {})
+        if not isinstance(memory, dict):
+            raise ValueError('memory 必须为 JSON 对象')
+        if 'context_window_seconds' in memory and memory['context_window_seconds'] != seconds:
+            raise ValueError('conflicting_memory_context_window')
+        memory['context_window_seconds'] = seconds
+    return result
+
+
 def migrate_instance_data(data: dict[str, Any]) -> dict[str, Any]:
     """Explicit one-time JSON conversion; normal loading never calls this helper.
 
@@ -37,7 +59,7 @@ def migrate_instance_data(data: dict[str, Any]) -> dict[str, Any]:
     """
     if not isinstance(data, dict):
         raise ValueError('instance_config_must_be_object')
-    result = deepcopy(data)
+    result = migrate_context_data(data)
     old = result.pop('proactive', None)
     target, queue = result.get('target', {}), result.get('queue', {})
     if not isinstance(target, dict) or not isinstance(queue, dict) or (old is not None and not isinstance(old, dict)):
@@ -62,8 +84,7 @@ def migrate_instance_data(data: dict[str, Any]) -> dict[str, Any]:
             raise ValueError('invalid_legacy_participation_configuration')
         migrated['address_names'] = list(names)
         if 'window_seconds' in old:
-            target.setdefault('context_window_seconds', old['window_seconds'])
-            result['target'] = target
+            result.setdefault('memory', {}).setdefault('context_window_seconds', old['window_seconds'])
     if trigger is not None:
         migrated['pat_enabled'] = trigger.get('pat_enabled', True)
         names = trigger.get('mentions', [])
@@ -86,7 +107,7 @@ def load_config(path: str | Path = "config.json") -> dict[str, Any]:
     data = json.loads(p.read_text(encoding='utf-8-sig')) if p.exists() else {}
     validate_account_fields(data)
     cfg = resolve_config(data, p, validate_role_models=False)
-    cfg['system_prompt_file'] = str((PROJECT_ROOT/DEFAULTS['system_prompt_file']).resolve())
+    cfg['system_prompt_file'] = str(resource_path(DEFAULTS['system_prompt_file']).resolve())
     cfg['instances'] = discover_instances(cfg, p, resolver=resolve_config)
     cfg['_account_config_file'] = str(p.resolve())
     return cfg
@@ -117,6 +138,8 @@ def resolve_config(data: dict, path: str | Path, *, environment=True, origins=No
         obsolete.add('queue.debounce_seconds')
     if 'trigger' in data.get('target', {}):
         obsolete.add('target.trigger')
+    if 'context_window_seconds' in data.get('target', {}):
+        obsolete.add('target.context_window_seconds; use migrate_context_data')
     if obsolete:
         raise ValueError('obsolete_model_configuration:'+','.join(sorted(obsolete)))
     profile = cfg['profile']
@@ -134,11 +157,14 @@ def resolve_config(data: dict, path: str | Path, *, environment=True, origins=No
             raise ValueError('invalid_profile_option:' + key)
     if profile['min_new_messages'] > profile['batch_size']:
         raise ValueError('profile.min_new_messages must not exceed batch_size')
-    window = cfg["target"]["context_window_seconds"]
-    if cfg['target'].get('context_budget_strategy', 'strict') not in ('strict', 'recent'):
+    if cfg['target'].get('context_budget_strategy', 'recent') not in ('strict', 'recent'):
         raise ValueError('target.context_budget_strategy must be strict/recent')
-    if type(window) is not int or window <= 0:
-        raise ValueError("target.context_window_seconds 必须是正整数")
+    for key, minimum, maximum in (('context_recent_messages', 1, 200),
+                                  ('context_max_age_seconds', 1, 86400),
+                                  ('context_bot_messages', 0, 10), ('context_max_chars', 1, 100000)):
+        value = cfg['target'][key]
+        if type(value) is not int or not minimum <= value <= maximum:
+            raise ValueError('target.'+key+' 超出允许范围')
     age = cfg['target']['max_message_age_seconds']
     if type(age) not in (int, float) or not math.isfinite(age) or not 1 <= age <= 3600:
         raise ValueError('target.max_message_age_seconds 必须为 1–3600 秒')
@@ -198,6 +224,8 @@ def resolve_config(data: dict, path: str | Path, *, environment=True, origins=No
             or not math.isfinite(float(cfg['ui']['send_confirm_timeout_seconds'])) or float(cfg["ui"]["send_confirm_timeout_seconds"]) <= 0):
         raise ValueError("ui.send_confirm_timeout_seconds 必须大于 0")
     memory = cfg["memory"]
+    if type(memory['context_window_seconds']) is not int or not 1 <= memory['context_window_seconds'] <= 86400:
+        raise ValueError('memory.context_window_seconds 必须为 1–86400 秒的整数')
     directory = Path(memory["directory"]).expanduser()
     cfg["memory"]["directory"] = str(directory if directory.is_absolute() else base/directory)
     if type(memory['enabled']) is not bool:
@@ -205,7 +233,10 @@ def resolve_config(data: dict, path: str | Path, *, environment=True, origins=No
     if not isinstance(memory['system_prompt_file'], str) or not memory['system_prompt_file'].strip():
         raise ValueError('memory.system_prompt_file 必须为提示词文件路径')
     memory_prompt = Path(memory['system_prompt_file']).expanduser()
-    memory['system_prompt_file'] = str(memory_prompt if memory_prompt.is_absolute() else PROJECT_ROOT/memory_prompt)
+    if not memory_prompt.is_absolute():
+        memory_prompt = (resource_path(memory_prompt) if str(memory_prompt).replace('\\','/') == DEFAULTS['memory']['system_prompt_file']
+                         else base/memory_prompt)
+    memory['system_prompt_file'] = str(memory_prompt)
     learning = memory['learning']
     if not isinstance(learning, dict) or any(type(learning.get(key)) is not bool for key in ('enabled', 'passive_enabled')):
         raise ValueError('memory.learning 开关必须为布尔值')

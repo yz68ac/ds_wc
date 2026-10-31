@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import argparse
 from contextlib import contextmanager
 import runpy
 import os
@@ -30,13 +31,25 @@ def offline_network():
         yield
 
 
-def main() -> int:
+def main(argv=None) -> int:
     root = Path(__file__).resolve().parents[1]
+    sys.path.insert(0, str(root))
     sys.path.insert(0, str(root / 'src'))
+    from tests.suites import SUITES, selected_modules
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--suite', action='append', choices=tuple(SUITES), default=[],
+                        help='只运行指定领域，可重复指定；默认全部')
+    parser.add_argument('--list', action='store_true', help='列出测试套件，不导入业务模块或执行测试')
+    args = parser.parse_args(argv)
+    modules = selected_modules(args.suite)
+    if args.list:
+        for name, values in SUITES.items():
+            print(f'{name}: {len(values)} modules')
+        return 0
     os.environ['PYTHONPATH'] = os.pathsep.join(filter(None, (str(root / 'src'), os.environ.get('PYTHONPATH', ''))))
     tests = root / "tests"
     with offline_network():
-        suite = unittest.defaultTestLoader.discover(str(tests), pattern="test_*.py")
+        suite = unittest.defaultTestLoader.loadTestsFromNames(modules)
         result = unittest.TextTestRunner(verbosity=2).run(suite)
     if not result.wasSuccessful():
         return 1
@@ -50,11 +63,12 @@ def main() -> int:
         with tempfile.TemporaryDirectory(prefix="offline-", dir=temp_root) as temp_dir:
             tempfile.tempdir = temp_dir
             with offline_network():
-                for filename in ("test_parsing.py", "test_crypto.py"):
-                    runpy.run_path(str(tests / filename), run_name="__main__")
+                scripts = [name for name in ('test_parsing', 'test_crypto') if 'tests.'+name in modules]
+                for filename in scripts:
+                    runpy.run_path(str(tests / (filename+'.py')), run_name="__main__")
     finally:
         tempfile.tempdir = previous_tempdir
-    print(f"OK: {result.testsRun} unit tests + parsing and crypto scripts; offline only.")
+    print(f"OK: {result.testsRun} unit tests + {len(scripts)} parsing/crypto scripts; offline only.")
     return 0
 
 

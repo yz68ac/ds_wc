@@ -5,15 +5,14 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 
 from wxbridge.ai.context import ContextError
-from wxbridge.ai.identity import reference_data
+from wxbridge.ai.chat_payload import compact_reference, encode_payload, fit_payload
 
 
 @dataclass(frozen=True)
 class ReferenceSlot:
     trigger_index: int
-    start: int
-    end: int
-    original: str = field(repr=False)
+    message_id: int
+    original: dict = field(repr=False)
     source: str = field(repr=False)
 
 
@@ -34,20 +33,14 @@ def reference_source(reference):
 @dataclass(frozen=True)
 class PromptLayout:
     account: str = field(repr=False)
-    labels: dict = field(repr=False)
     user_text: str = field(repr=False)
+    payload: dict = field(repr=False)
     references: tuple[ReferenceSlot, ...] = field(repr=False)
     trigger_keys: tuple = field(repr=False)
-    history_start: int
-    history_end: int
-    history_lines: tuple[str, ...] = field(repr=False)
-    history_removed: int
-    memory_suffix: str = field(repr=False)
-    memory_intro: str = field(repr=False)
-    memory_lines: tuple[str, ...] = field(repr=False)
     max_chars: int
     budget_strategy: str
-    aliases: dict = field(default_factory=dict, repr=False)
+    aliases: dict | None = field(default=None, repr=False)
+    selection: object = field(default=None, repr=False)
 
 
 class PromptMessages(list):
@@ -63,6 +56,8 @@ class PromptMessages(list):
         self.system_base = None
         self.system_parts = {}
         self.references_bound = False
+        self.context_rules = ''
+        self.context_stats = {}
 
 
 class PromptComposer:
@@ -91,7 +86,6 @@ class PromptComposer:
         Return None for pre-contract callers. The image adapter retains its
         legacy construction path for those callers during migration.
         """
-        import json
         if not isinstance(messages, PromptMessages):
             return None
         if messages.layout is None:
@@ -112,8 +106,9 @@ class PromptComposer:
         offset = text.find(layout.user_text)
         if offset < 0 or text.find(layout.user_text, offset+1) >= 0:
             raise ContextError('引用媒体提示词布局已改变，取消替换')
-        inner = layout.user_text
-        updated = []
+        if encode_payload(layout.payload) != layout.user_text:
+            raise ContextError('引用媒体登记的数据已改变')
+        payload = deepcopy(layout.payload)
         for slot in layout.references:
             if slot.trigger_index >= len(triggers):
                 raise ContextError('引用媒体提问映射失效')
@@ -122,50 +117,18 @@ class PromptComposer:
                 raise ContextError('引用媒体来源失效')
             if reference_source(reference) != slot.source:
                 raise ContextError('引用媒体来源与登记来源不匹配')
-            start, end = slot.start, slot.end
-            if inner[start:end] != slot.original:
+            row = next((r for r in payload['messages'] if r['id']==slot.message_id),None)
+            if row is None or row.get('reference') != slot.original:
                 raise ContextError('引用媒体内容与登记布局不匹配')
-            replacement = json.dumps(reference_data(reference, layout.labels, account, aliases=layout.aliases), ensure_ascii=False)
-            updated.append((start, end, replacement))
-        for start, end, replacement in reversed(updated):
-            inner = inner[:start]+replacement+inner[end:]
+            row['reference'] = compact_reference(reference,account=account,aliases=layout.aliases)
         outside_before, outside_after = text[:offset], text[offset+len(layout.user_text):]
-        result[1]['content'] = PromptComposer._budget(layout, inner, outside_before, outside_after)
+        payload = fit_payload(payload,layout.max_chars,strategy=layout.budget_strategy,
+                              external_chars=len(outside_before)+len(outside_after),plan=layout.selection)
+        result[1]['content'] = outside_before+encode_payload(payload)+outside_after
+        if layout.selection is not None:
+            from wxbridge.ai.context import context_stats
+            result.context_stats = context_stats(layout.selection,payload)
+            result.context_stats['chars'] += len(outside_before)+len(outside_after)
         result.layout = None  # One binding pass; no accidental second patch.
         result.references_bound = True
         return result
-
-    @staticmethod
-    def _budget(layout, text, before, after):
-        """Media metadata may grow: reduce whole memory lines, then old history."""
-        if layout.memory_suffix:
-            if not text.endswith(layout.memory_suffix):
-                raise ContextError('引用媒体的记忆布局已改变')
-            text = text[:-len(layout.memory_suffix)]
-        external = len(before)+len(after)
-        limit = layout.max_chars
-        if limit > 0 and len(text)+external > limit:
-            if layout.budget_strategy != 'recent':
-                raise ContextError('当前上下文窗口超过字符预算，未截取提问或引用')
-            prefix, suffix = text[:layout.history_start], text[layout.history_end:]
-            lines, removed = list(layout.history_lines), layout.history_removed
-            while lines:
-                lines.pop(0)
-                removed += 1
-                history = (f'（较旧的{removed}条历史因预算未附送；以下不是完整五分钟记录）\n'+'\n'.join(lines)
-                           if lines else f'（{removed}条历史因预算未附送）')
-                text = prefix+history+suffix
-                if len(text)+external <= limit:
-                    break
-            if len(text)+external > limit:
-                raise ContextError('当前提问或明确引用本身超过预算，未截断提问')
-        room = limit-len(text)-external-len(layout.memory_intro) if limit > 0 else None
-        kept, used = [], 0
-        for line in layout.memory_lines:
-            cost = len(line)+(1 if kept else 0)
-            if room is None or used+cost <= room:
-                kept.append(line)
-                used += cost
-        if kept:
-            text += layout.memory_intro+'\n'.join(kept)
-        return before+text+after

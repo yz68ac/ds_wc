@@ -18,7 +18,7 @@ try:
 except ImportError:
     from Cryptodome.Cipher import AES
 
-from wxbridge.wechat import crypto
+from wechat_linux.storage import crypto
 
 
 def make_plain_page(pgno: int) -> bytes:

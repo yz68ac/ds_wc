@@ -245,7 +245,7 @@ def prepare(*, verify=False):
             if scratch.stat().st_uid != 0 or scratch.stat().st_mode & 0o077:
                 raise ValueError('keyscan_directory_permissions')
             output = scratch/'candidate.json'
-            code = 'from wxbridge.wechat.keyscan import extract_keys; import sys; extract_keys(sys.argv[1],sys.argv[2],pid=int(sys.argv[3]),show_keys=False)'
+            code = 'from wechat_linux.storage.keyscan import extract_keys; import sys; extract_keys(sys.argv[1],sys.argv[2],pid=int(sys.argv[3]),show_keys=False)'
             proc = subprocess.run(['/usr/bin/python3','-c',code,settings['db_dir'],str(output),str(token['pid'])],
                 cwd='/', env=dict(PATH='/usr/bin:/bin', PYTHONPATH=str(SCANNER)),
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=180)

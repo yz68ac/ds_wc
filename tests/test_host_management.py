@@ -113,7 +113,7 @@ class InstallerTests(unittest.TestCase):
         mount,service=install.render_units(ROOT,account,'192.168.8.20')
         self.assertIn('uid=912,gid=913,noswap',mount)
         self.assertNotIn('@UID@',mount)
-        self.assertIn('run --web-host 192.168.8.20',service)
+        self.assertIn('-m wxbridge_service --root /opt/wxbridge --web-host 192.168.8.20',service)
         self.assertIn('TimeoutStopSec=infinity',service)
         self.assertIn('SendSIGKILL=no',service)
 
@@ -153,6 +153,20 @@ class InstallerTests(unittest.TestCase):
         file.write_text('{"changed":true}')
         with self.assertRaisesRegex(ValueError,'校验失败'):
             install.verify_source(self.root,files)
+
+    def test_missing_locked_requirements_fails_before_any_host_changes(self):
+        frontend=self.root/'src/webui/dist/index.html'
+        frontend.parent.mkdir(parents=True)
+        frontend.write_text('synthetic frontend')
+        args=SimpleNamespace(web_host='127.0.0.1',wechat_deb=None,frida_wheel=None,with_vnc=False,dry_run=False)
+        run=Mock()
+        with patch.object(install,'validate_host'), patch.object(install,'existing_targets',return_value=[]), \
+             patch.object(install,'verify_media',return_value=({},'fake')), patch.object(install,'public_files',return_value=[]), \
+             patch.object(install,'verify_source',return_value=False), patch.object(install,'password_input') as password:
+            with self.assertRaisesRegex(ValueError,'requirements.txt'):
+                install.install(self.root,args,run=run)
+        run.assert_not_called()
+        password.assert_not_called()
 
     def test_release_inventory_keeps_all_committed_metadata_for_future_upgrades(self):
         (self.root/'scripts').mkdir()

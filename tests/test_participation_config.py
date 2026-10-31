@@ -67,10 +67,10 @@ class ParticipationConfigTests(unittest.TestCase):
         before = deepcopy(old)
         new = migrate_instance_data(old)
         self.assertEqual(old, before)
-        for key in ('enabled', 'chat', 'system_prompt_file', 'models', 'model_clients', 'memory', 'profile'):
+        for key in ('enabled', 'chat', 'system_prompt_file', 'models', 'model_clients', 'profile'):
             self.assertEqual(new[key], old[key])
-        self.assertEqual(new['target'], dict(bot_name='小助手', max_message_age_seconds=75,
-                                             context_window_seconds=600))
+        self.assertEqual(new['target'], dict(bot_name='小助手', max_message_age_seconds=75))
+        self.assertEqual(new['memory'],dict(enabled=False,context_window_seconds=600))
         self.assertEqual(new['queue'], dict(max_pending=64))
         self.assertEqual(new['participation'], dict(enabled=True, debounce_seconds=7,
             max_wait_seconds=7, max_batch_messages=8, address_names=['额外称呼', '助手'], pat_enabled=False))

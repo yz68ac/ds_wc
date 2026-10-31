@@ -172,7 +172,8 @@ def render_units(source, account, web_host):
     mount = mount.replace('@UID@',str(account.pw_uid)).replace('@GID@',str(account.pw_gid))
     service = (source/'scripts/systemd/wxbridge.service').read_text()
     if web_host != '127.0.0.1':
-        service = service.replace('scripts/service.py run\n', 'scripts/service.py run --web-host '+web_host+'\n')
+        service = service.replace('-m wxbridge_service --root /opt/wxbridge\n',
+                                  '-m wxbridge_service --root /opt/wxbridge --web-host '+web_host+'\n')
     return mount, service
 
 
@@ -215,7 +216,7 @@ def fetch_frida(destination, expected, *, proxy=None):
 
 def dependency_health():
     from pip._vendor.packaging.requirements import Requirement
-    roots = ['openai','anthropic','google-genai','Pillow','fastapi','uvicorn','pycryptodome','zstandard','zxing-cpp','qrcode']
+    roots = ['wxbridge','model-provider','wechat-linux-adapter','openai','anthropic','google-genai','Pillow','fastapi','uvicorn','pycryptodome','zstandard','zxing-cpp','qrcode']
     seen, pending, failures = set(), [(n,frozenset()) for n in roots], []
     while pending:
         name, extras = pending.pop()
@@ -303,6 +304,8 @@ def install(source, args, *, run=subprocess.run):
     frontend = source/'src/webui/dist/index.html'
     if not frontend.is_file():
         raise ValueError('发布包缺少 src/webui/dist；先 npm ci && npm run build，或使用含前端的发布包。')
+    if not (source/'requirements.txt').is_file():
+        raise ValueError('发布包缺少锁定的 requirements.txt；先运行 python scripts/dependencies.py。')
     plan = dict(target=str(paths.app), user=USER, web_host=args.web_host,
         packages=list(PACKAGES)+(['x11vnc'] if args.with_vnc else []), public_files=len(files),
         credentials_copied=False, initial_bot_enabled=False, media_hashes_checked=True,
@@ -349,8 +352,8 @@ def install(source, args, *, run=subprocess.run):
     pip = [str(python),'-m','pip','--isolated','install','--index-url','https://pypi.org/simple']
     if args.package_proxy:
         pip += ['--proxy',args.package_proxy]
-    run([*pip,'-e',str(paths.app)+'[database,login]','-e',str(paths.app/'src/provider'),
-         '-e',str(paths.app/'src/wxbridge_web'),'Pillow>=11,<14'],check=True)
+    run([*pip,'-r',str(paths.app/'requirements.txt'),'-e',str(paths.app)+'[database,login]',
+         '-e',str(paths.app/'src/provider'),'-e',str(paths.app/'src/wechat_linux')],check=True)
     scanner = Path('/usr/local/lib/wxbridge-recovery')
     scanner.mkdir(parents=True,mode=0o755)
     for name in ('wxbridge','wechat_linux'):
@@ -374,7 +377,7 @@ def install(source, args, *, run=subprocess.run):
     mount, service = render_units(source,account,args.web_host)
     atomic_file(Path('/etc/systemd/system')/MOUNT_UNIT,mount.encode(),mode=0o644)
     atomic_file(Path('/etc/systemd/system')/UNIT,service.encode(),mode=0o644)
-    launcher = '#!/bin/sh\nexec /opt/wxbridge/.venv/bin/python /opt/wxbridge/scripts/manage.py "$@"\n'
+    launcher = '#!/bin/sh\nexec /opt/wxbridge/.venv/bin/python -m wxbridge "$@"\n'
     atomic_file('/usr/local/bin/wxbridge',launcher.encode(),mode=0o755)
     state = Path('/var/lib/wxbridge-service');state.mkdir(mode=0o700);state.chmod(0o700)
     atomic_json(state/'state.json',dict(schema=1,bot_enabled=False))

@@ -1,56 +1,12 @@
 """Unified decisions, full replies and confirmation with synthetic inputs only."""
 import json
 import unittest
-import test_context_pipeline as pipeline
+import tests.support.pipeline as pipeline
+from tests.support.conversation import ConversationFixture
 
 
-class ConversationTests(unittest.TestCase):
-    setUp = pipeline.PipelineTests.setUp
-    add = pipeline.PipelineTests.add
-    sends = pipeline.PipelineTests.sends
-    restart = pipeline.PipelineTests.restart
-    generated = pipeline.PipelineTests.generated
+class ConversationTests(ConversationFixture):
 
-    def make_bot(self):
-        self.cfg['participation'].update(enabled=True, debounce_seconds=0)
-        pipeline.PipelineTests.make_bot(self)
-        def make(kind, payload, **kwargs):
-            job = pipeline.FakeJob(kind, payload, **kwargs)
-            (self.decision_jobs if kind == 'participation' else self.jobs).append(job)
-            return job
-        self.bot.job_factory = make
-
-    def ordinary(self, text, sender='wxid_friend', **fields):
-        identifier = max((m['local_id'] for m in self.rows), default=0)+1
-        row = self.add(identifier, sender=sender, text=text, mention=False)
-        row.update(fields)
-        self.bot.tick()
-        return row
-
-    def decision(self, reply_to=None, *, speak=True, text=None, target=None):
-        if reply_to is None:
-            reply_to = [target or self.bot.participation.pending['source_ids'][-1]] if speak else []
-        self.bot.participation.job.result = dict(ok=True, decision=dict(reply_to=reply_to))
-        self.bot.tick()
-        if text is not None and reply_to:
-            self.generated(text)
-
-    def confirm(self):
-        worker = self.sends()[-1]
-        worker.result = dict(ok=True, ui=dict(operation=dict(submitted=True)))
-        return self.ordinary(worker.payload[2], sender='wxid_self')
-
-    def enter(self):
-        row = self.ordinary('ds，过来接个话')
-        self.decision([row['local_id']], text='自然接话')
-        self.confirm()
-
-    def answer_mention(self, sender='wxid_friend'):
-        identifier = max((m['local_id'] for m in self.rows), default=0)+1
-        self.add(identifier, sender=sender)
-        self.bot.tick()
-        self.decision([identifier], text='正常回复真实提问')
-        self.confirm()
 
     def test_single_ordinary_message_waits_for_model_approval(self):
         row = self.ordinary('今天聊聊编程')
@@ -86,7 +42,7 @@ class ConversationTests(unittest.TestCase):
         tasks = self.bot.journal.tasks()
         self.assertEqual([t['trigger_ids'] for t in tasks], [[1, 3], [2]])
         self.assertEqual([t['sender'] for t in tasks], ['wxid_a', 'wxid_b'])
-        self.assertEqual(len(self.bot.generators), 2)
+        self.assertEqual(len(self.bot.replies.jobs), 2)
 
     def test_unselected_sources_are_recorded_as_silent(self):
         self.add(1, mention=False)

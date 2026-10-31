@@ -17,13 +17,13 @@ class SessionPhases:
 
     def collect_background_results(self):
         with self.metrics.measure('memory'):
-            self._memory_step(collect_only=True)
+            self.memory.step(collect_only=True)
         if self.profile:
             self.profile.step(collect_only=True)
 
     def collect_results(self):
         with self.metrics.measure('generation'):
-            self._poll_generation_results()
+            self.replies.collect()
         self.image_generation.step()
         with self.metrics.measure('ui_result'):
             self._ui_result_step()
@@ -36,7 +36,7 @@ class SessionPhases:
 
     def start_foreground(self, *, max_new=None):
         with self.metrics.measure('generation'):
-            return self._start_generations(max_new=max_new)
+            return self.replies.start(max_new=max_new)
 
     def participate(self):
         with self.metrics.measure('participation'):
@@ -50,12 +50,12 @@ class SessionPhases:
 
     def background(self):
         with self.metrics.measure('memory'):
-            self._memory_step()
+            self.memory.step()
         if self.profile:
             self.profile.step()
 
     def worker_counts(self):
-        return dict(generation=len(self.generators), memory=int(self.memory_job is not None),
+        return dict(generation=len(self.replies.jobs), memory=int(self.memory.job is not None),
                     image=len(self.image_generation.jobs),
                     participation=int(self.participation.job is not None),
                     profile=int(bool(self.profile and self.profile.job)))
@@ -70,8 +70,6 @@ class SessionPhases:
 
     def has_foreground_tasks(self):
         return bool(self.journal.tasks())
-
-
 
     def send_in_progress(self):
         return self.ui_job is not None or self.journal.has_intent()

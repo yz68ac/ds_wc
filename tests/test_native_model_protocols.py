@@ -1,6 +1,5 @@
 """Responses/Anthropic contracts and hosted-search fault cases; never network."""
-from model_support import default_config
-from contextlib import nullcontext
+from tests.support.model_support import default_config
 from contextlib import nullcontext
 from copy import deepcopy
 import json
@@ -10,8 +9,8 @@ from pathlib import Path
 import unittest
 from unittest.mock import Mock, patch
 
-from model_support import ClientFixture, ModelError, capture_metrics
-from wxbridge.ai.providers import ModelRequest, get_protocol_adapter
+from tests.support.model_support import ClientFixture, ModelError, capture_metrics
+from provider.adapters import ModelRequest, get_protocol_adapter
 from wxbridge.ai.roles import model_settings, validate_models
 from wxbridge.ai.search import answer_with_search
 from wxbridge.app.metrics import Metrics
@@ -152,7 +151,6 @@ class NativeProtocolTests(unittest.TestCase):
             with self.assertRaisesRegex(ModelError,'invalid_response'):get_protocol_adapter(provider).parse_response(data)
 
 
-
 class NativeSearchTests(unittest.TestCase):
     def test_both_native_protocols_can_use_existing_external_search_functions(self):
         protocols=[('openai_responses',response([dict(type='reasoning',id='r1',summary=[],encrypted_content='PRIVATE_STATE'),
@@ -248,8 +246,6 @@ class NativeSearchTests(unittest.TestCase):
 
 
 class ProfileTests(unittest.TestCase):
-
-
 
 
     def test_auto_search_is_selected_before_http_and_explicit_external_override_works(self):

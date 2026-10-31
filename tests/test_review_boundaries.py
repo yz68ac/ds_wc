@@ -1,6 +1,5 @@
 """Synthetic regressions for review R3-R10; no network or production data."""
-from model_support import default_config
-from contextlib import nullcontext
+from tests.support.model_support import default_config
 from contextlib import nullcontext
 import copy
 import importlib.util
@@ -15,11 +14,11 @@ from wxbridge.ai.images import read_local_image
 from wxbridge.config import DEFAULTS, load_config
 from wxbridge.ai.participation import evaluate
 from wxbridge.storage.journal import Journal
-import test_memory as memories
-import test_media as media
-import test_native_api as native
-import test_context_pipeline as pipeline
-from synthetic import NOW, msg
+import tests.support.memory as memories
+import tests.support.media as media
+import tests.support.native_api as native
+import tests.support.pipeline as pipeline
+from tests.support.synthetic import NOW, msg
 
 
 class ReviewBoundaryTests(unittest.TestCase):
@@ -28,23 +27,23 @@ class ReviewBoundaryTests(unittest.TestCase):
         return case
 
     def test_unavailable_memory_source_is_quarantined_and_does_not_hold_next_job(self):
-        case=self.fixture(memories.MemoryPipelineTests);case.enable();case.confirmed()
-        case.bot.memory_job[2].result=dict(ok=False,error='JSONDecodeError');case.bot._memory_step()
+        case=self.fixture(memories.MemoryPipelineFixture);case.enable();case.confirmed()
+        case.bot.memory.job[2].result=dict(ok=False,error='JSONDecodeError');case.bot.memory.step()
         newer=case.add(3,mention=False)
         with case.bot.journal.db:
             case.bot.journal.enqueue_memory('reply','second',[dict(local_id=3,time=newer['time'])])
         case.store.messages_in_window.side_effect=lambda *args:[newer]
         for _ in range(4):
             case.now=case.bot.journal.memory_jobs()[0]['retry_at']+1
-            case.bot._memory_step()
+            case.bot.memory.step()
         self.assertEqual(case.bot.journal.status()['memory_quarantined'][0]['attempts'],5)
         self.assertEqual(case.bot.journal.memory_jobs()[0]['key'],'second')
-        self.assertEqual(case.bot.memory.data['watermark'],0)
-        case.bot._memory_step()
-        self.assertEqual(case.bot.memory_job[0]['key'],'second')
+        self.assertEqual(case.bot.memory.store.data['watermark'],0)
+        case.bot.memory.step()
+        self.assertEqual(case.bot.memory.job[0]['key'],'second')
 
     def test_confirmation_has_page_budget_throttle_and_bounded_old_row_audit(self):
-        case=self.fixture(native.JournalTests);identifier=case.normal_task()
+        case=self.fixture(native.JournalFixture);identifier=case.normal_task()
         job=Mock();job.poll.return_value=dict(ok=True,ui=dict(operation=dict(submitted=True)))
         case.delivery.send(Mock(return_value=job));case.delivery.poll_result()
         rows=[dict(local_id=n,sender='other',type=1,text='synthetic') for n in range(3,1003)]
@@ -61,7 +60,7 @@ class ReviewBoundaryTests(unittest.TestCase):
         self.assertEqual(case.journal.task(identifier)['phase'],'done')
 
     def test_capacity_preserves_cursor_and_defers_instead_of_dropping(self):
-        case=self.fixture(native.JournalTests)
+        case=self.fixture(native.JournalFixture)
         records=[msg(n,NOW,'synthetic') for n in range(89,93)]
         limits=dict(max_pending=2,max_pending_per_sender=2)
         case.journal.intake_participation(records,lambda _:True,NOW,ttl_seconds=90,limits=limits)
@@ -77,7 +76,7 @@ class ReviewBoundaryTests(unittest.TestCase):
         self.assertEqual(case.journal.participation_status()['counts'],dict(silent=2))
 
     def test_deferred_source_is_recorded_as_expired_without_resetting_original_age(self):
-        case=self.fixture(pipeline.PipelineTests)
+        case=self.fixture(pipeline.PipelineFixture)
         case.cfg['queue'].update(max_pending=1,max_pending_per_sender=1)
         case.add(1);case.add(2);case.bot.tick()
         self.assertEqual(case.bot.last_local_id,1)
@@ -94,7 +93,7 @@ class ReviewBoundaryTests(unittest.TestCase):
         self.assertEqual(state['recent'][0]['expires_at'],NOW+90)
 
     def test_stale_and_unavailable_indexes_use_the_proven_cache(self):
-        case=self.fixture(media.ImageBindingTests)
+        case=self.fixture(media.ImageBindingFixture)
         case.store._query_messages.return_value=[dict(type=3,image_md5=case.digest,sender='friend',image_cache_key='c'*32)]
         path=case.root/'msg/attach'/case.bucket/'2026-10/Img'/('c'*32+'_t.dat')
         path.parent.mkdir(parents=True);path.write_bytes(media.png())
@@ -117,7 +116,7 @@ class ReviewBoundaryTests(unittest.TestCase):
                 with self.assertRaises(ValueError):load_config(path)
 
     def test_approved_question_becomes_full_reply_without_rewinding_newer_intake(self):
-        case=self.fixture(native.JournalTests)
+        case=self.fixture(native.JournalFixture)
         source=msg(89,NOW,'看看这张图');source['reference']=dict(kind='image',available=False,text='')
         limits=dict(max_pending=32,max_pending_per_sender=8)
         case.journal.intake_participation([source],lambda _:True,NOW,ttl_seconds=90,limits=limits)

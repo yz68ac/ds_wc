@@ -51,3 +51,20 @@ def run_bot(cfg, *, once=False, echo=False):
         finally:
             bot.close()
     return 0
+
+
+def main(argv=None):
+    """Private foreground entry used by the supervisor; no lifecycle controls."""
+    import argparse
+    from wxbridge.config import load_config
+    parser = argparse.ArgumentParser(description='WXBridge foreground worker')
+    parser.add_argument('--config', type=Path, required=True)
+    parser.add_argument('--send', action='store_true')
+    args = parser.parse_args(argv)
+    cfg = load_config(args.config)
+    cfg['ui']['dry_run'] = not args.send
+    return run_bot(cfg)
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

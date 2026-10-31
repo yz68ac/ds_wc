@@ -137,8 +137,8 @@ class Supervisor:
         self.children = {
             SESSION: Child(SESSION, ['/usr/bin/python3', str(self.root/'scripts/boot-session.py')], **identity),
             HELPER: Child(HELPER, [str(helper/'venv/bin/python'), '-I', str(helper/'helper.py'), '--serve', str(helper/'helper-config.json')], cwd=str(helper), timeout=None),
-            BOT: Child(BOT, [python, str(self.root/'scripts/run-live.py')], timeout=330, **identity),
-            WEB: Child(WEB, [python, str(self.root/'scripts/web-console.py'), '--root', str(self.root),
+            BOT: Child(BOT, [python, '-m', 'wxbridge.app.runtime', '--config', str(self.root/'config.json'), '--send'], timeout=330, **identity),
+            WEB: Child(WEB, [python, '-m', 'wxbridge_web', '--root', str(self.root),
                 '--host', web_host, '--port', str(web_port), '--password-file', '/etc/wxbridge/web-password',
                 '--allow-service-control', '--control-socket', str(self.control_path),
                 '--catalog-file', '/var/lib/wxbridge-web/models.json'], **identity),
@@ -152,7 +152,7 @@ class Supervisor:
 
     def environment(self, *, gui=False):
         env = dict(PATH='/usr/local/bin:/usr/bin:/bin', HOME=self.account.pw_dir,
-                   PYTHONPATH=str(self.root/'src'), WX_RUNTIME_DIR=str(self.run_dir), LANG='C.UTF-8')
+                   WX_RUNTIME_DIR=str(self.run_dir), LANG='C.UTF-8')
         if gui and (self.run_dir/'env').is_file():
             for line in (self.run_dir/'env').read_text().splitlines():
                 key, sep, value = line.partition('=')

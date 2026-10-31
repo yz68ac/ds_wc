@@ -5,6 +5,8 @@ from provider import Client, ModelError, ModelResult, capture_metrics
 from wxbridge.config import DEFAULTS
 from wxbridge.ai.roles import model_settings
 
+__all__ = ['default_config', 'ClientFixture', 'ModelError', 'ModelResult', 'capture_metrics']
+
 def default_config():
     cfg=deepcopy(DEFAULTS)
     cfg['provider_env']=str(Path(__file__).parent/'.synthetic-provider.env')

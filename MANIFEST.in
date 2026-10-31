@@ -1,11 +1,11 @@
 include pyproject.toml
-include docs/WECHAT_LINUX.md
-recursive-include src/wechat_linux *.py *.js *.json *.c
-exclude README.md CONTRIBUTING.md
+include README.md config.defaults.json
+recursive-include prompts *.md *.json
+recursive-include src/webui/dist *.html *.css *.js
+exclude CONTRIBUTING.md
 prune tests
-prune src/wxbridge
+prune src/wechat_linux
 prune src/provider
 prune scripts
-prune prompts
 prune resources
 global-exclude __pycache__ *.py[cod]

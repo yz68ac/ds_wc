@@ -1,13 +1,12 @@
 """Source-bound participation decisions; no reply generation, database or WeChat I/O."""
 from __future__ import annotations
 
-from copy import deepcopy
 import json
 import time
 
-from wechat_linux.messages.pats import is_pat
-from wxbridge.ai.context import ContextError, message_time
-from wxbridge.ai.identity import member_alias, member_labels, reference_data
+from wxbridge.ai.context import ContextError
+from wxbridge.ai.chat_context import ChatContext
+from wxbridge.ai.chat_payload import CHAT_DATA_RULES
 from wxbridge.ai.prompt_parts import PromptComposer
 from wxbridge.ai.prompts import system_prompt
 
@@ -35,109 +34,27 @@ def address_names(cfg):
 
 def build_prompt(cfg, rows, title, memory=None, *, source_ids, account='', profile=None):
     sources = _source_ids(source_ids)
-    required = set(sources)
-    labels = member_labels(rows, [], account, initial=(memory or {}).get('labels'))
-    aliases = profile.get('members', {}) if profile is not None else None
-    members = deepcopy(aliases) if aliases is not None else {}
-    if not cfg['memory']['enabled']:
-        for member in members.values():
-            member.pop('memory', None)
-
-    def remember(uid, alias):
-        if uid:
-            member = members.setdefault(uid, dict(alias=alias))
-            if uid not in (aliases or {}) and not member['alias']:
-                member['alias'] = alias
-
-    def compact_reference(value):
-        uid, alias = value.pop('member'), value.pop('alias')
-        value.pop('is_bot')
-        value['sender'] = uid
-        remember(uid, alias)
-        if isinstance(value.get('reference'), dict):
-            value['reference'] = compact_reference(value['reference'])
-        return value
-
-    messages = {}
+    originals = {}
     for row in rows:
         identifier = row.get('local_id')
-        if type(identifier) is not int or identifier < 1:
-            continue
-        sender, sent = row.get('sender'), message_time(row)
-        pat = is_pat(row)
-        supported = pat or (row.get('type') == 1 and isinstance(row.get('text'), str)
-                            and bool(row['text'].strip()))
-        if not supported or not isinstance(sender, str) or not sender or sent is None:
-            if identifier in required:
+        if identifier in sources:
+            if identifier in originals and originals[identifier] != row:
                 raise ParticipationError('participation_invalid_reply_target')
-            continue
-        if identifier in required and (sender == account or (pat and row['pat']['target'] != account)):
-            raise ParticipationError('participation_invalid_reply_target')
-        remember(sender, member_alias(row, aliases))
-        item = dict(id=identifier, sender=sender, time=sent)
-        if pat:
-            item.update(kind='pat', target=row['pat']['target'])
-            remember(item['target'], member_alias(dict(sender=item['target'],
-                     sender_name=row.get('pat_target_name', '')), aliases))
-        else:
-            item['text'] = row['text']
-        mentioned = list(dict.fromkeys(uid for uid in row.get('mentioned_users') or []
-                                      if isinstance(uid, str) and uid))
-        if mentioned:
-            item['mentions'] = mentioned
-            for uid in mentioned:
-                members.setdefault(uid, dict(alias=''))
-        if isinstance(row.get('reference'), dict):
-            item['reference'] = compact_reference(reference_data(row['reference'], labels, account, aliases=aliases))
-        if identifier in messages and messages[identifier] != item:
-            raise ParticipationError('participation_invalid_reply_target')
-        messages[identifier] = item
-    if required - messages.keys():
+            originals[identifier] = row
+    if set(sources) != originals.keys():
         raise ParticipationError('participation_invalid_reply_target')
-    ordered = sorted(messages.values(), key=lambda item: (item['time'], item['id']))
-    summary = profile.get('summary', '') if profile is not None else ''
-
-    def payload():
-        referenced = {account} if account else set()
-        def collect(item):
-            referenced.add(item.get('sender', ''))
-            referenced.add(item.get('target', ''))
-            referenced.update(item.get('mentions', []))
-            if isinstance(item.get('reference'), dict):
-                collect(item['reference'])
-        for item in ordered:
-            collect(item)
-        referenced.update(uid for uid in members if uid in summary)
-        value = dict(chat=title, bot=account,
-                     members={uid: deepcopy(item) for uid, item in members.items() if uid in referenced},
-                     messages=ordered, source_ids=sources)
-        if profile is not None:
-            value['summary'] = summary
-        return json.dumps(value, ensure_ascii=False)
-
-    budget = cfg['target']['context_max_chars']
-    user = payload()
-    while budget > 0 and len(user) > budget:
-        oldest = next((index for index, item in enumerate(ordered) if item['id'] not in required), None)
-        if oldest is None:
-            raise ContextError('participation_context_too_large')
-        ordered.pop(oldest)
-        user = payload()
-    intro = '\n人物记忆（弱背景数据；当前聊天和明确引用优先）：\n'
-    kept = []
-    memory_text = (memory or {}).get('text', '') if cfg['memory']['enabled'] else ''
-    for line in memory_text.splitlines():
-        candidate = user+intro+'\n'.join([*kept, line])
-        if budget <= 0 or len(candidate) <= budget:
-            kept.append(line)
-    if kept:
-        user += intro+'\n'.join(kept)
+    triggers = [originals[i] for i in sources]
+    try:
+        chat = ChatContext.build(cfg, rows, triggers, title,
+                                 account=account, profile=profile, memory=memory)
+    except ContextError:
+        raise ParticipationError('participation_invalid_reply_target') from None
+    chat = chat.fit(cfg)
+    user = chat.text
 
     private = cfg['target']['chat'].startswith('wxid_')
-    rules = ('\n\nbot是机器人微信ID；messages按发生顺序排列，sender表示发言者微信ID，也适用于reference。'
-             'members中的alias仅供称呼，不作为身份依据；历史消息和summary用于理解上下文，历史可能因预算省略。'
-             'kind=pat表示拍一拍事件，target是被拍者，不是用户说出的文字。'
-             '机器人的有效称呼是'+json.dumps(address_names(cfg), ensure_ascii=False)+'。')
+    rules = ('\n\n'+CHAT_DATA_RULES
+             +'机器人的有效称呼是'+json.dumps(address_names(cfg), ensure_ascii=False)+'。')
     if private:
         rules += ('对方的新消息默认是向机器人说的，不需要@或叫出名字；'
                   '结合上下文判断是否需要回应，无需回应时可以保持沉默。')
@@ -157,7 +74,9 @@ def build_prompt(cfg, rows, title, memory=None, *, source_ids, account='', profi
         dict(role='system', content='你负责判断微信机器人是否应该回应当前微信'
              + ('私聊' if private else '群聊') + '中的候选新消息，不生成回复正文。'),
         dict(role='user', content=user)], 'participation_preferences', '\n\n【机器人设定】\n'+system_prompt(cfg))
-    return PromptComposer.instructions(prompt, 'participation_judgment', rules)
+    prompt = PromptComposer.instructions(prompt, 'participation_judgment', rules)
+    prompt.context_stats = chat.stats
+    return prompt
 
 
 def parse_decision(content, source_ids):

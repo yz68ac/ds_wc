@@ -8,14 +8,14 @@ from wechat_linux import ImageDownloadError
 from wechat_linux.errors import MediaError
 from wechat_linux.models import Image
 from wechat_linux.native.image_download import NativeImageDownloader
-import test_context_pipeline as pipeline
-import test_media as media
-import test_native_images as native
+import tests.support.pipeline as pipeline
+import tests.support.media as media
+import tests.support.native_images as native
 
 
 class NativeImageBotTests(unittest.TestCase):
     def setUp(self):
-        self.case = media.LocalImageTests('runTest')
+        self.case = media.LocalImageFixture('runTest')
         self.case.setUp()
         self.addCleanup(self.case.doCleanups)
         self.case.cfg['vision'].update(download_enabled=True, download_backend='native')
@@ -102,10 +102,10 @@ class NativeImageBotTests(unittest.TestCase):
 
 
 class NativeImagePipelineTests(unittest.TestCase):
-    setUp = pipeline.PipelineTests.setUp
-    make_bot = pipeline.PipelineTests.make_bot
-    add = pipeline.PipelineTests.add
-    restart = pipeline.PipelineTests.restart
+    setUp = pipeline.PipelineFixture.setUp
+    make_bot = pipeline.PipelineFixture.make_bot
+    add = pipeline.PipelineFixture.add
+    restart = pipeline.PipelineFixture.restart
 
     def test_intent_precedes_worker_and_restart_keeps_same_id_and_reader_owner(self):
         self.cfg['queue']['debounce_seconds'] = 0

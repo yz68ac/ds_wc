@@ -3,10 +3,10 @@ from __future__ import annotations
 
 from functools import lru_cache
 import json
-from pathlib import Path
 import re
+from wxbridge.paths import resource_path
 
-DATA_FILE = Path(__file__).resolve().parents[2]/'prompts/wechat_emoticons.json'
+DATA_FILE = resource_path('prompts/wechat_emoticons.json')
 
 
 @lru_cache(maxsize=1)

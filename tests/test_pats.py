@@ -1,6 +1,5 @@
 """appmsg/62 合成拍一拍，覆盖实际身份、队列、上下文及记忆来源隔离。"""
-from model_support import default_config
-from contextlib import nullcontext
+from tests.support.model_support import default_config
 from contextlib import nullcontext
 import copy
 import html
@@ -10,16 +9,16 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from wxbridge.wechat.pats import parse_pat, is_pat
+from wechat_linux.messages.pats import parse_pat, is_pat
 from wxbridge.wechat.store import WeChatStore
 from wxbridge.wechat.messages import display_message
 from wxbridge.ai.memory import snapshot, extract
 from wxbridge.ai.prompts import build_prompt
 from wxbridge.config import DEFAULTS, _deep_merge, load_config, resolve_config
 from wxbridge.storage.person_memory import MemoryStore
-from test_context_pipeline import PipelineTests
-from test_memory import suggestion
-from synthetic import NOW, msg
+from tests.support.pipeline import PipelineFixture
+from tests.support.memory import suggestion
+from tests.support.synthetic import NOW, msg
 
 CHAT = "synthetic@chatroom"
 PACKED = (62 << 32) | 49
@@ -78,11 +77,13 @@ class PatTests(unittest.TestCase):
 
     def test_context_and_current_pat_are_actions_not_fabricated_speech(self):
         current = parsed(5)
-        context = [msg(1, NOW-301, "OLD_SECRET"), msg(2, NOW-300, "讨论养花"), parsed(3, target="wxid_other", sent=NOW-1)]
+        context = [msg(1, NOW-1801, "OLD_SECRET"), msg(2, NOW-1800, "讨论养花"), parsed(3, target="wxid_other", sent=NOW-1)]
         prompt = build_prompt(self.cfg, context, current, "合成群")[1]["content"]
         self.assertIn("讨论养花", prompt)
-        self.assertIn("[系统互动记录]", prompt)
-        self.assertIn("没有发送文字问题", prompt)
+        data = json.loads(prompt)
+        self.assertEqual([m['kind'] for m in data['messages'] if 'kind' in m], ['pat','pat'])
+        self.assertEqual(data['messages'][-1]['target'], current['pat']['target'])
+        self.assertNotIn('text', data['messages'][-1])
         self.assertNotIn("OLD_SECRET", prompt)
         self.assertNotIn("TEMPLATE_SECRET", prompt)
         self.assertNotIn("]: [拍一拍]", prompt)
@@ -119,20 +120,20 @@ class PatTests(unittest.TestCase):
 
     def test_config_window_and_pat_flag_validated(self):
         path = Path(self.temp.name)/"config.json"
-        for change in [dict(target=dict(context_window_seconds=600)),
-                       dict(target=dict(context_window_seconds=300), participation=dict(pat_enabled=False))]:
+        for change in [dict(target=dict(context_max_age_seconds=600)),
+                       dict(target=dict(context_max_age_seconds=300), participation=dict(pat_enabled=False))]:
             path.write_text(json.dumps(change))
             with nullcontext():
                 cfg = resolve_config(_deep_merge(default_config(),change),path,environment=False)
-            self.assertEqual(cfg["target"]["context_window_seconds"], change['target']['context_window_seconds'])
-        for change in [dict(target=dict(context_window_seconds=True)), dict(target=dict(context_window_seconds=0)),
-                       dict(target=dict(context_window_seconds="300")), dict(participation=dict(pat_enabled="true"))]:
+            self.assertEqual(cfg["target"]["context_max_age_seconds"], change['target']['context_max_age_seconds'])
+        for change in [dict(target=dict(context_max_age_seconds=True)), dict(target=dict(context_max_age_seconds=0)),
+                       dict(target=dict(context_max_age_seconds="300")), dict(participation=dict(pat_enabled="true"))]:
             path.write_text(json.dumps(change))
             with nullcontext(), self.assertRaises(ValueError):
                 resolve_config(_deep_merge(default_config(),change),path,environment=False)
 
 
-class PatPipelineTests(PipelineTests):
+class PatPipelineTests(PipelineFixture):
     def test_only_other_member_patting_bot_is_accepted_and_can_be_disabled(self):
         for item in [parsed(1, target="wxid_other"), parsed(2, actor="wxid_self"), parsed(3, sent=NOW-91)]:
             self.rows.append(item)
@@ -154,7 +155,7 @@ class PatPipelineTests(PipelineTests):
         self.bot.tick()
         self.assertEqual(len(self.bot.journal.tasks()), 2)
         self.assertEqual([t["trigger_kind"] for t in self.bot.journal.tasks()], ["participation", "participation"])
-        self.store.messages_in_window.assert_called_with(CHAT, NOW-300, NOW)
+        self.store.messages_before.assert_called_with(CHAT,before=(NOW,2),since=NOW-1800,max_local_id=2,limit=200)
         self.generated("怎么，想姐了？")
         self.assertEqual(len(self.sends()), 1)
         self.add(3, sender="wxid_self", text="怎么，想姐了？", mention=False)
@@ -187,15 +188,15 @@ class PatPipelineTests(PipelineTests):
         self.generated()
         self.add(2, sender="wxid_self", text="合成回复", mention=False)
         self.bot.tick()
-        record, value, job = self.bot.memory_job
+        record, value, job = self.bot.memory.job
         self.assertEqual(value["messages"], [])
         self.assertEqual(list(value["members"]), ["wxid_friend"])
         self.restart()
         self.bot.tick()
-        self.assertIsNotNone(self.bot.memory_job)
-        self.bot.memory_job[2].result = dict(ok=True, proposal=dict(updates=[]))
+        self.assertIsNotNone(self.bot.memory.job)
+        self.bot.memory.job[2].result = dict(ok=True, proposal=dict(updates=[]))
         self.bot.tick()
-        self.assertEqual(self.bot.memory.data["members"]["wxid_friend"]["affinity"], 50)
+        self.assertEqual(self.bot.memory.store.data["members"]["wxid_friend"]["affinity"], 50)
         self.assertEqual(self.bot.journal.memory_jobs(), [])
 
 

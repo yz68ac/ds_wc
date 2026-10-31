@@ -16,6 +16,8 @@ def reply_rules(cfg=None):
 
 def response_prompt(messages, cfg=None):
     """不修改原提示词、图片或工具调用链；即使搜索关闭也应用输出偏好。"""
+    if getattr(messages,'context_rules',''):
+        messages = PromptComposer.instructions(messages,'chat_context','\n\n【聊天记录协议】'+messages.context_rules)
     return PromptComposer.instructions(messages, 'output', reply_rules(cfg))
 
 

@@ -1,5 +1,5 @@
 """Readiness, bounded context and release planning without service mutations."""
-from model_support import default_config
+from tests.support.model_support import default_config
 from contextlib import nullcontext
 import copy
 import importlib.util
@@ -13,9 +13,9 @@ from wxbridge.config import DEFAULTS
 from wxbridge.ai.context import ContextError
 from wxbridge.ai.prompts import build_prompt
 from wxbridge.storage.memory_selection import MemoryTopic
-from wxbridge.native import helper
-import test_boot_recovery as recovery_tests
-from synthetic import NOW, msg
+from wechat_linux.native import helper
+import tests.support.boot as recovery_tests
+from tests.support.synthetic import NOW, msg
 
 spec=importlib.util.spec_from_file_location('deploy_release',Path(__file__).parent.parent/'scripts/deploy-release.py')
 deployment=importlib.util.module_from_spec(spec);spec.loader.exec_module(deployment)
@@ -47,13 +47,13 @@ class ReviewOperationTests(unittest.TestCase):
 
     def test_optional_context_degradation_preserves_full_question_and_reports_omissions(self):
         cfg=default_config();cfg['models']['reply']['options'].update(system_prompt_file='',system_prompt='synthetic')
-        cfg['target']['context_max_chars']=1200
+        cfg['target'].update(context_max_chars=1200,context_budget_strategy='strict')
         rows=[msg(i,NOW-20+i,'OLD_'+str(i)+'x'*150) for i in range(1,11)]
         trigger=msg(20,NOW,'CURRENT_QUESTION_UNCHANGED')
         with self.assertRaises(ContextError):build_prompt(cfg,rows,trigger,'synthetic')
         cfg['target']['context_budget_strategy']='recent'
         content=build_prompt(cfg,rows,trigger,'synthetic')[1]['content']
-        self.assertIn(trigger['text'],content);self.assertIn('因预算未附送',content)
+        self.assertIn(trigger['text'],content);self.assertGreater(json.loads(content)['history_omitted'],0)
         self.assertLessEqual(len(content),1200);self.assertNotIn('OLD_1x',content)
         self.assertIn('OLD_10x',content)
 

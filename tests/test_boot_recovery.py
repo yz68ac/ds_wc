@@ -8,9 +8,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-spec = importlib.util.spec_from_file_location('boot_recovery',Path(__file__).resolve().parents[1]/'scripts/boot-recovery.py')
-boot = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(boot)
+from tests.support.boot import boot
 
 
 class BootRecoveryTests(unittest.TestCase):

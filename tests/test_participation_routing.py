@@ -2,16 +2,16 @@
 import json
 import unittest
 
-import test_conversation as conversation
+import tests.support.conversation as conversation
 
 
 class ParticipationRoutingTests(unittest.TestCase):
-    setUp = conversation.ConversationTests.setUp
-    make_bot = conversation.ConversationTests.make_bot
-    add = conversation.ConversationTests.add
-    sends = conversation.ConversationTests.sends
-    restart = conversation.ConversationTests.restart
-    ordinary = conversation.ConversationTests.ordinary
+    setUp = conversation.ConversationFixture.setUp
+    make_bot = conversation.ConversationFixture.make_bot
+    add = conversation.ConversationFixture.add
+    sends = conversation.ConversationFixture.sends
+    restart = conversation.ConversationFixture.restart
+    ordinary = conversation.ConversationFixture.ordinary
 
     def approve(self, row):
         self.bot.participation.job.result = dict(ok=True, decision=dict(reply_to=[row['local_id']]))

@@ -1,6 +1,6 @@
 """回复分片和提示词顺序的离线测试。"""
 from __future__ import annotations
-from model_support import default_config
+from tests.support.model_support import default_config
 from contextlib import nullcontext
 
 import os
@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from wxbridge.wechat.messages import chunk_text
 from wxbridge.config import DEFAULTS, _deep_merge
 from wxbridge.ai.prompts import build_prompt
-from synthetic import msg
+from tests.support.synthetic import msg
 
 
 def test_chunk() -> None:

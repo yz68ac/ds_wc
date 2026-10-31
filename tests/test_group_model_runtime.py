@@ -6,7 +6,7 @@ from unittest import TestCase
 from unittest.mock import Mock, patch
 
 from provider import ImageRequest, ModelResult
-from model_support import default_config
+from tests.support.model_support import default_config
 from wxbridge.app.model_runtime import GroupModels, ModelLane
 
 

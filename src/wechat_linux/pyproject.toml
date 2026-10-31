@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wechat-linux-adapter"
+version = "0.2.0"
+description = "Local Linux WeChat message, media and native submission adapter"
+readme = "README.md"
+requires-python = ">=3.11"
+classifiers = ["Operating System :: POSIX :: Linux", "Programming Language :: Python :: 3"]
+dependencies = []
+
+[project.optional-dependencies]
+database = ["pycryptodome>=3.20", "zstandard>=0.22"]
+analysis = ["capstone>=5,<6"]
+login = ["zxing-cpp>=3,<4", "qrcode>=8,<9"]
+
+[tool.setuptools]
+packages = ["wechat_linux", "wechat_linux.analysis", "wechat_linux.desktop", "wechat_linux.media",
+            "wechat_linux.messages", "wechat_linux.native", "wechat_linux.runtime", "wechat_linux.storage"]
+package-dir = { "wechat_linux" = "." }
+include-package-data = false
+
+[tool.setuptools.package-data]
+"wechat_linux.native" = ["agent.js", "profile.json", "image_agent.js", "image_adapter.c", "image_profile.json"]

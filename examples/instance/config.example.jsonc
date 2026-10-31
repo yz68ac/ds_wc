@@ -21,8 +21,15 @@
   "system_prompt_file": "system.md",
 
   "target": {
-    // 参与判断和完整回复共同参考的历史窗口，单位秒；不改变消息中的真实 time。
-    "context_window_seconds": 300,
+    // 两类请求共用：最近30条有效历史，最长回看30分钟；time仍为实际发送时间。
+    "context_recent_messages": 30,
+    "context_max_age_seconds": 1800,
+    // 补充最近3条机器人文本及每条前后各2条有效消息；填0关闭补充。
+    "context_bot_messages": 3,
+    // 聊天JSON的字符预算，包含字段、成员表和引用，不是token或整个API请求上限。
+    "context_max_chars": 15000,
+    // recent：按组/整条裁剪旧历史；strict：历史超限即停止。当前消息和明确引用不截断。
+    "context_budget_strategy": "recent",
 
     // 候选消息按原始发送时间计算有效期；队列等待和重试不会重新计时。
     "max_message_age_seconds": 90
@@ -126,6 +133,8 @@
   "image_generation": {"enabled": false},
 
   "memory": {
+    // 记忆整理仍参考5分钟，不随聊天回看范围扩大；被动学习另有自己的窗口。
+    "context_window_seconds": 300,
     // 个人记忆及相关学习的总开关。关闭后不向请求附加个人记忆，已有数据不会自动删除。
     "enabled": false,
     "avatar": {

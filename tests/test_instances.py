@@ -1,6 +1,5 @@
 """Synthetic multi-group isolation and account scheduling; no live credentials."""
-from model_support import default_config
-from contextlib import nullcontext
+from tests.support.model_support import default_config
 from contextlib import nullcontext
 from copy import deepcopy
 import io
@@ -11,54 +10,15 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from synthetic import NOW, msg
-from test_context_pipeline import FakeJob
+from tests.support.synthetic import NOW, msg
+from tests.support.pipeline import FakeJob
 from wxbridge.ai.roles import model_settings
 from wxbridge.app.coordinator import Coordinator
 from wxbridge.app.native_gateway import AccountNativeService
 from wxbridge.config import load_config
 from wxbridge.instances import enabled_instances, runtime_locks
 from wechat_linux.errors import NativeError
-
-CHATS = ('10001@chatroom', '10002@chatroom')
-
-
-class InstanceFixture(unittest.TestCase):
-    def setUp(self):
-        parent = Path(__file__).resolve().parents[1]/'.test-tmp'
-        parent.mkdir(exist_ok=True)
-        temp = tempfile.TemporaryDirectory(dir=parent)
-        self.addCleanup(temp.cleanup)
-        self.root = Path(temp.name)
-        self.path = self.root/'config.json'
-        self.data = dict(queue=dict(file=str(self.root/'queue.sqlite3')),
-                         state_file=str(self.root/'state.json'), memory=dict(directory=str(self.root/'memory')),
-                         provider_env=str(self.root/'provider.env'))
-        models = default_config()['models']
-        self.instance_data = [dict(id=name, chat=chat, enabled=True,
-            system_prompt_file='system.md', models=deepcopy(models),
-            target=dict(bot_name=name), search=dict(enabled=False),
-            memory=dict(enabled=False, avatar=dict(enabled=False)))
-            for name,chat in zip(('alpha','beta'),CHATS)]
-        p = patch.dict(os.environ, {}, clear=True); p.start(); self.addCleanup(p.stop)
-
-    def load(self, data=None):
-        from wxbridge.instances import GROUP_FIELDS
-        from wxbridge.config_merge import deep_merge
-        root = deepcopy(self.data if data is None else data)
-        common = {key:root.pop(key) for key in list(root) if key in GROUP_FIELDS and key not in ('queue','memory')}
-        for section,key in (('queue','file'),('memory','directory')):
-            value=root.get(section,{})
-            common[section]={k:v for k,v in value.items() if k!=key}
-            root[section]={key:value[key]} if key in value else {}
-        self.path.write_text(json.dumps(root),encoding='utf-8')
-        for entry in self.instance_data:
-            directory=self.root/'instance'/entry['id']
-            directory.mkdir(parents=True,exist_ok=True)
-            body=deep_merge(common,{k:v for k,v in entry.items() if k!='id'})
-            (directory/'config.json').write_text(json.dumps(body),encoding='utf-8')
-            (directory/'system.md').write_text(entry['id']+' instructions',encoding='utf-8')
-        return load_config(self.path)
+from tests.support.instances import CHATS, InstanceFixture, MultiGroupFixture
 
 
 class InstanceConfigTests(InstanceFixture):
@@ -97,67 +57,8 @@ class InstanceConfigTests(InstanceFixture):
         with self.assertRaisesRegex(ValueError,'missing_model'): self.load()
 
 
-class MultiGroupTests(InstanceFixture):
-    def setUp(self):
-        super().setUp()
-        self.data.update(memory=dict(enabled=False, directory=str(self.root/'memory')),
-                         native_api=dict(enabled=True, allowed_chat_ids=list(CHATS)), ui=dict(backend='native_service', dry_run=False),
-                         participation=dict(enabled=True, debounce_seconds=0), target=dict(cooldown_seconds=0),
-                         queue=dict(file=str(self.root/'queue.sqlite3')),
-                         account=dict(send_interval_seconds=0))
-        self.cfg = self.load()
-        self.cfg['poll_interval_seconds'] = 0
-        for e in self.cfg['instances']:
-            e['config']['poll_interval_seconds'] = 0
-            Path(e['config']['queue']['file']).parent.mkdir(parents=True, mode=0o700)
-        self.rows, self.now, self.jobs, self.decision_jobs = {chat: [] for chat in CHATS}, float(NOW), [], []
-        self.store = Mock()
-        self.store.self_wxid = 'wxid_bot'
-        self.store.resolve_chat.side_effect = lambda chat: (CHATS[0] if chat == '旧群' else chat, '合成群')
-        self.store.last_local_id.side_effect = lambda chat: max([m['local_id'] for m in self.rows[chat]], default=0)
-        self.store.messages_after.side_effect = lambda chat, cursor, limit: [m for m in self.rows[chat] if m['local_id'] > cursor][:limit]
-        self.store.messages_in_window.side_effect = lambda chat, start, end: [m for m in self.rows[chat] if start <= m['time'] <= end]
-        for target, opts in [('wxbridge.storage.journal.checked_path', dict(side_effect=lambda v, **kw: Path(v))),
-                             ('wxbridge.app.bot.time.time', dict(side_effect=lambda: self.now)),
-                             ('wxbridge.native.server.NativeServer', {})]:
-            p = patch(target, **opts); p.start(); self.addCleanup(p.stop)
-        self.coordinator = self.make()
-        self.addCleanup(lambda: self.coordinator.close())
+class MultiGroupTests(MultiGroupFixture):
 
-    def make(self):
-        coordinator = Coordinator(self.cfg, store=self.store)
-        for session in coordinator.sessions:
-            def factory(kind, payload, _id=session.instance_id, _chat=session.chat_id, **kwargs):
-                job = FakeJob(kind, payload, **kwargs)
-                job.owner = _id
-                if kind == 'participation':
-                    source_ids = payload[2]['source_ids']
-                    rows = {m['local_id']: m for m in self.rows[_chat]}
-                    selected = [identifier for identifier in source_ids if
-                        self.store.self_wxid in (rows[identifier].get('mentioned_users') or [])
-                        or (rows[identifier].get('pat') or {}).get('target') == self.store.self_wxid]
-                    job.result = dict(ok=True, decision=dict(reply_to=selected))
-                    self.decision_jobs.append(job)
-                else:
-                    self.jobs.append(job)
-                return job
-            session.job_factory = factory
-        return coordinator
-
-    def add(self, index, identifier, text='合成提问', sender='wxid_friend', mention=True):
-        row = msg(identifier, int(self.now), text, sender)
-        row['mentioned_users'] = ['wxid_bot'] if mention else []
-        self.rows[CHATS[index]].append(row)
-        return row
-
-    def tick(self): self.coordinator.tick()
-
-    def active(self, kind): return [j for j in self.jobs if j.kind == kind and not j.closed]
-
-    def finish(self, owner, reply='合成回复'):
-        for job in self.active('generate'):
-            if job.owner == owner: job.result = dict(ok=True, reply=reply)
-        self.tick()
 
     def test_one_reader_two_independent_cursors_contexts_and_model_slots(self):
         self.add(0, 1, 'ONLY_ALPHA'); self.add(0, 2, 'ALPHA_SECOND'); self.add(1, 1, 'ONLY_BETA')
@@ -237,11 +138,11 @@ class MultiGroupTests(InstanceFixture):
         worker = FakeJob('memory', ())
         record = dict(id=1, state='running', triggers=[dict(local_id=1, time=NOW)], attempts=0, retry_at=0)
         with a.journal.db: a.journal.put_memory(record)
-        a.memory_job = (record, {}, worker)
+        a.memory.job = (record, {}, worker)
         self.add(1, 1); b._poll_messages()
         b.participate()
         self.assertFalse(worker.closed)
-        self.assertIsNotNone(a.memory_job)
+        self.assertIsNotNone(a.memory.job)
         self.assertEqual(a.journal.memory_jobs()[0]['state'], 'running')
         self.assertEqual(self.active('generate')[0].owner, 'beta')
 
@@ -287,11 +188,11 @@ class MultiGroupTests(InstanceFixture):
 
 
     def test_cli_selection_and_multi_run_share_one_owner(self):
-        from wxbridge.cli import main
+        from wxbridge.debug_cli import main
         from wxbridge.app.runtime import run_bot
         from contextlib import nullcontext
         cfg = deepcopy(self.cfg)
-        with patch('wxbridge.cli.load_config', return_value=cfg), patch('wxbridge.cli.memory_command', return_value=0) as memory:
+        with patch('wxbridge.config.load_config', return_value=cfg), patch('wxbridge.debug_cli.memory_command', return_value=0) as memory:
             self.assertEqual(main(['--instance', 'beta', 'memory', 'status']), 0)
         self.assertEqual(memory.call_args.args[0]['target']['chat'], CHATS[1])
         with patch('wxbridge.app.runtime.instance_lock', side_effect=lambda v:nullcontext()) as locking, \
@@ -323,7 +224,7 @@ class MultiGroupTests(InstanceFixture):
         self.add(0, 1)
         self.tick()
         self.active('generate')[0].result = dict(ok=True, reply='合成接话')
-        a._poll_generation_results()
+        a.replies.collect()
         # The other group's message arrives after polling but before submission.
         self.add(1, 1)
         a._send_step()
@@ -331,7 +232,6 @@ class MultiGroupTests(InstanceFixture):
         self.assertEqual(len(self.active('native_send')), 1)
         self.assertEqual(self.active('native_send')[0].owner, 'alpha')
         self.assertFalse(b.journal.tasks())
-
 
 
 if __name__ == '__main__':

@@ -5,7 +5,7 @@ import unittest
 import sqlite3
 from unittest.mock import Mock
 from wxbridge.wechat.store import WeChatStore, parse_mentioned_users
-from synthetic import NOW
+from tests.support.synthetic import NOW
 
 
 class QueryTests(unittest.TestCase):

@@ -1,6 +1,3 @@
-"""微信 Linux 客户端 + DeepSeek 群聊桥接。
-
-仅用于操作自己的微信账号、自己的设备。使用前请阅读 README 的风险说明。
-"""
+"""WeChat bot application, instance coordination and local administration."""
 
 __version__ = "0.1.0"

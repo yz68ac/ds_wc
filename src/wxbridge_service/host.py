@@ -56,7 +56,7 @@ def atomic_json(path, value, **kwargs):
 
 def user_environment(paths, account):
     return dict(PATH='/usr/local/bin:/usr/bin:/bin', HOME=account.pw_dir, LANG='C.UTF-8',
-                PYTHONPATH=str(paths.app/'src'), WX_RUNTIME_DIR=str(paths.runtime))
+                WX_RUNTIME_DIR=str(paths.runtime))
 
 
 def as_user(paths, args, *, capture=False, timeout=None):

@@ -160,8 +160,8 @@ class NonblockingLaneStopTests(unittest.TestCase):
 
 class RealJournalTransitionTests(unittest.TestCase):
     def test_stop_start_keeps_cursor_queue_and_other_group_instance(self):
-        import test_instances as fixtures
-        fixture=fixtures.MultiGroupTests('test_one_reader_two_independent_cursors_contexts_and_model_slots')
+        import tests.support.instances as fixtures
+        fixture=fixtures.MultiGroupFixture('runTest')
         self.addCleanup(fixture.doCleanups)
         fixture.setUp()
         fixture.add(0,1,'synthetic queued message')

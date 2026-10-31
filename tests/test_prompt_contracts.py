@@ -5,8 +5,8 @@ import pickle
 import unittest
 from unittest.mock import patch
 
-import test_media as media_tests
-from synthetic import NOW, msg
+import tests.support.media as media_tests
+from tests.support.synthetic import NOW, msg
 from wxbridge.ai.context import ContextError
 from wxbridge.ai.images import prepare_multimodal
 from wxbridge.ai.output import response_prompt
@@ -16,8 +16,8 @@ from wxbridge.ai.search import search_prompt
 
 
 class PromptContractTests(unittest.TestCase):
-    setUp = media_tests.LocalImageTests.setUp
-    generation = media_tests.LocalImageTests.generation
+    setUp = media_tests.LocalImageFixture.setUp
+    generation = media_tests.LocalImageFixture.generation
 
     def base(self, generation):
         return build_prompt(self.cfg, generation['context'], generation['triggers'][-1], generation['chat_title'],
@@ -57,7 +57,7 @@ class PromptContractTests(unittest.TestCase):
         self.assertTrue(text.startswith('请求级前言\n'))
         self.assertTrue(text.endswith('\n本轮额外要求'))
         self.assertIn('普通历史', text)
-        self.assertIn('"available": true', text)
+        self.assertIn('"available":true', text)
         self.assertEqual(info['images'], 1)
         self.assertFalse(generation['triggers'][0]['reference']['available'])
 
@@ -96,9 +96,9 @@ class PromptContractTests(unittest.TestCase):
         text = prompt[1]['content'][0]['text']
         self.assertLessEqual(len(text), self.cfg['target']['context_max_chars'])
         self.assertIn('普通历史', text)
-        self.assertIn('本次新写的提问', text)
+        self.assertEqual(json.loads(text)['source_ids'], [generation['triggers'][0]['local_id']])
         self.assertNotIn('第二条弱背景', text)
-        self.assertNotIn('因预算未附送', text)
+        self.assertNotIn('history_omitted', json.loads(text))
 
     def test_recent_media_budget_reduces_only_complete_old_history(self):
         self.path.write_bytes(media_tests.png())
@@ -113,7 +113,7 @@ class PromptContractTests(unittest.TestCase):
         self.assertLessEqual(len(text), self.cfg['target']['context_max_chars'])
         self.assertNotIn('很早的历史', text)
         self.assertIn('较近的历史', text)
-        self.assertIn('因预算未附送', text)
+        self.assertEqual(json.loads(text)['history_omitted'], 1)
         self.assertIn('@ds 这怎么看', text)
 
     def test_plain_list_input_keeps_legacy_compatibility(self):

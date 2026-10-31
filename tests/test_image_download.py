@@ -1,5 +1,5 @@
 """Synthetic match ambiguity, source binding, cache confirmation and queue-worker boundaries."""
-from model_support import default_config
+from tests.support.model_support import default_config
 from contextlib import nullcontext
 from contextlib import contextmanager
 import copy
@@ -9,8 +9,8 @@ import unittest
 from unittest.mock import Mock,patch
 
 from wxbridge.config import DEFAULTS
-from wxbridge.wechat.image_download import DesktopImages,DownloadError,improve_image,similarity,unique_match
-import test_media as media
+from wechat_linux.desktop.image_download import DesktopImages,DownloadError,improve_image,similarity,unique_match
+import tests.support.media as media
 
 
 def candidate(a,b):
@@ -40,7 +40,7 @@ class ImageDownloadTests(unittest.TestCase):
     def test_click_refuses_wrong_active_window_before_mouse_operation(self):
         desktop=object.__new__(DesktopImages);desktop.deadline=time.monotonic()+2;desktop.x=Mock();desktop.window=Mock(return_value='123')
         desktop.x._xdotool.return_value.stdout=b'999'
-        with patch('wxbridge.wechat.image_download.time.sleep'):
+        with patch('wechat_linux.desktop.image_download.time.sleep'):
             with self.assertRaises(DownloadError):desktop.click(Mock(),dict(x=1,y=1,width=20,height=20))
         desktop.x.move_pointer.assert_not_called()
         self.assertFalse(any(c.args[0]=='click' for c in desktop.x._xdotool.call_args_list))
@@ -62,7 +62,7 @@ class ImageDownloadTests(unittest.TestCase):
         def locked(*args):
             events.append('locked');yield;events.append('unlocked')
         desktop.close.side_effect=lambda:events.append('closed')
-        with patch('wxbridge.wechat.image_download.download_lock',locked),\
+        with patch('wechat_linux.desktop.image_download.download_lock',locked),\
              patch('wechat_linux.media.images.read_local_image',return_value=(b'full',dict(quality='cached',width=600,height=800))) as read:
             data,info=improve_image(binding, cfg['ui'], b'thumb', original, time.monotonic()+2, runtime_dir=str(Path(cfg['queue']['file']).parent), adapter=lambda *args:desktop)
         self.assertEqual(data,b'full');self.assertEqual(info['download']['outcome'],'downloaded')
@@ -75,7 +75,7 @@ class ImageDownloadTests(unittest.TestCase):
         desktop=Mock();desktop.open_matching.side_effect=DownloadError('download_match_ambiguous')
         @contextmanager
         def locked(*args):yield
-        with patch('wxbridge.wechat.image_download.download_lock',locked),patch('wechat_linux.media.images.read_local_image') as read:
+        with patch('wechat_linux.desktop.image_download.download_lock',locked),patch('wechat_linux.media.images.read_local_image') as read:
             data,info=improve_image(binding, cfg['ui'], b'correct-thumb', dict(quality='thumbnail'), time.monotonic()+1, runtime_dir=str(Path(cfg['queue']['file']).parent), adapter=lambda *args:desktop)
         self.assertEqual(data,b'correct-thumb');self.assertEqual(info['download']['outcome'],'download_match_ambiguous')
         desktop.close.assert_called_once();read.assert_not_called()
@@ -88,16 +88,16 @@ class ImageDownloadTests(unittest.TestCase):
         self.assertEqual(data,b'correct-thumb');adapter.assert_not_called()
 
     def test_multimodal_uses_upgraded_image_and_default_off_never_calls_ui(self):
-        case=media.LocalImageTests('runTest');case.setUp();self.addCleanup(case.doCleanups)
+        case=media.LocalImageFixture('runTest');case.setUp();self.addCleanup(case.doCleanups)
         case.path.write_bytes(media.png());generation=case.generation()
-        with patch('wxbridge.wechat.image_download.improve_image') as improve:
+        with patch('wechat_linux.desktop.image_download.improve_image') as improve:
             _,info=case.prepare(generation)
             improve.assert_not_called();self.assertEqual(info['images'],1)
         case.cfg['vision']['download_enabled']=True
         before=dict(mime='image/png',width=10,height=10,bytes=20,quality='thumbnail')
         after=dict(before,width=1000,height=1000,quality='cached')
         with patch('wechat_linux.media.images.read_local_image',return_value=(b'original-thumb',before)),\
-             patch('wxbridge.wechat.image_download.improve_image',return_value=(b'bound-full',after)):
+             patch('wechat_linux.desktop.image_download.improve_image',return_value=(b'bound-full',after)):
             prompt,info=case.prepare(generation)
         self.assertEqual(info['items'][0]['width'],1000)
         self.assertTrue(prompt[1]['content'][-1]['image_url']['url'].endswith('Ym91bmQtZnVsbA=='))

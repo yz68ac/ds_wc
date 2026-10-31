@@ -1,5 +1,5 @@
 """联网工具与反馈：全为合成响应，不调用 API。"""
-from model_support import default_config
+from tests.support.model_support import default_config
 from contextlib import nullcontext
 import copy
 import json
@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import Mock, patch
 import urllib.error
 
-from model_support import ClientFixture, ModelError
+from tests.support.model_support import ClientFixture, ModelError
 from wxbridge.ai.search import SearchClient, SearchError, answer_with_search, is_public_url_candidate
 from wxbridge.config import DEFAULTS, _deep_merge
 
@@ -25,7 +25,7 @@ class SearchTests(unittest.TestCase):
         self.cfg = default_config()
         self.messages = [dict(role="system", content="合成人格"), dict(role="user", content="合成问题")]
         self.client = Mock()
-        from wxbridge.ai.providers import get_protocol_adapter
+        from provider.adapters import get_protocol_adapter
         self.client.assistant_message.side_effect = get_protocol_adapter('deepseek').assistant_message
         self.backend = Mock()
         self.backend.search.return_value = result()
@@ -180,7 +180,7 @@ class SearchTests(unittest.TestCase):
 
     def test_complete_preserves_tool_calls_while_chat_only_returns_content(self):
         client = ClientFixture.__new__(ClientFixture)
-        from wxbridge.ai.providers import get_protocol_adapter
+        from provider.adapters import get_protocol_adapter
         client.adapter = get_protocol_adapter('deepseek')
         from wxbridge.ai.roles import model_settings
         client.cfg = model_settings(self.cfg)
@@ -190,7 +190,7 @@ class SearchTests(unittest.TestCase):
 
     def test_high_effort_is_sent_when_enabled_and_hidden_reasoning_is_not_reply(self):
         client = ClientFixture.__new__(ClientFixture)
-        from wxbridge.ai.providers import get_protocol_adapter
+        from provider.adapters import get_protocol_adapter
         client.adapter = get_protocol_adapter('deepseek')
         from wxbridge.ai.roles import model_settings
         client.cfg = dict(model_settings(self.cfg), thinking='enabled', reasoning_effort='high')

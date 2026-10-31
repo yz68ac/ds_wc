@@ -3,7 +3,7 @@ from copy import deepcopy
 import unittest
 from unittest.mock import patch
 
-from model_support import ClientFixture, default_config
+from tests.support.model_support import ClientFixture, default_config
 from provider import ModelError, ModelRequest
 from provider.adapters import get_protocol_adapter
 from wxbridge.ai.roles import model_settings, validate_models

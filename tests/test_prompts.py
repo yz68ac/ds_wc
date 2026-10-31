@@ -1,6 +1,6 @@
 """独立提示词文件：路径、长文本、字面花括号、编辑生效与旧配置兼容。"""
 from __future__ import annotations
-from model_support import default_config
+from tests.support.model_support import default_config
 from contextlib import nullcontext
 
 import json
@@ -13,7 +13,7 @@ from unittest.mock import patch
 from wxbridge.config import resolve_config, DEFAULTS
 from wxbridge.ai.context import ContextError
 from wxbridge.ai.prompts import build_prompt
-from synthetic import NOW, msg
+from tests.support.synthetic import NOW, msg
 
 
 class PromptFileTests(unittest.TestCase):
@@ -39,7 +39,7 @@ class PromptFileTests(unittest.TestCase):
         return resolve_config(cfg, self.config_file, environment=False)
 
     def render(self, cfg):
-        return build_prompt(cfg, [], {"time": 1700000600, "text": "合成提问"}, "合成群")[0]["content"]
+        return build_prompt(cfg, [], msg(50, NOW, '合成提问'), "合成群")[0]["content"]
 
     def test_relative_path_uses_config_directory_and_accepts_utf8_bom(self):
         self.prompt_file.write_text("你叫 {bot_name}。\n保持自然。", encoding="utf-8-sig")
@@ -89,8 +89,8 @@ class ConversationPromptTests(unittest.TestCase):
         return build_prompt(self.cfg, rows, self.trigger, '合成群', **kwargs)[1]['content']
 
     def history(self, text):
-        return [json.loads(line[line.index('{'):]) for line in text.splitlines()
-                if line.startswith('[距提问')]
+        value = json.loads(text)
+        return [m for m in value['messages'] if m['id'] not in value['source_ids']]
 
     def test_own_messages_bound_to_stable_id_even_with_renames_and_identical_names(self):
         own = {**msg(1, NOW-3, '先检查端口', self.account), 'sender_name': '旧昵称'}
@@ -99,26 +99,28 @@ class ConversationPromptTests(unittest.TestCase):
         text = self.render([own, peer, spoof], account=self.account)
         history = self.history(text)
         self.assertEqual([m['sender'] for m in history], [self.account, 'other', 'third'])
-        self.assertEqual([m['is_bot'] for m in history], [True, False, False])
-        self.assertEqual(history[1]['alias'], '同名')
-        self.assertEqual(history[2]['alias'], 'BOT（你）')
+        data = json.loads(text)
+        self.assertEqual([m['sender']==data['bot'] for m in history], [True, False, False])
+        self.assertEqual(data['members'][history[1]['sender']]['alias'], '同名')
+        self.assertEqual(data['members'][history[2]['sender']]['alias'], 'BOT（你）')
+        self.assertTrue(all(not set(m)&{'is_bot','alias'} for m in data['messages']))
         self.assertEqual(text.count('先检查端口'), 1)
 
     def test_unknown_account_does_not_guess_own_messages_from_nickname(self):
         row = {**msg(1, NOW-1, '普通成员原话', 'other'), 'sender_name': '同名'}
         text = self.render([row])
         self.assertEqual(self.history(text)[0]['sender'], 'other')
-        self.assertFalse(self.history(text)[0]['is_bot'])
+        self.assertEqual(json.loads(text)['bot'], '')
 
     def test_own_messages_keep_window_and_database_timestamp_boundaries(self):
-        rows = [msg(1, NOW-300, 'BOUNDARY_OWN', self.account),
-                msg(2, NOW-301, 'EXPIRED_OWN', self.account),
+        rows = [msg(1, NOW-1800, 'BOUNDARY_OWN', self.account),
+                msg(2, NOW-1801, 'EXPIRED_OWN', self.account),
                 msg(51, NOW, 'AFTER_TRIGGER_OWN', self.account),
                 msg(52, NOW+1, 'FUTURE_OWN', self.account),
                 {**msg(4, NOW-1, 'OBSERVED_ONLY_OWN', self.account), 'time_source': 'observed'}]
         text = self.render(rows, account=self.account)
         self.assertEqual(self.history(text)[0]['text'], 'BOUNDARY_OWN')
-        self.assertTrue(self.history(text)[0]['is_bot'])
+        self.assertEqual(self.history(text)[0]['sender'], json.loads(text)['bot'])
         for value in ('EXPIRED_OWN', 'AFTER_TRIGGER_OWN', 'FUTURE_OWN', 'OBSERVED_ONLY_OWN'):
             self.assertNotIn(value, text)
 
@@ -128,9 +130,10 @@ class ConversationPromptTests(unittest.TestCase):
             sender_name='同名', available=True, text='你之前的结论'))
         saved = copy.deepcopy(self.trigger)
         text = self.render([], account=self.account, memory=dict(labels={'other': 'U2'}, text=''))
-        self.assertIn('"member": "'+self.account+'"', text)
-        self.assertIn('"member": "other"', text)
-        self.assertIn('"is_bot": true', text)
+        quote = json.loads(text)['messages'][-1]['reference']
+        self.assertEqual(quote['sender'], 'other')
+        self.assertEqual(quote['reference']['sender'], self.account)
+        self.assertNotIn('is_bot', quote)
         self.assertNotIn('"sender_name":', text)
         self.assertEqual(self.trigger, saved)
 
@@ -140,12 +143,13 @@ class ConversationPromptTests(unittest.TestCase):
         row = dict(msg(1, NOW-1, '历史', 'other'), sender_name='不可回退的备注')
         self.trigger['reference'] = dict(kind='text', sender='other', sender_name='旧备注', text='原话')
         text = self.render([row], account=self.account, profile=profile)
-        self.assertEqual(self.history(text)[0]['alias'], '')
-        self.assertIn('"alias": "群名片"', text)
+        self.assertEqual(json.loads(text)['members']['other']['alias'], '')
+        self.assertEqual(json.loads(text)['members']['friend']['alias'], '群名片')
         self.assertNotIn('不可回退的备注', text)
         self.assertNotIn('旧备注', text)
 
     def test_identity_legend_counts_toward_budget_without_truncating_history(self):
+        self.cfg['target']['context_budget_strategy'] = 'strict'
         rows = [msg(1, NOW-1, '完整历史', self.account)]
         plain = self.render(rows, account=self.account)
         self.cfg['target']['context_max_chars'] = len(plain)

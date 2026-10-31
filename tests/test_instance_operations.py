@@ -6,10 +6,10 @@ import sqlite3
 import unittest
 from unittest.mock import Mock, patch
 
-from test_instances import InstanceFixture, CHATS
+from tests.support.instances import InstanceFixture, CHATS
 from wxbridge.app.operations import configured_groups, live_status_path
 from wxbridge.storage.journal import Journal
-import test_boot_recovery
+import tests.support.boot as test_boot_recovery
 
 spec = importlib.util.spec_from_file_location('group_deployment', Path(__file__).resolve().parents[1]/'scripts/deploy-release.py')
 deploy = importlib.util.module_from_spec(spec)

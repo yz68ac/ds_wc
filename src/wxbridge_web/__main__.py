@@ -22,12 +22,12 @@ def bind_host(value):
     return str(address)
 
 
-def main():
+def main(argv=None):
     for stream in (sys.stdout,sys.stderr):
         if hasattr(stream,'reconfigure'):
             stream.reconfigure(encoding='utf-8',errors='replace')
     parser=argparse.ArgumentParser(description='WXBridge Web 管理台（默认仅监听本机）')
-    parser.add_argument('--root',type=Path,default=Path(__file__).resolve().parents[2],help='包含 config.json 和 instance/ 的项目目录')
+    parser.add_argument('--root',type=Path,default=Path('/opt/wxbridge'),help='包含 config.json 和 instance/ 的应用目录')
     parser.add_argument('--host',type=bind_host,default='127.0.0.1')
     parser.add_argument('--port',type=int,default=8730)
     parser.add_argument('--password-file',type=Path,help='单独存放管理口令的 UTF-8 私有文件；不会读取 provider 密钥')
@@ -35,7 +35,7 @@ def main():
     parser.add_argument('--control-socket',default='/run/wxbridge-control/control.sock',help='本机主控 Unix socket')
     parser.add_argument('--demo',action='store_true',help='使用临时合成实例预览，不连接真实微信')
     parser.add_argument('--catalog-file',type=Path,help='模型列表缓存文件；默认使用 provider 配置旁的 models.json')
-    args=parser.parse_args()
+    args=parser.parse_args(argv)
     temporary=None
     try:
         from wxbridge_web.app import create_app

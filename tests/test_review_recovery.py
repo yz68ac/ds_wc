@@ -1,17 +1,17 @@
 """Fault injection for explicit failures, output limits and bounded recovery."""
-from model_support import default_config
+from tests.support.model_support import default_config
 from contextlib import nullcontext
 import copy
 import unittest
 from unittest.mock import Mock, patch
 
-from model_support import ClientFixture, ModelError, ModelResult
-import test_native_api as native_tests
+from tests.support.model_support import ClientFixture, ModelError, ModelResult
+import tests.support.native_api as native_tests
 
 
 class ReviewRecoveryTests(unittest.TestCase):
     def native(self):
-        case = native_tests.JournalTests()
+        case = native_tests.JournalFixture()
         case.setUp()
         self.addCleanup(case.doCleanups)
         return case

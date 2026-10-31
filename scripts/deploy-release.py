@@ -105,6 +105,18 @@ def run(*args, **kwargs):
     return subprocess.run(args, capture_output=True, text=True, check=True, timeout=40, **kwargs)
 
 
+def require_application_layout():
+    """Reject pre-package installations before stopping or replacing live files."""
+    try:
+        run(str(APP/'.venv/bin/python'),'-I','-c',
+            "from importlib.metadata import distribution; distribution('wxbridge')")
+    except (OSError,subprocess.CalledProcessError):
+        raise ValueError('application_environment_upgrade_required') from None
+    command = run('systemctl','show',UNITS[0],'-p','ExecStart','--value').stdout
+    if '-m wxbridge_service' not in command:
+        raise ValueError('service_entry_upgrade_required')
+
+
 def wait_native_ready():
     """Type=simple becomes active before the helper binds its private socket."""
     deadline = time.monotonic()+10
@@ -213,6 +225,7 @@ def deploy(stage, backup, *, apply=False, update_helper=False, allow_pending_mem
     user = pwd.getpwnam('wxbridge')
     if os.geteuid() != 0 or backup.exists() or backup.is_symlink():
         raise ValueError('backup_or_permissions_invalid')
+    require_application_layout()
     if not backup.resolve().is_relative_to(Path('/var/backups/wxbridge')):
         raise ValueError('backup_outside_private_root')
     if helper_update and not update_helper:

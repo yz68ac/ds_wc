@@ -3,7 +3,7 @@ from copy import deepcopy
 import unittest
 
 from wxbridge.ai.citations import without_citations
-from wxbridge.ai.providers import get_protocol_adapter
+from provider.adapters import get_protocol_adapter
 
 URL = 'https://example.com/source'
 SOURCES = [dict(url=URL)]

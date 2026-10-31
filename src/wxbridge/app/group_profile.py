@@ -67,7 +67,7 @@ class ProfileController:
         members = participant_ids(rows, self.session.store.self_wxid)
         # A group summary can name somebody absent from this short message window.
         members.update(uid for uid in self.document.data['members'] if uid in self.document.data['summary'])
-        memory = self.session.memory
+        memory = self.session.memory.store
         if memory:
             now, view = time.time(), memory.view()
             summaries = {uid: [dict(kind=e['kind'], summary=e['summary'], time=e['occurred_at'])

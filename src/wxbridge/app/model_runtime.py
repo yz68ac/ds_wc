@@ -167,7 +167,8 @@ class GroupModels:
                 answer = format_reply(client_for('reply').chat(response_prompt(prompt, cfg)), cfg)
             if not answer.strip():
                 raise ModelError('empty_reply', retryable=True)
-            return dict(reply=answer, vision=vision, search=search, image_requests=image_requests)
+            return dict(reply=answer, vision=vision, search=search, image_requests=image_requests,
+                        context_stats=getattr(prompt,'context_stats',{}))
         if kind == 'request':
             return dict(result=client_for(payload[1]).request(payload[2]))
         if kind == 'memory':

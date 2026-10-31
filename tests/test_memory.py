@@ -1,5 +1,5 @@
 """合成身份、可控时间和假工作进程；绝不读真实聊天或调用 API。"""
-from model_support import default_config
+from tests.support.model_support import default_config
 from contextlib import nullcontext
 import copy
 import json
@@ -13,34 +13,12 @@ from wxbridge.ai.memory import snapshot, member_labels, extract
 from wxbridge.ai.prompts import build_prompt
 from wxbridge.config import DEFAULTS, _deep_merge
 from wxbridge.storage.person_memory import MemoryStore, DAY, fuzzy_time, affinity_value
-from test_context_pipeline import PipelineTests
-from synthetic import NOW, msg
+from tests.support.pipeline import PipelineFixture
+from tests.support.synthetic import NOW, msg
+from tests.support.memory import IDENTITY, suggestion, MemoryFixture, MemoryPipelineFixture
 
 
-IDENTITY = dict(account="wxid_bot", chat="test@chatroom")
-
-
-def suggestion(label="wxid_a", source="m1", delta=0, kind="preference", mode="real", replaces=None):
-    return dict(updates=[dict(member=label, memories=[dict(kind=kind, mode=mode, summary="喜欢简洁直接的答复",
-        sources=[source], confidence=.8, replaces=replaces)],
-        affinity=dict(delta=delta, reason="本人礼貌交流" if delta else "", sources=[source] if delta else []))])
-
-
-class MemoryTests(unittest.TestCase):
-    def setUp(self):
-        root = Path(__file__).resolve().parents[1]/".test-tmp"
-        root.mkdir(exist_ok=True)
-        self.temp = tempfile.TemporaryDirectory(dir=root)
-        self.addCleanup(self.temp.cleanup)
-        self.memory = MemoryStore(self.temp.name, IDENTITY)
-        self.cfg = default_config()
-
-        self.cfg['system_prompt_file'] = str(Path(__file__).resolve().parents[1]/'prompts/system.md')
-
-    def snap(self, identifier=1, sender="wxid_a", name="同名", when=NOW, context=None):
-        m = msg(identifier, when, "我喜欢简洁直接的回复", sender)
-        m["sender_name"] = name
-        return snapshot(self.cfg, context or [m], [m], IDENTITY, self.memory, when)
+class MemoryTests(MemoryFixture):
 
     def test_rename_same_name_and_account_group_isolation(self):
         self.memory.apply(suggestion(), self.snap(), NOW)
@@ -158,12 +136,11 @@ class MemoryTests(unittest.TestCase):
         self.assertIn("避免固定话术", extra)
         self.assertLessEqual(len(extra), 1200)
         prompt = build_prompt(self.cfg, [a], b, "测试", memory=dict(labels=labels, text=extra))[1]["content"]
-        self.assertIn('"sender": "wxid_a"', prompt)
-        self.assertIn('"sender": "wxid_b"', prompt)
+        self.assertEqual([m['sender'] for m in json.loads(prompt)['messages']], ['wxid_b','wxid_a'])
         self.cfg["target"]["context_max_chars"] = len(build_prompt(self.cfg, [a], b, "测试", memory=dict(labels=labels))[1]["content"])
         short = build_prompt(self.cfg, [a], b, "测试", memory=dict(labels=labels, text=extra))[1]["content"]
         self.assertIn("完整历史", short)
-        self.assertNotIn("以下人物记忆", short)
+        self.assertNotIn('memory', json.loads(short))
 
     def test_extractor_uses_memory_thinking_preserves_foreground_and_uses_no_tools(self):
         self.cfg['models']['reply']['options']["reasoning_effort"] = "high"
@@ -181,7 +158,6 @@ class MemoryTests(unittest.TestCase):
             self.assertEqual(self.cfg, before)
             self.assertNotIn("tools", client.return_value.complete.call_args.kwargs)
 
-
     def test_image_prompt_rebuild_preserves_memory_and_reference_author_label(self):
         from wxbridge.ai.images import prepare_multimodal
         a = msg(1, NOW, "这怎么看", "wxid_a")
@@ -191,12 +167,12 @@ class MemoryTests(unittest.TestCase):
         rebuilt, metadata = prepare_multimodal(self.cfg, prompt, dict(context=[], triggers=[a], chat_title="测试",
             images=[dict(trigger_index=0, depth=0, error="local_image_not_cached")], memory=memory))
         self.assertIn("U1 喜欢直接回答", rebuilt[1]["content"])
-        self.assertIn('"member": "wxid_b"', rebuilt[1]["content"])
+        self.assertEqual(json.loads(rebuilt[1]['content'])['messages'][-1]['reference']['sender'], 'wxid_b')
 
     @unittest.skipIf(os.name == "nt", "Linux 文件权限与 flock")
     def test_private_permissions_and_maintenance_listener_lock(self):
         from argparse import Namespace
-        from wxbridge.cli import memory_command
+        from wxbridge.debug_cli import memory_command
         from wxbridge.app.runtime import instance_lock
         self.memory.apply(suggestion(), self.snap(), NOW)
         for path, expected in [(self.memory.directory, 0o700), (self.memory.path, 0o600), (self.memory.projection, 0o600)]:
@@ -260,20 +236,7 @@ class MemoryTests(unittest.TestCase):
         self.assertEqual(self.memory.data["members"]["wxid_a"]["affinity"], 53)
 
 
-class MemoryPipelineTests(PipelineTests):
-    # 不重复父类测试；此类通过自定义 load_tests 仅选择新增用例。
-    def enable(self):
-        self.bot.close()
-        self.cfg["memory"].update(enabled=True, directory=str(Path(self.temp.name)/"memory"))
-        self.cfg["queue"]["debounce_seconds"] = 0
-        self.make_bot()
-
-    def confirmed(self):
-        self.add(1)
-        self.bot.tick()
-        self.generated()
-        self.add(2, sender="wxid_self", text="合成回复", mention=False)
-        self.bot.tick()
+class MemoryPipelineTests(MemoryPipelineFixture):
 
     def test_memory_after_final_confirmation_runs_alongside_reply_then_recalls_after_restart(self):
         self.enable()
@@ -284,17 +247,17 @@ class MemoryPipelineTests(PipelineTests):
         self.assertEqual(self.bot.journal.status()["memory_pending"], 1)
         self.add(3)
         self.bot.tick()
-        self.assertEqual(len(self.bot.generators), 1)
+        self.assertEqual(len(self.bot.replies.jobs), 1)
         self.add(4)
         self.bot.tick()
         self.assertFalse(job.closed)
-        self.assertIsNotNone(self.bot.memory_job)
+        self.assertIsNotNone(self.bot.memory.job)
         self.assertEqual(self.bot.journal.memory_jobs()[0]["state"], "running")
         self.generated()
         job = next(j for j in reversed(self.jobs) if j.kind == "memory")
         job.result = dict(ok=True, proposal=suggestion(label='wxid_friend'))
         self.bot.tick()
-        self.assertEqual(self.bot.memory.status(self.now)["revision"], 2)  # 启用学习基线与首次整理各一次修订。
+        self.assertEqual(self.bot.memory.store.status(self.now)["revision"], 2)  # 启用学习基线与首次整理各一次修订。
         self.restart()
         self.add(5)
         self.bot.tick()
@@ -309,7 +272,7 @@ class MemoryPipelineTests(PipelineTests):
         self.assertEqual(self.bot.journal.get("memory_error"), "memory_worker_failed")
         self.add(3)
         self.bot.tick()
-        self.assertEqual(len(self.bot.generators), 1)
+        self.assertEqual(len(self.bot.replies.jobs), 1)
         self.assertNotIn("合成回复", self.bot.status_path.read_text(encoding="utf-8"))
         self.restart()
         self.assertEqual(self.bot.journal.status()["memory_pending"], 1)
@@ -329,15 +292,15 @@ class MemoryPipelineTests(PipelineTests):
     def test_restart_after_disk_commit_does_not_repeat_score_or_api(self):
         self.enable()
         self.confirmed()
-        record, value, job = self.bot.memory_job
-        self.bot.memory.apply(suggestion(label='wxid_friend', delta=3), value, self.now)
+        record, value, job = self.bot.memory.job
+        self.bot.memory.store.apply(suggestion(label='wxid_friend', delta=3), value, self.now)
         # 模拟 JSON 已持久化而队列完成事务尚未提交时崩溃。
         self.restart()
         count = len([j for j in self.jobs if j.kind == "memory"])
         self.bot.tick()
         self.assertEqual(len([j for j in self.jobs if j.kind == "memory"]), count)
         self.assertEqual(self.bot.journal.memory_jobs(), [])
-        self.assertEqual(self.bot.memory.data["members"]["wxid_friend"]["affinity"], 53)
+        self.assertEqual(self.bot.memory.store.data["members"]["wxid_friend"]["affinity"], 53)
 
     def test_background_minimum_interval_foreground_priority_and_recovery(self):
         self.enable()
@@ -353,25 +316,25 @@ class MemoryPipelineTests(PipelineTests):
         self.bot.tick()
         self.add(4, sender="wxid_self", text="第二次回复", mention=False)
         self.bot.tick()
-        self.assertIsNone(self.bot.memory_job)
+        self.assertIsNone(self.bot.memory.job)
         self.assertEqual(len(self.bot.journal.memory_jobs()), 1)
         self.now += 60
         self.bot.tick()
-        self.assertIsNotNone(self.bot.memory_job)
+        self.assertIsNotNone(self.bot.memory.job)
         self.restart()
         self.bot.tick()
-        self.assertIsNotNone(self.bot.memory_job)
-        self.assertEqual(self.bot.memory_job[0]["state"], "running")
+        self.assertIsNotNone(self.bot.memory.job)
+        self.assertEqual(self.bot.memory.job[0]["state"], "running")
 
     def test_forgotten_pending_task_skips_before_missing_database_source(self):
         self.enable()
         self.confirmed()
         self.bot.close()
-        self.bot.memory.maintain("clear", watermark=2, now=self.now)
+        self.bot.memory.store.maintain("clear", watermark=2, now=self.now)
         self.rows = []
         self.make_bot()
         self.store.messages_in_window.reset_mock()
-        self.bot._memory_step()
+        self.bot.memory.step()
         self.store.messages_in_window.assert_not_called()
         self.assertEqual(self.bot.journal.memory_jobs(), [])
 
@@ -391,11 +354,3 @@ class MemoryPipelineTests(PipelineTests):
         self.bot.tick()
         self.assertEqual(len(self.bot.journal.memory_jobs()), 1)
         self.assertEqual(self.bot.journal.task(1)["phase"], "done")
-
-
-def load_tests(loader, tests, pattern):
-    suite = unittest.TestSuite(loader.loadTestsFromTestCase(MemoryTests))
-    for name in MemoryPipelineTests.__dict__:
-        if name.startswith("test_"):
-            suite.addTest(MemoryPipelineTests(name))
-    return suite

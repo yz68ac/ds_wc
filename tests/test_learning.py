@@ -10,18 +10,13 @@ from wxbridge.config import DEFAULTS, load_config
 from wxbridge.storage import expression_memory as expressions
 from wxbridge.storage.person_memory import MemoryStore, DAY
 from wxbridge.app.learning import enqueue_if_active, eligible_messages
-from test_memory import MemoryTests, IDENTITY, suggestion
-from test_context_pipeline import PipelineTests
-from synthetic import NOW, msg
-
-
-def observation(scope='member', member='wxid_a', expression='[捂脸]', stance='support', replaces=None, basis=None, source='m1'):
-    return dict(scope=scope, member=member if scope == 'member' else None, expression=expression,
-                context='自嘲出糗', meaning='缓和尴尬、无奈自嘲', sources=[source], stance=stance, replaces=replaces, basis=basis)
+from tests.support.memory import MemoryFixture, IDENTITY, suggestion, observation
+from tests.support.pipeline import PipelineFixture
+from tests.support.synthetic import NOW, msg
 
 
 class LearningTests(unittest.TestCase):
-    setUp = MemoryTests.setUp
+    setUp = MemoryFixture.setUp
 
     def observe(self, when, *, who='wxid_a', scope='member', stance='support', basis=None,
                 expression='[捂脸]', text=None, nickname='合成成员', replaces=None):
@@ -229,10 +224,10 @@ class LearningTests(unittest.TestCase):
 
 
 class LearningPipelineTests(unittest.TestCase):
-    setUp=PipelineTests.setUp
-    make_bot=PipelineTests.make_bot
-    add=PipelineTests.add
-    restart=PipelineTests.restart
+    setUp=PipelineFixture.setUp
+    make_bot=PipelineFixture.make_bot
+    add=PipelineFixture.add
+    restart=PipelineFixture.restart
 
     def enable(self):
         self.bot.close()
@@ -250,11 +245,11 @@ class LearningPipelineTests(unittest.TestCase):
         self.bot.tick()
         self.assertEqual(len(self.jobs),1)
         self.assertEqual(self.jobs[0].kind,'memory')
-        self.assertEqual(self.bot.memory_job[0]['origin'],'activity')
-        self.assertEqual(len(self.bot.memory_job[1]['messages']),10)
+        self.assertEqual(self.bot.memory.job[0]['origin'],'activity')
+        self.assertEqual(len(self.bot.memory.job[1]['messages']),10)
         self.jobs[0].result=dict(ok=True,proposal=suggestion(label='wxid_1', source='m1'))
         self.bot.tick()
-        self.assertEqual(self.bot.memory.data['members']['wxid_1']['affinity'],50)
+        self.assertEqual(self.bot.memory.store.data['members']['wxid_1']['affinity'],50)
         self.assertFalse(any(j.kind=='send' for j in self.jobs))
         self.restart()
         self.bot.tick()
@@ -302,7 +297,7 @@ class LearningPipelineTests(unittest.TestCase):
         self.add(11,sender='wxid_self',text='我是背景话语',mention=False)
         self.restart()
         self.bot.tick()
-        _,value,_=self.bot.memory_job
+        _,value,_=self.bot.memory.job
         self.assertTrue(all(m['local_id']<=10 for m in value['messages']))
         self.assertEqual(value['through'],10)
 
@@ -310,14 +305,14 @@ class LearningPipelineTests(unittest.TestCase):
         self.enable()
         self.chat()
         self.bot.tick()
-        worker=self.bot.memory_job[2]
+        worker=self.bot.memory.job[2]
         self.add(11,sender='wxid_a')
         self.bot.tick()
         self.add(12,sender='wxid_b')
         self.bot.tick()
         self.assertFalse(worker.closed)
-        self.assertIsNotNone(self.bot.memory_job)
-        self.assertEqual(len(self.bot.generators),2)
+        self.assertIsNotNone(self.bot.memory.job)
+        self.assertEqual(len(self.bot.replies.jobs),2)
         self.assertEqual(self.bot.journal.memory_jobs()[0]['state'],'running')
 
     def test_passive_batches_wait_five_minutes_and_skip_processed_window(self):
@@ -334,7 +329,7 @@ class LearningPipelineTests(unittest.TestCase):
         self.now+=240
         self.bot.tick()
         self.assertEqual(len(self.jobs),2)
-        self.assertEqual(min(m['local_id'] for m in self.bot.memory_job[1]['messages']),11)
+        self.assertEqual(min(m['local_id'] for m in self.bot.memory.job[1]['messages']),11)
 
     def test_enabling_passive_later_does_not_backfill_existing_chat(self):
         self.cfg['memory']['learning']['passive_enabled']=False

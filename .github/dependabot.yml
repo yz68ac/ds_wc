@@ -4,7 +4,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
-  - package-ecosystem: pip
+  # Update dependency declarations and uv.lock, not the generated requirements exports.
+  - package-ecosystem: uv
     directory: /
     schedule:
       interval: weekly

@@ -5,7 +5,7 @@ import json
 from copy import deepcopy
 import time
 from pathlib import Path
-from wxbridge.ai.context import select_context, message_time
+from wxbridge.ai.context import select_memory_context, message_time
 from wxbridge.ai.prompts import system_prompt
 from wxbridge.ai.emoticons import semantics_prompt
 from wxbridge.config import PROJECT_ROOT
@@ -50,7 +50,7 @@ def snapshot(cfg, context, triggers, identity, memory, now, *, window=None, prof
         context = [m for m in context if message_time(m) is not None and window[0] <= m['time'] <= window[1]
                    and m['local_id'] <= through and m.get('type') == 1]
     else:
-        context = select_context(cfg, context, triggers[-1])
+        context = select_memory_context(cfg, context, triggers[-1])
     rows = {m["local_id"]: m for m in [*context, *triggers]}
     labels = member_labels(context, triggers, identity["account"])
     aliases = profile.get('members', {}) if profile is not None else None

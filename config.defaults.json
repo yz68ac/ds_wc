@@ -49,9 +49,11 @@
     "bot_name": "小c",
     "cooldown_seconds": 8,
     "max_message_age_seconds": 90,
-    "context_window_seconds": 300,
-    "context_max_chars": 24000,
-    "context_budget_strategy": "strict",
+    "context_recent_messages": 30,
+    "context_max_age_seconds": 1800,
+    "context_bot_messages": 3,
+    "context_max_chars": 15000,
+    "context_budget_strategy": "recent",
     "max_reply_chars": 1800
   },
   "models": {
@@ -127,6 +129,7 @@
   },
   "memory": {
     "enabled": true,
+    "context_window_seconds": 300,
     "directory": "memory",
     "system_prompt_file": "prompts/memory.md",
     "learning": {

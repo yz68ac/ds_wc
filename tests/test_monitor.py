@@ -1,5 +1,5 @@
 """合成状态与终端：只读、过期提示、脱敏、导航和Linux真实PTY退出恢复。"""
-from model_support import default_config
+from tests.support.model_support import default_config
 from contextlib import nullcontext
 import copy
 import io
@@ -15,7 +15,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from wxbridge.app import monitor, terminal
-from wxbridge.cli import main
+from wxbridge.debug_cli import main
 from wxbridge.config import DEFAULTS
 
 NOW = 1700000600
@@ -59,7 +59,7 @@ class MonitorTests(unittest.TestCase):
 
     def test_cli_once_reads_only_snapshots_and_never_starts_model_store_or_queue(self):
         before = {p.name:(p.read_bytes(),p.stat().st_mtime_ns) for p in self.root.iterdir()}
-        with patch('wxbridge.cli.load_config', return_value=self.cfg), patch.object(monitor,'read_services',return_value=({},'')), \
+        with patch('wxbridge.config.load_config', return_value=self.cfg), patch.object(monitor,'read_services',return_value=({},'')), \
                 patch('wxbridge.app.bot.WeChatStore') as store, patch('wxbridge.ai.client.client_for') as client, \
                 patch('sqlite3.connect',side_effect=AssertionError('must not query databases')), \
                 patch('sys.stdout',new_callable=io.StringIO) as output:
@@ -165,7 +165,7 @@ class MonitorTests(unittest.TestCase):
 
     def test_interval_rejects_nan_infinity_or_out_of_bounds_before_opening_panel(self):
         for value in ('nan','inf','0.1','31'):
-            with self.subTest(value=value), patch('wxbridge.cli.load_config',return_value=self.cfg), \
+            with self.subTest(value=value), patch('wxbridge.config.load_config',return_value=self.cfg), \
                     patch.object(terminal,'run_status') as run,patch('sys.stdout',new_callable=io.StringIO):
                 self.assertEqual(main(['status','--interval',value]),1)
                 run.assert_not_called()
@@ -214,7 +214,7 @@ class MonitorTests(unittest.TestCase):
         saved=termios.tcgetattr(slave)
         fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,100,0,0))
         bootstrap=("import sys; from wxbridge.app import monitor; monitor.read_services=lambda: ({},'unavailable'); "
-                   "from wxbridge.cli import main; raise SystemExit(main(['--config',sys.argv[1],'status']))")
+                   "from wxbridge.debug_cli import main; raise SystemExit(main(['--config',sys.argv[1],'status']))")
         env=dict(os.environ,TERM='xterm-256color',LANG='C.UTF-8')
         child=subprocess.Popen([sys.executable,'-c',bootstrap,str(config)],cwd=Path(__file__).resolve().parents[1],
                                stdin=slave,stdout=slave,stderr=slave,env=env)

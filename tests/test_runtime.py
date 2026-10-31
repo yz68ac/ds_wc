@@ -1,10 +1,9 @@
 """完整启动流程的离线回归：不恢复旧触发、保留配置、明确发送开关。"""
 from __future__ import annotations
-from model_support import default_config
+from tests.support.model_support import default_config
 from contextlib import nullcontext
 
 import copy
-from contextlib import nullcontext
 import io
 import json
 from pathlib import Path
@@ -12,7 +11,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from wxbridge.cli import main
+from wxbridge.debug_cli import main
 from wxbridge.config import DEFAULTS, _deep_merge
 from wxbridge.app.runtime import run_bot
 
@@ -77,7 +76,7 @@ class RuntimeTests(unittest.TestCase):
 
     def test_cli_send_and_dry_run_are_explicit_and_keep_model(self):
         for args, expected in [(["run"], True), (["run", "--dry-run"], True), (["run", "--send"], False)]:
-            with self.subTest(args=args), patch("wxbridge.cli.load_config", return_value=copy.deepcopy(self.cfg)), patch("wxbridge.cli.run_bot", return_value=0) as run:
+            with self.subTest(args=args), patch("wxbridge.config.load_config", return_value=copy.deepcopy(self.cfg)), patch("wxbridge.app.runtime.run_bot", return_value=0) as run:
                 self.assertEqual(main(args), 0)
                 active_cfg = run.call_args.args[0]
                 self.assertIs(active_cfg["ui"]["dry_run"], expected)

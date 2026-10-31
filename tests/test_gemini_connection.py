@@ -10,7 +10,7 @@ import openai
 
 from provider import ModelRequest, create_client, load_config
 from wxbridge.ai.roles import model_settings, validate_models
-from model_support import default_config
+from tests.support.model_support import default_config
 
 
 class GeminiConnectionTests(unittest.TestCase):

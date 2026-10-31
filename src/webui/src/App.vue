@@ -18,6 +18,12 @@ import { api, setCsrf } from "./api";
 
 const componentLabel: Record<string, string> = { bot: "机器人", wechat: "微信会话", sender: "发送组件", recovery: "自动恢复", web: "管理台" };
 
+function contextSummary(value: any) {
+  if (!value) return "暂无请求";
+  if (value.error) return value.error === "context_required_too_large" ? "当前消息或引用超过预算" : "上下文组装失败";
+  return `${value.chars} 字符 · 历史 ${value.retained}/${value.selected} 条 · 裁剪 ${value.omitted} 条 · 扫描 ${value.scanned} 条${value.scan_limit_hit ? "（达到扫描上限）" : ""}`;
+}
+
 const pages = [
   { id: "overview", name: "工作台", subtitle: "OVERVIEW", icon: DataBoard },
   {
@@ -1587,6 +1593,15 @@ onBeforeUnmount(() => {
         }}</el-descriptions-item>
         <el-descriptions-item label="最近发送成功">{{
           formatTime(statusInstance.last_success)
+        }}</el-descriptions-item>
+        <el-descriptions-item label="聊天 JSON 预算">{{
+          statusInstance.snapshot_current ? (statusInstance.context_policy?.context_max_chars ?? "—") + " 字符" : "暂无运行快照"
+        }}</el-descriptions-item>
+        <el-descriptions-item label="最近参与上下文">{{
+          statusInstance.snapshot_current ? contextSummary(statusInstance.context?.participation) : "暂无运行快照"
+        }}</el-descriptions-item>
+        <el-descriptions-item label="最近回复上下文">{{
+          statusInstance.snapshot_current ? contextSummary(statusInstance.context?.reply) : "暂无运行快照"
         }}</el-descriptions-item>
         <el-descriptions-item label="发送阻塞">{{
           statusInstance.blocked_reason || "无"

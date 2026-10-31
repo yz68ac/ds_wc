@@ -4,12 +4,11 @@ from __future__ import annotations
 import json
 import time
 
-from wxbridge.ai.context import ContextError, message_time
+from wxbridge.ai.context import ContextError, read_context
 from wxbridge.ai.participation import build_prompt, parse_decision
 from wxbridge.ai.roles import model_settings
 from wxbridge.app.task_policy import participation_failure_code
 from wxbridge.app.workers import WorkerLease, WorkerCleanupError
-from wechat_linux.messages.pats import is_pat
 
 
 class ParticipationController:
@@ -102,15 +101,9 @@ class ParticipationController:
                           len(snapshot['source_ids']), len(approved), len(tasks))
 
     def _rows(self, snapshot, now):
-        seconds = self.bot.cfg['target']['context_window_seconds']
-        rows = self.bot.store.messages_in_window(self.bot.chat_id, int(now-seconds), int(now))
-        # Reserved originals win over another read of a changing database page.
-        current = {m['local_id']: m for m in rows if m.get('local_id')
-                   and m['local_id'] <= self.bot.last_local_id and m.get('sender')
-                   and message_time(m) is not None and now-seconds <= m['time'] <= now
-                   and (m.get('type') == 1 or is_pat(m))}
-        current.update({m['local_id']: m for m in snapshot['messages']})
-        return sorted(current.values(), key=lambda m: (m['time'], m['local_id']))
+        rows = read_context(self.bot.cfg,self.bot.store,self.bot.chat_id,snapshot['messages'],
+                            account=self.bot.store.self_wxid)
+        return rows.include(snapshot['messages'])
 
     def step(self, now, *, collect_only=False):
         self.priority(now)
@@ -142,13 +135,19 @@ class ParticipationController:
                 rows = self._rows(snapshot, now)
                 prompt = build_prompt(self.bot.cfg, rows, self.bot.chat_title, source_ids=snapshot['source_ids'],
                     account=self.bot.store.self_wxid, profile=self.bot.profile_snapshot(rows))
+                with self.bot.journal.db:
+                    self.bot.journal.set('context', {**self.bot.journal.get('context', {}),
+                                                   'participation':prompt.context_stats})
             except ContextError as exc:
-                if str(exc) == 'participation_context_too_large' and len(snapshot['source_ids']) > 1:
+                with self.bot.journal.db:
+                    self.bot.journal.set('context', {**self.bot.journal.get('context', {}),
+                                                   'participation':dict(error=exc.code)})
+                if exc.code == 'context_required_too_large' and len(snapshot['source_ids']) > 1:
                     self.bot.journal.release_participation(snapshot, now)
                     limit = max(1, len(snapshot['source_ids'])//2)
                     continue
-                self.bot.journal.fail_participation(snapshot, now, 'ContextError', retry=False)
-                self.update(outcome='error', error='ContextError')
+                self.bot.journal.fail_participation(snapshot, now, exc.code, retry=False)
+                self.update(outcome='error', error=exc.code)
                 return
             except Exception as exc:
                 code = participation_failure_code(dict(error=getattr(exc, 'code', type(exc).__name__)))

@@ -1,7 +1,6 @@
 """合成图片、SQLite 附件索引与模拟 API；不读取真实图片或凭据。"""
 from __future__ import annotations
-from model_support import default_config
-from contextlib import nullcontext
+from tests.support.model_support import default_config
 from contextlib import nullcontext
 
 import base64
@@ -17,32 +16,16 @@ from unittest.mock import Mock, patch
 import zlib
 
 from wxbridge.config import DEFAULTS, _deep_merge, load_config
-from wxbridge.wechat.crypto import AES
-from model_support import ClientFixture, ModelError
+from wechat_linux.storage.crypto import AES
+from tests.support.model_support import ClientFixture, ModelError
 from wxbridge.ai.prompts import build_prompt
 from wxbridge.ai.images import MediaError, V1, V2, decode_dat, key_candidates, prepare_multimodal, read_local_image, validate_image
-from wxbridge.wechat.references import image_md5, local_image_cache_key
+from wechat_linux.messages.references import image_md5, local_image_cache_key
 from wxbridge.ai.identity import prompt_reference
 from wxbridge.wechat.store import WeChatStore
-from synthetic import NOW, msg
-from test_references import parse_message, quoted_xml
-
-
-def png(width=2, height=1):
-    def chunk(name, data):
-        body = name+data
-        return struct.pack(">I", len(data))+body+struct.pack(">I", zlib.crc32(body)&0xFFFFFFFF)
-    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
-            + chunk(b"IDAT", zlib.compress(b"\0\xff\0\0\0\0\xff")) + chunk(b"IEND", b""))
-
-
-def encrypted(data, magic=V2, key=b"synthetic-key-16", xor=77):
-    key = b"cfcd208495d565ef" if magic == V1 else key
-    prefix, middle, tail = data[:32], data[32:-12], data[-12:]
-    padding = 16-len(prefix)%16
-    return (magic+struct.pack("<II", len(prefix), len(tail))+b"\0"
-            + AES.new(key, AES.MODE_ECB).encrypt(prefix+bytes([padding])*padding)
-            + middle+bytes(value^xor for value in tail))
+from tests.support.synthetic import NOW, msg
+from tests.support.messages import parse_message, quoted_xml
+from tests.support.media import png, encrypted, LocalImageFixture, ImageBindingFixture
 
 
 class ImageDecodingTests(unittest.TestCase):
@@ -72,23 +55,7 @@ class ImageDecodingTests(unittest.TestCase):
                 decode_dat(corrupt, b"synthetic-key-16", 77)
 
 
-class LocalImageTests(unittest.TestCase):
-    def setUp(self):
-        parent = Path(__file__).resolve().parents[1]/".test-tmp"
-        parent.mkdir(exist_ok=True)
-        self.temp = tempfile.TemporaryDirectory(dir=parent)
-        self.addCleanup(self.temp.cleanup)
-        self.home = Path(self.temp.name)
-        self.root = self.home/"xwechat_files/wxid_synthetic_suffix"
-        self.root.mkdir(parents=True)
-        self.path = self.root/"msg/attach/bucket/month/Img/image.dat"
-        self.path.parent.mkdir(parents=True)
-        self.binding = dict(account="wxid_synthetic", account_root=str(self.root), home=str(self.home),
-                            candidates=[dict(relative=str(self.path.relative_to(self.root)), quality="original")])
-        self.cfg = default_config()
-        self.cfg["vision"]["cache_wait_seconds"] = 0
-
-        self.cfg['system_prompt_file'] = str(Path(__file__).resolve().parents[1]/'prompts/system.md')
+class LocalImageTests(LocalImageFixture):
 
     def test_linux_key_derivation_and_v2_in_memory(self):
         folder = self.home/".xwechat/net/kvcomm"
@@ -113,7 +80,7 @@ class LocalImageTests(unittest.TestCase):
     def test_wxgf_conversion_keeps_pixels_in_memory_and_reports_format(self):
         source = b"wxgf"+bytes(80)
         self.path.write_bytes(encrypted(source))
-        with patch('wechat_linux.media.images.key_candidates',return_value=[(b'wrong-key-123456',77),(b'synthetic-key-16',77)]), patch('wxbridge.ai.wxgf.decode_wxgf',return_value=png()) as convert:
+        with patch('wechat_linux.media.images.key_candidates',return_value=[(b'wrong-key-123456',77),(b'synthetic-key-16',77)]), patch('wechat_linux.media.wxgf.decode_wxgf',return_value=png()) as convert:
             data,info = read_local_image(self.binding, max_bytes=self.cfg['vision']['max_image_bytes'])
         self.assertEqual(data,png())
         convert.assert_called_once_with(source,self.cfg['vision']['max_image_bytes'])
@@ -122,9 +89,9 @@ class LocalImageTests(unittest.TestCase):
         self.assertEqual(len(list(self.path.parent.iterdir())),1)
 
     def test_wxgf_failure_survives_later_wrong_keys_and_can_fall_back(self):
-        from wxbridge.ai.wxgf import WxgfError
+        from wechat_linux.media.wxgf import WxgfError
         self.path.write_bytes(encrypted(b'wxgf'+bytes(80)))
-        with patch('wechat_linux.media.images.key_candidates',return_value=[(b'synthetic-key-16',77),(b'wrong-key-123456',77)]), patch('wxbridge.ai.wxgf.decode_wxgf',side_effect=WxgfError('wxgf_decoder_unavailable')):
+        with patch('wechat_linux.media.images.key_candidates',return_value=[(b'synthetic-key-16',77),(b'wrong-key-123456',77)]), patch('wechat_linux.media.wxgf.decode_wxgf',side_effect=WxgfError('wxgf_decoder_unavailable')):
             with self.assertRaisesRegex(MediaError,'^wxgf_decoder_unavailable$'):
                 read_local_image(self.binding, max_bytes=self.cfg['vision']['max_image_bytes'])
             thumbnail = self.path.with_name('image_t.dat')
@@ -145,16 +112,6 @@ class LocalImageTests(unittest.TestCase):
         with self.assertRaisesRegex(MediaError, "unsafe_image_path"):
             read_local_image(self.binding, max_bytes=self.cfg['vision']['max_image_bytes'])
 
-    def generation(self, refs=None):
-        trigger = msg(10, NOW, "@ds 这怎么看")
-        trigger["reference"] = refs or dict(kind="image", available=False, text="", image_md5="a"*32)
-        return dict(context=[msg(9, NOW-1, "普通历史")], triggers=[trigger], chat_title="合成群",
-                    images=[dict(trigger_index=0, depth=0, **self.binding)])
-
-    def prepare(self, generation):
-        base = build_prompt(self.cfg, generation["context"], generation["triggers"][-1], "合成群",
-                            generation['triggers'], memory=generation.get('memory'), account=generation.get('account', ''))
-        return prepare_multimodal(self.cfg, base, generation)
 
     def test_api_receives_actual_pixels_only_in_user_and_keeps_persona(self):
         self.path.write_bytes(png())
@@ -166,7 +123,7 @@ class LocalImageTests(unittest.TestCase):
         self.assertEqual(blocks[-1]["type"], "image_url")
         uri = blocks[-1]["image_url"]["url"]
         self.assertEqual(base64.b64decode(uri.split(",", 1)[1]), png())
-        self.assertIn('"available": true', blocks[0]["text"])
+        self.assertIn('"available":true', blocks[0]["text"])
         self.assertIn("普通历史", blocks[0]["text"])
         self.assertNotIn("image_md5", blocks[0]["text"])
         self.assertEqual(metadata["images"], 1)
@@ -185,15 +142,16 @@ class LocalImageTests(unittest.TestCase):
                 prompt, metadata = self.prepare(generation)
                 body = prompt[1]['content']
                 text = body[0]['text'] if isinstance(body, list) else body
-                self.assertIn('"sender": "'+generation['account']+'"', text)
-                self.assertIn('"is_bot": true', text)
-                self.assertNotIn('"sender": "BOT"', text)
+                data = json.loads(text)
+                self.assertEqual(data['bot'], generation['account'])
+                self.assertEqual(data['messages'][0]['sender'], generation['account'])
+                self.assertFalse(any('is_bot' in m for m in data['messages']))
                 self.assertEqual(metadata['images'], int(available))
 
     def test_missing_pixels_explicitly_unavailable_without_fake_image_block(self):
         prompt, metadata = self.prepare(self.generation())
         self.assertIsInstance(prompt[1]["content"], str)
-        self.assertIn('"available": false', prompt[1]["content"])
+        self.assertIn('"available":false', prompt[1]["content"])
         self.assertIn("未看到图片", prompt[1]["content"])
         self.assertEqual(metadata["images"], 0)
 
@@ -215,31 +173,7 @@ class LocalImageTests(unittest.TestCase):
         self.assertIn("引用图片1", prompt[1]["content"][-2]["text"])
 
 
-class ImageBindingTests(unittest.TestCase):
-    def setUp(self):
-        parent = Path(__file__).resolve().parents[1]/".test-tmp"
-        parent.mkdir(exist_ok=True)
-        self.temp = tempfile.TemporaryDirectory(dir=parent)
-        self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
-        self.chat = "synthetic@chatroom"
-        self.bucket = hashlib.md5(self.chat.encode()).hexdigest()
-        self.digest, self.filename = "a"*32, "b"*32+".dat"
-        self.path = self.root/"hardlink.db"
-        with closing(sqlite3.connect(self.path)) as conn, conn:
-            conn.executescript("CREATE TABLE dir2id(username TEXT); CREATE TABLE image_hardlink_info_v4(md5 TEXT,file_name TEXT,dir1 INT,dir2 INT);")
-            conn.executemany("INSERT INTO dir2id VALUES (?)", [(self.bucket,), ("2026-10",)])
-            conn.execute("INSERT INTO image_hardlink_info_v4 VALUES (?,?,1,2)", (self.digest, self.filename))
-        self.store = WeChatStore.__new__(WeChatStore)
-        self.store.db_dir = str(self.root/"db_storage")
-        self.store._account_username = "wxid_synthetic"
-        self.store._query_messages = Mock(return_value=[])
-        def connect(rel):
-            self.assertEqual(rel, "hardlink/hardlink.db")
-            conn = sqlite3.connect(self.path)
-            conn.row_factory = sqlite3.Row
-            return conn
-        self.store._connect = connect
+class ImageBindingTests(ImageBindingFixture):
 
     def test_md5_resolves_opaque_file_name_not_md5_guess(self):
         result = self.store.image_binding(self.chat, dict(image_md5=self.digest))
@@ -256,16 +190,6 @@ class ImageBindingTests(unittest.TestCase):
         self.assertNotIn('download',self.store.image_binding(self.chat,dict(server_id='123')))
         self.assertIn(self.filename, binding["candidates"][1]["relative"])
 
-    def indexless_source(self, *, month="2026-10", bucket=None, suffix="_t"):
-        with closing(sqlite3.connect(self.path)) as conn, conn:
-            conn.execute("DELETE FROM image_hardlink_info_v4")
-        self.store._query_messages.return_value = [dict(type=3, image_md5=self.digest,
-                                                        sender="friend", image_cache_key="b"*32)]
-        picture = self.root/"msg/attach"/(bucket or self.bucket)/month/"Img"/("b"*32+suffix+".dat")
-        picture.parent.mkdir(parents=True, exist_ok=True)
-        picture.write_bytes(png())
-        return picture, dict(kind="image", server_id="123", sender="friend", chat_id=self.chat,
-                             image_md5=self.digest, available=False, text="")
 
     def test_indexless_thumbnail_reaches_multimodal_request_with_quality_label(self):
         picture, reference = self.indexless_source()
@@ -440,7 +364,7 @@ class ImageBindingTests(unittest.TestCase):
 class VisionClientTests(unittest.TestCase):
     def test_post_sends_openai_image_content_array_and_rejects_request_limit(self):
         client = ClientFixture.__new__(ClientFixture)
-        from wxbridge.ai.providers import get_protocol_adapter
+        from provider.adapters import get_protocol_adapter
         client.adapter = get_protocol_adapter('deepseek')
         client.cfg = {}
         client.protocol = 'deepseek'

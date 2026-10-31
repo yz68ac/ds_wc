@@ -23,6 +23,19 @@ installer = script('install-native-helper.py')
 
 
 class NativeImageDeploymentTests(unittest.TestCase):
+    def test_old_installations_are_rejected_before_service_control(self):
+        with patch.object(deployment,'run',side_effect=subprocess.CalledProcessError(1,['metadata'])) as run:
+            with self.assertRaisesRegex(ValueError,'application_environment_upgrade_required'):
+                deployment.require_application_layout()
+        self.assertEqual(run.call_count,1)
+        with patch.object(deployment,'run',side_effect=[Mock(),Mock(stdout='python scripts/service.py run')]):
+            with self.assertRaisesRegex(ValueError,'service_entry_upgrade_required'):
+                deployment.require_application_layout()
+
+    def test_packaged_application_and_module_service_entry_are_accepted(self):
+        with patch.object(deployment,'run',side_effect=[Mock(),Mock(stdout='python -m wxbridge_service --root /opt/wxbridge')]):
+            deployment.require_application_layout()
+
     def setUp(self):
         (ROOT/'.test-tmp').mkdir(exist_ok=True)
 

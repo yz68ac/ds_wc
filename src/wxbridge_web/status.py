@@ -39,6 +39,7 @@ def overview(repository, services, operations, *, demo=False):
             cursor=status.get('cursor'), blocked_reason=status.get('blocked_reason','') or ('存在待核对的发送记录' if status.get('unconfirmed') else ''),
             last_success=status.get('last_success'), channels=status.get('model_channels',{}),
             image_generation=status.get('image_generation', {}),
+            context=status.get('context', {}), context_policy=status.get('context_policy', {}),
             snapshot_current=bool(fresh),runtime_state=instance_state,
             applied_revision=lifecycle.get('applied_revision'),
             config_pending=item['revision']!=lifecycle.get('applied_revision'),

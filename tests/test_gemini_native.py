@@ -13,7 +13,7 @@ from provider import Client, ImageRequest, ModelError, ModelRequest, capture_met
 from provider.adapters import get_protocol_adapter
 from wxbridge.ai.roles import validate_models
 from wxbridge.ai.search import answer_with_search
-from model_support import default_config
+from tests.support.model_support import default_config
 
 
 TOOL = dict(type='function', function=dict(name='lookup', description='synthetic lookup',

@@ -4,33 +4,24 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 from contextlib import ExitStack
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 import time
 
-from wxbridge.ai.context import context_bounds, message_time
-from wxbridge.ai.prompts import build_prompt
-from wxbridge.ai.output import format_reply
-from wxbridge.ai.memory import member_labels, snapshot
-from wxbridge.ai.context import select_context
-from wxbridge.config import PROJECT_ROOT
-from wxbridge.storage.person_memory import MemoryStore
+from wxbridge.ai.context import message_time
 from wxbridge.storage.journal import Journal
-from wxbridge.wechat.messages import chunk_text, reply_chunks
 from wxbridge.wechat.store import StoreError, WeChatStore
 from wechat_linux.messages.pats import is_pat
-from wxbridge.app.workers import ProcessJob, WorkerLease, WorkerCleanupError
+from wxbridge.app.workers import ProcessJob
 from wxbridge.app.session_phases import SessionPhases
 from wxbridge.app.participation import ParticipationController
-from wxbridge.app.learning import enqueue_if_active, eligible_messages
-from wxbridge.app.task_policy import GenerationFailure
 from wxbridge.app.delivery import DeliveryController
+from wxbridge.app.reply import ReplyController
+from wxbridge.app.memory import MemoryController
+from wxbridge.wechat.messages import chunk_text
 from wxbridge.app.metrics import Metrics
 from wxbridge.app.build_info import runtime_identity
-from wxbridge.ai.roles import model_settings
-from wxbridge.storage.memory_selection import memory_dialogue
 
 log = logging.getLogger("wxbridge")
 
@@ -92,29 +83,9 @@ class GroupSession(SessionPhases):
                 self.journal.set('instance_id', instance_id)
         self.journal.recover(time.time())
         self.delivery = DeliveryController(cfg, self.journal, self.store, self.chat_id, self.chat_title, logger=self.log)
-        self.generators = {}
+        self.replies = ReplyController(self)
         self.ui_job = None
-        self.memory, self.memory_job, self.memory_error = None, None, ""
-        self.memory_pruned_at = 0
-        if cfg.get("memory", {}).get("enabled") and not cfg["ui"].get("dry_run") and not echo:
-            try:
-                directory = Path(cfg["memory"]["directory"])
-                if not directory.is_absolute():
-                    directory = PROJECT_ROOT/directory
-                self.memory = MemoryStore(directory, self.journal.get("identity"))
-                self.memory.enable_learning(self.last_local_id, time.time(), cfg['memory']['learning']['enabled'])
-                settings = cfg['memory']['learning']
-                enabled = settings['enabled'] and settings['passive_enabled']
-                state = self.journal.get('passive_learning')
-                with self.journal.db:
-                    if state is None or (enabled and not state.get('enabled', False)):
-                        state = dict(started_after_id=self.last_local_id, checked_id=self.last_local_id,
-                                     checked_at=0, enqueued_at=0)
-                    state['enabled'] = enabled
-                    self.journal.set('passive_learning', state)
-            except Exception as exc:
-                self.memory_error = type(exc).__name__
-                self.log.error("记忆初始化失败 category=%s", self.memory_error)
+        self.memory = MemoryController(self)
         self.started_at = time.time()
         from wxbridge.app.model_runtime import GroupModels
         self.models = GroupModels(cfg)
@@ -242,153 +213,6 @@ class GroupSession(SessionPhases):
         self._poll_messages(force=True)
         self.participation.priority(time.time())
 
-    def _generation_step(self):
-        self._poll_generation_results()
-        self._start_generations()
-
-    def _poll_generation_results(self):
-        for task_id, (version, job) in list(self.generators.items()):
-            current = self.journal.task(task_id)
-            if self.participation.expire_reply(current, time.time()) or current["version"] != version:
-                job.close()
-                del self.generators[task_id]
-                self.log.info("废弃生成 task=%s version=%s", task_id, version)
-                continue
-            result = job.poll()
-            if result is None:
-                continue
-            if result.get("error") == "WorkerCleanupError":
-                raise WorkerCleanupError()
-            self.metrics.record_models(result.get('model_metrics'))
-            if result.get("event") == "search_started":
-                settings = self.cfg.get("search", {})
-                if settings.get("feedback_enabled", False):
-                    phrases = settings.get("feedback_phrases") or ["我上网搜搜，核实一下。"]
-                    notice = format_reply(phrases[(task_id-1) % len(phrases)], self.cfg)
-                    if self.journal.request_notice(task_id, version, notice):
-                        self.log.info("搜索提示待发送 task=%s version=%s", task_id, version)
-                continue
-            job.close()
-            del self.generators[task_id]
-            reply = result.get("reply") or ""
-            error = "generation:" + GenerationFailure.from_result(result).code if not result["ok"] else ""
-            chunks = reply_chunks(reply, int(self.cfg["target"].get("max_reply_chars", 1800))) if not error else []
-            if error:
-                self._generation_failed(task_id, version, result)
-            else:
-                try:
-                    proposal = self.image_generation.proposal(result.get('image_requests'))
-                except Exception as exc:
-                    self._generation_failed(task_id, version, dict(error=getattr(exc, 'code', 'invalid_image_tool'), retryable=False))
-                    continue
-                accepted = self.journal.generated(task_id, version, chunks, vision=result.get('vision'),
-                    search=result.get('search'), image_request=proposal, now=time.time())
-                if not accepted:
-                    continue
-                self.log.info("生成结束 task=%s version=%s chunks=%s images=%s error=%s", task_id, version,
-                         len(chunks), (result.get("vision") or {}).get("images", 0), error or "none")
-
-    def _start_generations(self, *, max_new=None):
-        started = 0
-        candidates = self.journal.generation_candidates(self.cfg['queue'].get('generation_lookahead', 4))
-        for task in candidates:
-            if task.get('trigger_kind') == 'participation' and self.participation.expire_reply(task, time.time()):
-                continue
-            head = self.journal.head()
-            if head and head.get('blocked_reason'):
-                break
-            if task["generation"] != "pending" or time.time() < task.get('generation_retry_at', 0):
-                continue
-            if (max_new is not None and started >= max_new):
-                break
-            if task.get('generation_attempts', 0) > self.cfg['queue']['generation_retries']:
-                self._generation_failed(task['id'], task['version'], dict(error='WorkerExited', retryable=False))
-                continue
-            task_id, version = task["id"], task["version"]
-            self.journal.start_generation(task_id, version, time.time())
-            task = self.journal.task(task_id)
-            try:
-                trigger = task["triggers"][-1]
-                start, end = context_bounds(self.cfg, trigger)
-                context = self.store.messages_in_window(self.chat_id, start, end)
-                memory, memory_view = None, None
-                if self.memory:
-                    try:
-                        memory_view = self.memory.view()
-                        labels = member_labels(select_context(self.cfg, context, trigger), task["triggers"], self.store.self_wxid)
-                        memory = dict(labels=labels, text=memory_view.prompt(labels, trigger["sender"], time.time(),
-                                      int(self.cfg["memory"]["prompt_max_chars"]),
-                                      use_avatar=self.cfg["memory"].get("avatar", {}).get("enabled", False),
-                                      dialogue=memory_dialogue(context, task['triggers'], self.store.self_wxid),
-                                      question=trigger.get('text', ''),
-                                      use_learning=self.cfg['memory']['learning']['enabled']),
-                                      relationship=memory_view.reply_relationship(trigger['sender'], time.time()),
-                                      relationship_for=trigger['sender'])
-                    except Exception as exc:
-                        self.memory_error = type(exc).__name__
-                        self.log.warning("跳过记忆背景 category=%s", self.memory_error)
-                profile = self.profile_snapshot([*context, *task['triggers']])
-                prompt = build_prompt(self.cfg, context, trigger, self.chat_title, task["triggers"],
-                                      memory=memory, account=self.store.self_wxid, profile=profile)
-                echo = "[echo] " + "\n".join(m["text"] for m in task["triggers"]) if self.echo else None
-                timeout = float(model_settings(self.cfg)['timeout_seconds']) + 15
-                if self.cfg.get("search", {}).get("enabled", True) and not self.echo:
-                    timeout = float(self.cfg.get("search", {}).get("total_timeout_seconds", 120)) + 15
-                images = []
-                if self.cfg.get("vision", {}).get("enabled", True) and not self.echo:
-                    for index, question in enumerate(task["triggers"]):
-                        reference, depth = question.get("reference"), 0
-                        while isinstance(reference, dict):
-                            if reference.get("kind") == "image":
-                                binding = self.store.image_binding(self.chat_id, reference)
-                                if binding.get('download'):
-                                    binding['download']['chat_title'] = self.chat_title
-                                images.append(dict(trigger_index=index, depth=depth, **binding))
-                            reference, depth = reference.get("reference"), depth+1
-                payload = (self.cfg, prompt, echo)
-                if images:
-                    if self.cfg['vision'].get('download_enabled', False):
-                        timeout += self.cfg['vision'].get('download_timeout_seconds', 20)
-                        if self.cfg['vision'].get('download_backend', 'desktop') == 'native':
-                            task = self.journal.reserve_native_images(task_id, version,
-                                images[:self.cfg['vision']['max_images']])
-                    payload += (dict(context=context, triggers=task["triggers"], chat_title=self.chat_title, images=images,
-                                     memory=memory, account=self.store.self_wxid,
-                                     profile=profile),)
-                if task.get('reply_expires_at') is not None:
-                    timeout = min(timeout, max(0, task['reply_expires_at']-time.time()))
-                with WorkerLease(self.job_factory("generate", payload, timeout=timeout)) as lease:
-                    with self.journal.db:
-                        task["generation"] = "running"
-                        task["memory_used"] = dict(revision=memory_view.revision if memory_view and memory else None,
-                                                   chars=len((memory or {}).get("text", "")))
-                        self.journal.put(task)
-                    self.generators[task_id] = (version, lease.job)
-                    lease.transfer()
-                started += 1
-                self.log.info("开始生成 task=%s version=%s questions=%s references=%s", task_id, version,
-                         len(task["triggers"]), sum(isinstance(m.get("reference"), dict) for m in task["triggers"]))
-            except WorkerCleanupError:
-                raise
-            except Exception as exc:
-                self._generation_failed(task_id, version, dict(error=type(exc).__name__))
-                self.log.error("生成未启动 task=%s category=%s", task_id, type(exc).__name__)
-        return started
-
-    def _generation_failed(self, task_id, version, result):
-        failure = GenerationFailure.from_result(result)
-        settings = self.cfg['queue']
-        self.journal.generation_failure(task_id, version, failure.code, time.time(),
-            retryable=failure.retryable, retries=settings['generation_retries'],
-            delay=settings['generation_retry_delay_seconds'],
-            fallback=format_reply('刚才没接上，等会儿再问我一下。', self.cfg))
-        self.log.warning('生成失败 task=%s version=%s category=%s retryable=%s',
-                    task_id, version, failure.code, failure.retryable)
-        native = next((m.get('native_finish_reason') for m in reversed(result.get('model_metrics') or [])
-                       if m.get('role') == 'reply'), None)
-        if isinstance(native, str) and re.fullmatch('[A-Z][A-Z0-9_]{0,79}', native):
-            self.log.warning('模型结束原因 task=%s native_finish_reason=%s', task_id, native)
-
     @property
     def ui_job(self):
         return self.delivery.job
@@ -401,7 +225,7 @@ class GroupSession(SessionPhases):
         self.delivery.poll_result()
 
     def _confirm_step(self):
-        self.delivery.confirm(memory=self.memory is not None)
+        self.delivery.confirm(memory=self.memory.store is not None)
 
     def _send_step(self):
         account = getattr(self, 'account', None)
@@ -416,155 +240,12 @@ class GroupSession(SessionPhases):
         return (self.journal.get('identity') == dict(account=self.store.self_wxid, chat=self.chat_id)
                 and (task.get('next_chunk', 0) > 0 or now < task.get('reply_expires_at', float('inf'))))
 
-    def _pause_memory(self):
-        if self.memory_job:
-            record, _, worker = self.memory_job
-            worker.close()
-            self.memory_job = None
-            with self.journal.db:
-                record["state"] = "pending"
-                self.journal.put_memory(record)
-
-    def _memory_step(self, *, collect_only=False):
-        if not self.memory:
-            return
-        now = time.time()
-        record = None
-        try:
-            if self.memory_job:
-                record, value, worker = self.memory_job
-                result = worker.poll()
-                if result is None:
-                    return
-                worker.close()
-                self.memory_job = None
-                self.metrics.record_models(result.get('model_metrics'))
-                if not result.get("ok"):
-                    from wxbridge.app.task_policy import memory_failure_code
-                    raise ValueError(memory_failure_code(result))
-                self.memory.apply(result["proposal"], value, now)
-                self.journal.finish_memory(record["id"], now)
-                if record.get('learning_suppressed'):
-                    with self.journal.db:
-                        self.journal.set('memory_recovery', dict(task_id=record['id'], section='expression_learning',
-                            reason=record['recovery_reason'], stage='completed'))
-                self.log.info("记忆更新 task=%s revision=%s", record["id"], self.memory.data["revision"])
-            if collect_only:
-                return
-            enqueue_if_active(self, now)
-            jobs = self.journal.memory_jobs()
-            if now-self.memory_pruned_at >= 60:
-                self.memory.prune(now)
-                self.memory_pruned_at = now
-            occupied = len(self.generators)+int(self.participation.job is not None)
-            if not jobs or self.memory_job:
-                return
-            record = jobs[0]
-            if max(m["local_id"] for m in record["triggers"]) <= self.memory.data["watermark"]:
-                self.journal.finish_memory(record["id"], self.journal.get("memory_last_update", 0))
-                return
-            previous_error = record.get('last_error', self.journal.get('memory_error', ''))
-            source_errors = ('memory_unknown_source', 'memory_unknown_member')
-            if (record['attempts'] >= 3 and isinstance(previous_error, str)
-                    and (previous_error.startswith('memory_learning_') or previous_error in source_errors)
-                    and not record.get('learning_suppressed')):
-                # 新请求明确收窄能力；旧失败结果不写入，来源校验保持不变。
-                record.update(learning_suppressed=True, recovery_reason=previous_error, retry_at=now)
-                with self.journal.db:
-                    self.journal.put_memory(record)
-                    self.journal.set('memory_recovery', dict(task_id=record['id'], section='expression_learning',
-                        reason=previous_error, stage='pending'))
-            if now < record["retry_at"] or now-self.journal.get("memory_last_update", 0) < self.cfg["memory"]["min_interval_seconds"]:
-                return
-            if any(t["generation"] == "pending" for t in self.journal.tasks()):
-                return
-            pointers = record["triggers"]
-            start, end = record.get('window') or context_bounds(self.cfg, pointers[-1])
-            context = self.store.messages_in_window(self.chat_id, start, end)
-            ids = {m["local_id"] for m in pointers}
-            triggers = [m for m in context if m["local_id"] in ids]
-            if len(triggers) != len(ids):
-                raise ValueError("memory_source_unavailable")
-            value = snapshot(self.cfg, context, triggers, self.journal.get("identity"), self.memory, now,
-                             window=record.get('window'), profile=self.profile_snapshot([*context, *triggers]))
-            if record.get('origin') == 'activity':
-                settings = self.cfg['memory']['learning']
-                fresh = eligible_messages([m for m in context if m['local_id'] <= max(ids)], self.store.self_wxid, end, settings,
-                    max(self.memory.data['watermark'], self.memory.data['learning']['started_after_id'],
-                        self.journal.get('passive_learning', {}).get('started_after_id', 0)),
-                    self.memory.data.get('processed_ids', []))
-                if (not settings['enabled'] or not settings['passive_enabled'] or len(fresh) < settings['min_new_messages']
-                        or len({m['sender'] for m in fresh}) < settings['min_senders']):
-                    self.journal.finish_memory(record['id'], self.journal.get('memory_last_update', 0))
-                    return
-            if not value["messages"] and not value.get("interactions"):
-                # 遗忘水位或已处理的重叠窗口，不额外调用模型。
-                self.journal.finish_memory(record["id"], self.journal.get("memory_last_update", 0))
-                return
-            if record.get('learning_suppressed'):
-                value.update(learning_enabled=False, learning_source_ids=[], learning_existing=[],
-                             recovery=dict(section='expression_learning', reason=record['recovery_reason']))
-                if record['recovery_reason'] in source_errors:
-                    value['dialogue'] = []  # 本批只用新本人发言；不从旧对白提取证据。
-            avatars = self.cfg["memory"].get("avatar", {})
-            if avatars.get("enabled"):
-                value["avatars"] = {}
-                new_labels = {m["member"] for m in [*value["messages"], *value.get("interactions", [])]}
-                for uid in sorted(value["members"]):
-                    if uid not in self.memory.data["members"] and value["members"][uid]["label"] not in new_labels:
-                        continue  # 已遗忘且只有旧发言的成员，不从旧窗口再导入头像。
-                    initial = self.memory.data["members"].get(uid, {}).get("initial_impression", {})
-                    if initial.get("state") in ("ready", "forgotten", "expired"):
-                        continue
-                    if now-initial.get("checked_at", 0) < avatars["retry_interval_seconds"]:
-                        continue
-                    try:
-                        item = self.store.avatar(uid, max_bytes=avatars["max_bytes"])
-                        if not isinstance(item, dict):
-                            raise ValueError("avatar_invalid_binding")
-                    except Exception:
-                        item = dict(available=False, error="avatar_unavailable")
-                    value["avatars"][uid] = item
-                    if len(value["avatars"]) >= avatars["max_per_batch"]:
-                        break
-            with WorkerLease(self.job_factory("memory", (self.cfg, value),
-                                              timeout=model_settings(self.cfg, 'memory')['timeout_seconds']+2)) as lease:
-                with self.journal.db:
-                    record["state"] = "running"
-                    self.journal.put_memory(record)
-                    if record.get('learning_suppressed'):
-                        self.journal.set('memory_recovery', dict(task_id=record['id'], section='expression_learning',
-                            reason=record['recovery_reason'], stage='running'))
-                self.memory_job = (record, value, lease.job)
-                lease.transfer()
-        except WorkerCleanupError:
-            raise
-        except Exception as exc:
-            # 永不输出异常消息、模型输出或记忆正文。
-            if self.memory_job:
-                self.memory_job[2].close()
-                self.memory_job = None
-            with self.journal.db:
-                import re
-                code = str(exc) if re.fullmatch(r"memory_[a-z0-9_]{1,64}", str(exc)) else type(exc).__name__
-                if record:
-                    record.update(state="pending", attempts=record["attempts"]+1, last_error=code,
-                                  retry_at=now+max(self.cfg['memory']['learning']['min_interval_seconds'] if record.get('origin') == 'activity' else 0,
-                                                   min(300, 60*(record["attempts"]+1))))
-                    terminal = code in ('memory_missing_api_key', 'memory_http_401', 'memory_http_403')
-                    maximum = 8 if record.get('learning_suppressed') else 5
-                    if terminal or record['attempts'] >= maximum:
-                        record.update(state='quarantined', quarantined_at=now)
-                    self.journal.put_memory(record)
-                self.journal.set("memory_error", code)
-            self.log.warning("记忆延后 category=%s", code)
-
     def tick(self):
         self.run_phases(self.native_api)
 
     def maintain(self):
         if time.time()-self.maintenance_at >= 60:
-            protected = [*self.generators, *([self.ui_job[0]] if self.ui_job else [])]
+            protected = [*self.replies.jobs, *([self.ui_job[0]] if self.ui_job else [])]
             protected.extend(t['parent_task_id'] for t in self.journal.image_tasks())
             self.journal.prune_completed(self.cfg['queue']['completed_retention'], protected)
             self.maintenance_at = time.time()
@@ -587,7 +268,10 @@ class GroupSession(SessionPhases):
                 status["phase"] = "ready"
         status.update(pid=os.getpid(), updated_at=time.time(), started_at=self.started_at,
                       dry_run=bool(self.cfg["ui"].get("dry_run")), echo=self.echo,
-                      model_channels=self.models.status(), generation_workers=len(self.generators), context_window_seconds=self.cfg["target"]["context_window_seconds"],
+                      model_channels=self.models.status(), generation_workers=len(self.replies.jobs),
+                      context_policy={key:self.cfg['target'][key] for key in ('context_recent_messages',
+                          'context_max_age_seconds','context_bot_messages','context_max_chars','context_budget_strategy')},
+                      context=self.journal.get('context', {}),
                       pat_enabled=self.cfg['participation']['pat_enabled'])
         status.update(build=self.build, metrics=self.metrics.snapshot())
         status['configured_backend'] = self.cfg['ui']['backend']
@@ -595,8 +279,7 @@ class GroupSession(SessionPhases):
             ('send_blocked', bool(status.get('blocked_reason'))),
             ('queue_backpressure', bool(status.get('backpressure'))),
             ('memory_quarantined', bool(status.get('memory_quarantined')))) if present]
-        status["memory"] = dict(enabled=self.memory is not None, running=self.memory_job is not None,
-                                error=self.memory_error, **(self.memory.status(time.time()) if self.memory else {}))
+        status['memory'] = self.memory.status()
         status['profile'] = self.profile.status() if self.profile else dict(enabled=False)
         status['image_generation'] = dict(enabled=self.cfg['image_generation']['enabled'],
             running=len(self.image_generation.jobs), last=status.get('last_image_generation'))
@@ -653,9 +336,8 @@ class GroupSession(SessionPhases):
             stack.callback(self.save_status, stopped=True)
             if self.ui_job:
                 stack.callback(self.ui_job[2].close)
-            for _, job in self.generators.values():
-                stack.callback(job.close)
-            stack.callback(self._pause_memory)
+            stack.callback(self.replies.close)
+            stack.callback(self.memory.close)
             if self.profile:
                 stack.callback(self.profile.close)
             stack.callback(self.participation.cancel, 'stopped')
@@ -672,6 +354,3 @@ class GroupSession(SessionPhases):
                 time.sleep(min(float(self.cfg.get("poll_interval_seconds", 2)), 1.0))
         except KeyboardInterrupt:
             self.log.info("停止监听，未完成任务保留在内存队列")
-
-
-# Existing callers and offline fixtures keep their import and constructor contract.

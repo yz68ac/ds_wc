@@ -6,6 +6,7 @@ import re
 import subprocess
 
 from wxbridge.config import PROJECT_ROOT
+from wxbridge.paths import SOURCE_ROOT
 
 
 @lru_cache(maxsize=1)
@@ -15,6 +16,8 @@ def code_revision():
         if manifest.is_file():
             revision = json.loads(manifest.read_text(encoding='utf-8'))['commit']
         else:
+            if SOURCE_ROOT is None:
+                return 'unknown'
             result = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=PROJECT_ROOT,
                                     capture_output=True, text=True, timeout=3, check=True)
             revision = result.stdout.strip()

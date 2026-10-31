@@ -7,8 +7,8 @@ from unittest.mock import patch
 from wxbridge.ai.memory import extract, snapshot
 from wxbridge.storage.person_memory import MemoryStore, DAY, affinity_value
 from wxbridge.storage import relationships as relation
-import test_memory as memory_tests
-from synthetic import NOW, msg
+import tests.support.memory as memory_tests
+from tests.support.synthetic import NOW, msg
 
 IDENTITY = memory_tests.IDENTITY
 
@@ -28,7 +28,7 @@ def emotion(source='m1', state='upset', intensity=2):
 
 
 class RelationshipTests(unittest.TestCase):
-    setUp = memory_tests.MemoryTests.setUp
+    setUp = memory_tests.MemoryFixture.setUp
 
     def turn(self, when=NOW, *, text=None, who='wxid_a', name='合成群友', delta=0, trust=0,
              event=None, strength='clear', mood=None, revises=None, update=True):
@@ -295,32 +295,32 @@ class RelationshipTests(unittest.TestCase):
 
 
 class RelationshipPipelineTests(unittest.TestCase):
-    setUp = memory_tests.PipelineTests.setUp
-    make_bot = memory_tests.PipelineTests.make_bot
-    add = memory_tests.PipelineTests.add
-    sends = memory_tests.PipelineTests.sends
-    generated = memory_tests.PipelineTests.generated
-    enable = memory_tests.MemoryPipelineTests.enable
-    confirmed = memory_tests.MemoryPipelineTests.confirmed
+    setUp = memory_tests.PipelineFixture.setUp
+    make_bot = memory_tests.PipelineFixture.make_bot
+    add = memory_tests.PipelineFixture.add
+    sends = memory_tests.PipelineFixture.sends
+    generated = memory_tests.PipelineFixture.generated
+    enable = memory_tests.MemoryPipelineFixture.enable
+    confirmed = memory_tests.MemoryPipelineFixture.confirmed
 
     def test_repeated_learning_validation_failure_retries_narrowed_batch_then_next_batch_learns(self):
-        import test_learning as learning_tests
+        import tests.support.memory as learning_tests
         self.enable()
         self.confirmed()
         invalid = dict(updates=[], learning=[learning_tests.observation(member='wxid_friend')])
         for attempt in range(1, 4):
-            self.bot.memory_job[2].result = dict(ok=True, proposal=invalid)
+            self.bot.memory.job[2].result = dict(ok=True, proposal=invalid)
             self.bot.tick()
             record = self.bot.journal.memory_jobs()[0]
             self.assertEqual(record['attempts'], attempt)
             self.assertEqual(record['last_error'], 'memory_learning_expression_not_observed')
-            self.assertEqual(self.bot.memory.data['watermark'], 0)
+            self.assertEqual(self.bot.memory.store.data['watermark'], 0)
             if attempt < 3:
                 self.now = record['retry_at']
                 self.bot.tick()
-                self.assertIsNotNone(self.bot.memory_job)
+                self.assertIsNotNone(self.bot.memory.job)
         self.bot.tick()  # 新能力范围的请求可立即启动，未篡改原失败建议。
-        record, value, job = self.bot.memory_job
+        record, value, job = self.bot.memory.job
         self.assertTrue(record['learning_suppressed'])
         self.assertFalse(value['learning_enabled'])
         self.assertEqual(value['learning_existing'], [])
@@ -330,37 +330,37 @@ class RelationshipPipelineTests(unittest.TestCase):
         self.assertFalse(self.bot.journal.memory_jobs())
         self.assertEqual(self.bot.journal.get('memory_error'), '')
         self.assertEqual(self.bot.journal.get('memory_recovery')['stage'], 'completed')
-        self.assertEqual(self.bot.memory.data['members']['wxid_friend']['relationship']['trust'], 51)
+        self.assertEqual(self.bot.memory.store.data['members']['wxid_friend']['relationship']['trust'], 51)
         self.add(3, mention=False, text='下一批的新话题')
         self.bot.tick()
         with self.bot.journal.db:
             self.bot.journal.enqueue_memory('reply', 'synthetic-next', [dict(local_id=3,time=int(self.now))])
         self.now += 60
         self.bot.tick()
-        self.assertTrue(self.bot.memory_job[1]['learning_enabled'])
-        self.assertFalse(self.bot.memory_job[0].get('learning_suppressed'))
+        self.assertTrue(self.bot.memory.job[1]['learning_enabled'])
+        self.assertFalse(self.bot.memory.job[0].get('learning_suppressed'))
 
     def test_output_limit_is_reported_and_requeued_without_writing_partial_memory(self):
         self.enable()
         self.confirmed()
-        revision = self.bot.memory.data['revision']
-        self.bot.memory_job[2].result = dict(ok=False, error='output_limit')
+        revision = self.bot.memory.store.data['revision']
+        self.bot.memory.job[2].result = dict(ok=False, error='output_limit')
         self.bot.tick()
         self.assertEqual(self.bot.journal.get('memory_error'), 'memory_output_limit')
-        self.assertEqual(self.bot.memory.data['revision'], revision)
+        self.assertEqual(self.bot.memory.store.data['revision'], revision)
         self.assertEqual(self.bot.journal.memory_jobs()[0]['state'], 'pending')
         self.assertEqual(self.bot.journal.memory_jobs()[0]['attempts'], 1)
         self.add(3)
         self.bot.tick()
-        self.assertTrue(self.bot.generators)
+        self.assertTrue(self.bot.replies.jobs)
 
     def test_confirmed_reply_updates_relationship_and_next_reply_gets_natural_background(self):
         self.enable()
         self.confirmed()
-        job = self.bot.memory_job[2]
+        job = self.bot.memory.job[2]
         job.result = dict(ok=True, proposal=proposal(delta=1, trust=1, mood=emotion(), member='wxid_friend'))
         self.bot.tick()
-        p = self.bot.memory.data['members']['wxid_friend']
+        p = self.bot.memory.store.data['members']['wxid_friend']
         self.assertEqual((p['affinity'], p['relationship']['trust']), (51, 51))
         self.add(3)
         self.bot.tick()

@@ -19,6 +19,7 @@ import time
 import tempfile
 import xml.etree.ElementTree as ET
 from datetime import datetime
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +31,13 @@ from wechat_linux.messages.references import image_md5, local_image_cache_key, p
 from wechat_linux.messages.pats import parse_pat
 
 from wechat_linux.errors import StoreError
+
+
+@dataclass(frozen=True)
+class HistoryPage:
+    messages: list[dict[str, Any]]
+    scanned: int
+    cursor: tuple[int, int] | None
 
 
 def _image_paths(bucket: str, month: str, chat_hash: str, stem: str) -> list[dict]:
@@ -543,7 +551,9 @@ class WeChatStore:
         self, chat_id: str, limit: int | None, after_local_id: int | None = None,
         time_window: tuple[int, int] | None = None,
         server_id: str | None = None,
-    ) -> list[dict[str, Any]]:
+        *, before: tuple[int, int] | None = None, max_local_id: int | None = None,
+        page: bool = False,
+    ) -> list[dict[str, Any]] | HistoryPage:
         rel, table = self.message_table(chat_id)
         contacts = self.contacts()
         conn = self._connect(rel)
@@ -569,6 +579,12 @@ class WeChatStore:
             if time_window is not None:
                 where.append("create_time >= ? AND create_time <= ?")
                 params.extend(time_window)
+            if before is not None:
+                where.append('(create_time < ? OR (create_time = ? AND local_id < ?))')
+                params.extend((before[0], before[0], before[1]))
+            if max_local_id is not None:
+                where.append('local_id <= ?')
+                params.append(max_local_id)
             suffix = (" WHERE " + " AND ".join(where)) if where else ""
             suffix += (" ORDER BY local_id ASC" if after_local_id is not None
                        else " ORDER BY create_time DESC, local_id DESC")
@@ -582,6 +598,9 @@ class WeChatStore:
         parsed = [p for p in parsed if p is not None]
         if after_local_id is None:
             parsed.reverse()
+        if page:
+            cursor = min((int(r['create_time']), int(r['local_id'])) for r in rows) if rows else None
+            return HistoryPage(parsed, len(rows), cursor)
         return parsed
 
     def _image_index_rows(self, digest, cache_key):
@@ -665,6 +684,16 @@ class WeChatStore:
 
     def recent_messages(self, chat_id: str, limit: int = 20) -> list[dict[str, Any]]:
         return self._query_messages(chat_id, max(1, limit))
+
+    def messages_before(self, chat_id, *, before, since, max_local_id, limit=200):
+        if (not isinstance(before, tuple) or len(before) != 2
+                or any(type(v) is not int or v < 1 for v in before)
+                or type(since) is not int or since > before[0]
+                or type(max_local_id) is not int or max_local_id < 1
+                or type(limit) is not int or not 1 <= limit <= 200):
+            raise StoreError('invalid_history_query')
+        return self._query_messages(chat_id, limit, time_window=(since, before[0]),
+                                    before=before, max_local_id=max_local_id, page=True)
 
     def messages_in_window(self, chat_id: str, start: int, end: int) -> list[dict[str, Any]]:
         if start > end or end <= 0:

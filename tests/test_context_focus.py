@@ -1,5 +1,5 @@
 """Synthetic regressions for topic drift, selected recipients and quoted identity."""
-from model_support import default_config
+from tests.support.model_support import default_config
 from contextlib import nullcontext
 import copy
 import json
@@ -7,11 +7,11 @@ from pathlib import Path
 import unittest
 from unittest.mock import Mock, patch
 
-from synthetic import NOW, msg
-import test_memory as memory_tests
-from test_memory import IDENTITY, suggestion
-import test_context_pipeline as pipeline
-import test_conversation as conversation
+from tests.support.synthetic import NOW, msg
+import tests.support.memory as memory_tests
+from tests.support.memory import IDENTITY, suggestion
+import tests.support.pipeline as pipeline
+import tests.support.conversation as conversation
 from wxbridge.ai.memory import snapshot
 from wxbridge.ai.identity import member_labels, reference_data
 from wxbridge.ai.prompts import build_prompt as normal_prompt
@@ -21,7 +21,7 @@ from wxbridge.storage.memory_selection import memory_dialogue, MemoryTopic
 
 
 class RetrievalTests(unittest.TestCase):
-    setUp = memory_tests.MemoryTests.setUp
+    setUp = memory_tests.MemoryFixture.setUp
 
     def seed(self, number, text, kind='event'):
         row = msg(number, NOW, text, 'wxid_a')
@@ -136,8 +136,9 @@ class IdentityAndFocusTests(unittest.TestCase):
         self.assertEqual(self.decoded(p)['members'][self.account], dict(alias='同名'))
         n = normal_prompt(self.cfg, self.rows[:1], self.rows[1], '合成群',
                           memory=dict(labels=labels), account=self.account)
-        self.assertIn('"member": "'+self.account+'"', n[1]['content'])
-        self.assertIn('"member": "'+labels['person_b']+'"', n[1]['content'])
+        quote = self.decoded(n)['messages'][-1]['reference']
+        self.assertEqual(quote['sender'], self.account)
+        self.assertEqual(quote['reference']['sender'], labels['person_b'])
         self.assertNotIn('"member": "BOT"', json.dumps([p,n], ensure_ascii=False))
         self.assertEqual(self.rows, saved)
 
@@ -160,7 +161,8 @@ class IdentityAndFocusTests(unittest.TestCase):
         self.assertNotIn('MEMBER_MEMORY', p[1]['content'])
         self.assertIn('SELECTED_MEMBER_MEMORY', reply[1]['content'])
         self.assertNotIn('OTHER_MEMBER_MEMORY', reply[1]['content'])
-        self.assertIn('"id": 2, "sender": "person_a"', reply[1]['content'])
+        self.assertEqual(self.decoded(reply)['source_ids'], [2])
+        self.assertEqual(self.decoded(reply)['messages'][-1]['sender'], 'person_a')
         self.assertIn('原话', reply[1]['content'])
         self.assertEqual(result['reply_to'], [2])
 
@@ -181,6 +183,7 @@ class IdentityAndFocusTests(unittest.TestCase):
         self.assertNotIn('另外一个问题', reply[1]['content'])
 
     def test_budget_removes_whole_memory_lines_not_history_or_target(self):
+        self.cfg['target']['context_budget_strategy'] = 'strict'
         base = normal_prompt(self.cfg, self.rows, self.rows[1], '合成群', account=self.account)
         self.cfg['target']['context_max_chars'] = len(base[1]['content'])
         reply = normal_prompt(self.cfg, self.rows, self.rows[1], '合成群',
@@ -197,9 +200,9 @@ class IdentityAndFocusTests(unittest.TestCase):
 
 
 class FrozenMemoryPipelineTests(unittest.TestCase):
-    setUp = pipeline.PipelineTests.setUp
-    make_bot = conversation.ConversationTests.make_bot
-    add = pipeline.PipelineTests.add
+    setUp = pipeline.PipelineFixture.setUp
+    make_bot = conversation.ConversationFixture.make_bot
+    add = pipeline.PipelineFixture.add
 
     def test_owner_reads_selected_memory_after_decision_and_freezes_generation_request(self):
         self.add(1, sender='member_a', text='聊聊JOJO', mention=False)
@@ -212,7 +215,8 @@ class FrozenMemoryPipelineTests(unittest.TestCase):
         view.revision = 7
         view.prompt.side_effect = lambda labels, asker, *a, **kw: 'MEMORY_FOR_'+asker
         view.reply_relationship.return_value = None
-        self.bot.memory = memory
+        self.bot.memory.store = memory
+        self.cfg['memory']['enabled'] = True
         self.bot.tick()
         job = self.bot.participation.job
         prompt, options = job.payload[1:]

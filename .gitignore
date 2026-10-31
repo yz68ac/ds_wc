@@ -7,6 +7,9 @@ __pycache__/
 /src/provider/build/
 /src/provider/dist/
 /src/provider/*.egg-info/
+/src/wechat_linux/build/
+/src/wechat_linux/dist/
+/src/wechat_linux/*.egg-info/
 config.json
 keys.json
 all_keys.json

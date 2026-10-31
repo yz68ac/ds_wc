@@ -13,6 +13,9 @@ from wxbridge_web.control import request as control_request
 
 def parser():
     p = argparse.ArgumentParser(prog='wxbridge', description='微信机器人主机管理；start/stop/restart 保留微信会话。')
+    from wxbridge import __version__
+    p.add_argument('--version', action='version', version=__version__)
+    p.add_argument('--root', type=Path, help='账号配置与 instance 所在目录；默认 /opt/wxbridge')
     commands = p.add_subparsers(dest='command', required=True)
     status = commands.add_parser('status', help='查看服务、登录和各实例的安全状态')
     status.add_argument('--json', action='store_true')
@@ -40,6 +43,8 @@ def parser():
     setup.add_argument('--instance', default='default')
     commands.add_parser('doctor', help='只读检查安装、依赖、微信版本与运行环境')
     commands.add_parser('config', help='显示需要填写的配置文件位置')
+    from wxbridge.debug_cli import build_parser
+    build_parser(commands.add_parser('debug', help='配置诊断、队列检查和显式前台调试'), command_dest='debug_command')
     return p
 
 
@@ -69,7 +74,7 @@ def current_status(paths):
     rows = {}
     for identifier, item in live.get('instances', {}).items() if fresh else []:
         rows[identifier] = {k:item.get(k) for k in ('queue_length','cursor','blocked_reason','models',
-            'model_channels','image_generation','quiescing')}
+            'model_channels','image_generation','quiescing','context','context_policy')}
     login = login_snapshot(paths)
     return {**value, 'snapshot_current':fresh, 'instances':rows, 'login':login}
 
@@ -108,6 +113,13 @@ def print_status(value):
         print(f"实例 {identifier}: 队列 {item.get('queue_length',0)}，游标 {item.get('cursor','—')}")
         if item.get('blocked_reason'):
             print('  发送阻塞：'+item['blocked_reason'])
+        for role, context in item.get('context', {}).items():
+            if context.get('error'):
+                print(f"  {role} 上下文：{context['error']}")
+            else:
+                print(f"  {role} 上下文：{context.get('chars',0)} 字符，历史 {context.get('retained',0)}"
+                      f"/{context.get('selected',0)} 条，裁剪 {context.get('omitted',0)} 条，"
+                      f"扫描 {context.get('scanned',0)} 条"+('（达到扫描上限）' if context.get('scan_limit_hit') else ''))
 
 
 def validate_start(paths):
@@ -198,8 +210,13 @@ def main(argv=None, *, root=None):
         if hasattr(stream,'reconfigure'):
             stream.reconfigure(encoding='utf-8',errors='replace')
     args = parser().parse_args(argv)
-    paths = Paths(app=Path(root) if root else Path('/opt/wxbridge'))
+    paths = Paths(app=(args.root or Path(root or '/opt/wxbridge')).resolve())
     try:
+        if args.command == 'debug':
+            from wxbridge.debug_cli import execute
+            args.command = args.debug_command
+            args.config = args.config or str(paths.app/'config.json')
+            return execute(args)
         if args.command == 'status':
             value = current_status(paths)
             print(json.dumps(value,ensure_ascii=False,indent=2)) if args.json else print_status(value)

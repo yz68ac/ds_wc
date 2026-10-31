@@ -1,6 +1,6 @@
 """引用解析及 API 提示词：合成正文，不读取实际聊天或调用网络。"""
 from __future__ import annotations
-from model_support import default_config
+from tests.support.model_support import default_config
 from contextlib import nullcontext
 
 import html
@@ -12,29 +12,11 @@ from unittest.mock import Mock
 from wxbridge.config import DEFAULTS, _deep_merge
 from wxbridge.ai.context import ContextError
 from wxbridge.ai.prompts import build_prompt
-from wxbridge.wechat.references import parse_quoted_reply
+from wechat_linux.messages.references import parse_quoted_reply
 from wxbridge.wechat.store import WeChatStore
 from wxbridge.wechat.messages import display_message
-from synthetic import NOW, msg
-
-PACKED_REFERENCE = (57 << 32) | 49
-
-
-def quoted_xml(question="@ds 这怎么看", content="明天 10 点开会", kind=1, *, sender="wxid_original", created=NOW-10000):
-    return (f'<msg><appmsg><title>{html.escape(question)}</title><type>57</type><refermsg>'
-            f'<type>{kind}</type><svrid>1234567890123456789</svrid><fromusr>{sender}</fromusr>'
-            f'<chatusr>synthetic@chatroom</chatusr><displayname>小明</displayname>'
-            f'<content>{html.escape(content)}</content><createtime>{created}</createtime>'
-            f'<msgsource>&lt;msgsource&gt;&lt;atuserlist&gt;wxid_self&lt;/atuserlist&gt;&lt;/msgsource&gt;</msgsource>'
-            '</refermsg></appmsg></msg>')
-
-
-def parse_message(xml, raw_type=PACKED_REFERENCE, mention="wxid_self"):
-    store = WeChatStore.__new__(WeChatStore)
-    row = {"local_id": 50, "local_type": raw_type, "create_time": NOW,
-           "message_content": "wxid_friend:\n"+xml, "real_sender_id": 1,
-           "source": f"<msgsource><atuserlist>{mention}</atuserlist></msgsource>"}
-    return display_message(store._parse_message("synthetic@chatroom", row, {}, {1: "wxid_friend"}))
+from tests.support.synthetic import NOW, msg
+from tests.support.messages import PACKED_REFERENCE, quoted_xml, parse_message
 
 
 class ReferenceParsingTests(unittest.TestCase):
@@ -125,15 +107,18 @@ class ReferencePromptTests(unittest.TestCase):
         self.assertNotIn("UNRELATED_OLD_SECRET", prompt)
         self.assertEqual(prompt.count("@ds 这怎么看"), 1)
         self.assertIn("小明", prompt)
-        self.assertIn('"member": "wxid_original"', prompt)
+        self.assertIn('"sender":"wxid_original"', prompt)
         self.assertNotIn("1234567890123456789", prompt)
         self.assertNotIn("<refermsg>", prompt)
 
     def test_unavailable_media_and_nested_quote_have_clear_boundary(self):
         trigger = parse_message(quoted_xml(content="IMAGE_PRIVATE_XML", kind=3))
-        prompt = build_prompt(self.cfg, [], trigger, "合成群")[1]["content"]
-        self.assertIn('"available": false', prompt)
-        self.assertIn("不要猜测图片", prompt)
+        prompt = build_prompt(self.cfg, [], trigger, "合成群")
+        from wxbridge.ai.output import response_prompt
+        rules = response_prompt(prompt)[0]["content"]
+        prompt = prompt[1]["content"]
+        self.assertIn('"available":false', prompt)
+        self.assertIn("不要猜测图片", rules)
         self.assertNotIn("IMAGE_PRIVATE_XML", prompt)
 
     def test_reference_counts_towards_budget_without_silent_truncation(self):
@@ -148,7 +133,7 @@ class ReferencePromptTests(unittest.TestCase):
         trigger = msg(50, NOW, "@ds 普通问题")
         prompt = build_prompt(self.cfg, [old], trigger, "合成群")[1]["content"]
         self.assertIn("UNREQUESTED_REFERENCE", prompt)
-        self.assertIn('"member": "wxid_original"', prompt)
+        self.assertIn('"sender":"wxid_original"', prompt)
         self.assertIn(old["text"], prompt)
 
 
