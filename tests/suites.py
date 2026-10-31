@@ -86,6 +86,7 @@ SUITES = {
         'test_release',
         'test_review_operations',
         'test_service_supervisor',
+        'test_upgrade_installation',
         'test_web_console',
         'test_web_models',
     ),
