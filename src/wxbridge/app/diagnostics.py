@@ -13,7 +13,7 @@ from wxbridge.wechat.ui import A11y, Sender, UIError
 
 def check(cfg: dict, group: str = "") -> int:
     from contextlib import ExitStack
-    from wxbridge.app.runtime import instance_lock
+    from wxbridge.app.locks import instance_lock
     from wxbridge.instances import runtime_locks
     with ExitStack() as stack:
         for path in runtime_locks(cfg):

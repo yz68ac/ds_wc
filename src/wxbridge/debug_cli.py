@@ -132,7 +132,7 @@ def memory_command(cfg, args):
     from contextlib import ExitStack
     from pathlib import Path
     import time
-    from wxbridge.app.runtime import instance_lock
+    from wxbridge.app.locks import instance_lock
     from wxbridge.storage.journal import checked_path
     from wxbridge.storage.person_memory import MemoryStore
     from wxbridge.storage.inspection import inspect_queue

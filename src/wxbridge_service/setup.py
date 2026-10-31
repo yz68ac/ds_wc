@@ -7,7 +7,7 @@ import time
 import uuid
 
 from .host import atomic_json, atomic_file, as_user, need_root, private_json, service_account
-from wxbridge_web.control import request as control_request
+from wxbridge.control import request as control_request
 
 
 def discover_database(paths, account):

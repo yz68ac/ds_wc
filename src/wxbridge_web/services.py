@@ -6,7 +6,7 @@ import time
 import uuid
 
 from wxbridge_web.repository import ManagementError
-from wxbridge_web.control import BOT, SESSION, HELPER, RECOVERY, WEB, COMPONENTS, DEFAULT_SOCKET, request
+from wxbridge.control import BOT, SESSION, HELPER, RECOVERY, WEB, COMPONENTS, DEFAULT_SOCKET, request
 
 class ServiceManager:
     def __init__(self, *, allow_control=False, control_socket=DEFAULT_SOCKET):

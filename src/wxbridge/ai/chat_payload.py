@@ -24,6 +24,14 @@ def encode_payload(value):
     return json.dumps(value, ensure_ascii=False, separators=(',', ':'), allow_nan=False)
 
 
+def context_stats(selection, payload):
+    required = set(payload['source_ids'])
+    return dict(chars=len(encode_payload(payload)), selected=len(selection),
+                retained=sum(m['id'] not in required for m in payload['messages']),
+                omitted=payload.get('history_omitted', 0), scanned=selection.scanned,
+                scan_limit_hit=selection.scan_limit_hit)
+
+
 def compact_reference(reference, *, account='', aliases=None, remember=None):
     """Keep the quote allowlist, with the same sender shape as messages."""
     value = reference_data(reference, {}, account, aliases=aliases)

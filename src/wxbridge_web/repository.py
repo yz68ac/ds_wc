@@ -185,7 +185,7 @@ class ConfigRepository:
             return dict(**self.get(identifier), activation='restart_required')
 
     def request_instance(self, identifier, action, expected):
-        from wxbridge.app.instance_control import REQUEST_FILE
+        from wxbridge.instance_requests import REQUEST_FILE
         if action not in {'start','stop','apply'}:
             raise ManagementError('invalid_instance_action','不支持的实例操作。')
         with self.lock:

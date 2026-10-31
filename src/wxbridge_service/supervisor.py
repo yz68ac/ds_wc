@@ -12,7 +12,7 @@ import struct
 import subprocess
 import time
 
-from wxbridge_web.control import ACTIONS, BOT, COMPONENTS, DEFAULT_SOCKET, HELPER, RECOVERY, SESSION, WEB, receive
+from wxbridge.control import ACTIONS, BOT, COMPONENTS, DEFAULT_SOCKET, HELPER, RECOVERY, SESSION, WEB, receive
 
 log = logging.getLogger('wxbridge.service')
 GUI_ENV = frozenset(('DISPLAY', 'XAUTHORITY', 'XDG_RUNTIME_DIR', 'DBUS_SESSION_BUS_ADDRESS',

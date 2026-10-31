@@ -8,7 +8,7 @@ import sys
 import time
 
 from .host import Paths, UNIT, as_user, need_root, private_json
-from wxbridge_web.control import request as control_request
+from wxbridge.control import request as control_request
 
 
 def parser():

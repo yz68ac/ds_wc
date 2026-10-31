@@ -114,11 +114,14 @@ class InstanceOperationsTests(InstanceFixture):
         self.assertEqual(value['memory_pending'], 2)
         self.assertEqual(len(value['identity']), 2)
         self.assertFalse(deploy.listener_idle(dict(pending=0, memory_pending=0), dict(send_blocked=True)))
+        idle = dict(pending=0, memory_pending=0)
+        self.assertFalse(deploy.listener_idle(idle, dict(participation=dict(outcome='evaluating'))))
+        self.assertFalse(deploy.listener_idle(idle, dict(instances={'alpha':dict(participation=dict(running=1))})))
 
     def test_database_check_gets_exclusive_owner_before_creating_reader(self):
         from wxbridge.app.diagnostics import check
         from wechat_linux.errors import OwnerBusyError
-        with patch('wxbridge.app.runtime.instance_lock', side_effect=OwnerBusyError('resource_busy')), \
+        with patch('wxbridge.app.locks.instance_lock', side_effect=OwnerBusyError('resource_busy')), \
              patch('wxbridge.app.diagnostics.WeChatStore') as store:
             with self.assertRaises(OwnerBusyError): check(self.cfg['instances'][0]['config'])
             store.assert_not_called()

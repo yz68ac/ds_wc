@@ -62,7 +62,7 @@ class DemoServices:
             now=time.time()
             items=ConfigRepository(self.root).list()
             if self.active:
-                from wxbridge.app.instance_control import REQUEST_FILE,read_request
+                from wxbridge.instance_requests import REQUEST_FILE,read_request
                 for item in items:
                     path=self.root/'instance'/item['id']/REQUEST_FILE
                     if path.is_file():

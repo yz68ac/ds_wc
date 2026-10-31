@@ -126,7 +126,7 @@ class PromptComposer:
                               external_chars=len(outside_before)+len(outside_after),plan=layout.selection)
         result[1]['content'] = outside_before+encode_payload(payload)+outside_after
         if layout.selection is not None:
-            from wxbridge.ai.context import context_stats
+            from wxbridge.ai.chat_payload import context_stats
             result.context_stats = context_stats(layout.selection,payload)
             result.context_stats['chars'] += len(outside_before)+len(outside_after)
         result.layout = None  # One binding pass; no accidental second patch.

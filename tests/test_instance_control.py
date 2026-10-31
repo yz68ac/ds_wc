@@ -52,7 +52,7 @@ class InstanceControlTests(unittest.TestCase):
         self.a=next(session for session in sessions if session.instance_id=='private_demo')
         self.b=next(session for session in sessions if session.instance_id=='group_demo')
         self.enterContext(patch.object(self.control,'_inactive'))
-        self.enterContext(patch('wxbridge.app.runtime.instance_lock',side_effect=lambda value:nullcontext()))
+        self.enterContext(patch('wxbridge.app.instance_control.instance_lock',side_effect=lambda value:nullcontext()))
         self.constructor=self.enterContext(patch('wxbridge.app.bot.GroupSession',side_effect=FakeSession))
 
     def request(self,name,action):
@@ -186,7 +186,7 @@ class RealJournalTransitionTests(unittest.TestCase):
         checkpoint_ids={identifier for identifier,_,_ in configured_groups(fixture.root,fixture.root,include_disabled=True)}
         self.assertIn('alpha',checkpoint_ids)
         item=repo.get('alpha');repo.request_instance('alpha','start',item['revision'])
-        with patch('wxbridge.app.runtime.instance_lock',side_effect=lambda value:nullcontext()):
+        with patch('wxbridge.app.instance_control.instance_lock',side_effect=lambda value:nullcontext()):
             control.checked=0;control.tick()
         after=next(session for session in owner.sessions if session.instance_id=='alpha')
         self.assertEqual(after.last_local_id,cursor)

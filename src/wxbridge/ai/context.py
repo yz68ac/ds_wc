@@ -127,12 +127,3 @@ def read_context(cfg, store, chat_id, triggers, *, account=''):
     selected.scanned = scanned
     selected.scan_limit_hit = scanned == SCAN_LIMIT and not exhausted
     return selected
-
-
-def context_stats(selection, payload):
-    from wxbridge.ai.chat_payload import encode_payload
-    required = set(payload['source_ids'])
-    return dict(chars=len(encode_payload(payload)), selected=len(selection),
-                retained=sum(m['id'] not in required for m in payload['messages']),
-                omitted=payload.get('history_omitted', 0), scanned=selection.scanned,
-                scan_limit_hit=selection.scan_limit_hit)

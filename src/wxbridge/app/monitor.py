@@ -11,7 +11,7 @@ import stat
 import time
 
 from wxbridge.ai.roles import ROLES, model_settings
-from wxbridge_web.control import BOT, SESSION, RECOVERY, request as control_request
+from wxbridge.control import BOT, SESSION, RECOVERY, request as control_request
 
 PAGES = ('概览', '收发队列', '模型用量', '记忆与参与', '运行事件')
 UNITS = (BOT, SESSION, RECOVERY)

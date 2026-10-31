@@ -164,7 +164,8 @@ def listener_idle(snapshot, live, *, allow_pending_memory=False):
     return (not snapshot['pending'] and (allow_pending_memory or not snapshot['memory_pending'])
             and not live.get('blocked_reason') and not live.get('send_blocked')
             and not live.get('generation_workers', 0) and not live.get('memory', {}).get('running')
-            and live.get('proactive', {}).get('outcome') not in ('evaluating','generating','generating_reply'))
+            and live.get('participation', {}).get('outcome') != 'evaluating'
+            and not any(value.get('participation', {}).get('running') for value in live.get('instances', {}).values()))
 
 
 def atomic(path, data, mode, uid, gid):
@@ -331,7 +332,8 @@ def deploy(stage, backup, *, apply=False, update_helper=False, allow_pending_mem
         # Readiness is a metadata-only operation, not a test message or injection.
         stamp = time.time();run('systemctl', 'start', UNITS[0])
         wait_native_ready()
-        for _ in range(20):
+        # Account recovery can start the bot after the service and its helpers.
+        for _ in range(90):
             live = live_status()
             if active(UNITS[0]) and live.get('updated_at', 0)>=stamp and live.get('build', {}).get('commit')==new['commit'] and not live.get('blocked_reason'):
                 break
