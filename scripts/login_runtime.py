@@ -41,8 +41,22 @@ class LoginRuntime:
                 os.environ[key] = value.strip().strip('\'"')
         pid = int(private_file(self.directory / 'wechat.pid', maximum=32).strip())
         config = json.loads((ROOT / 'config.json').read_text(encoding='utf-8-sig'))
-        self.controller = LoginController(pid, config['db_dir'], ui_options=config.get('ui'))
+        database = config.get('db_dir')
+        self.unbound = not bool(database)
+        if not database:
+            # A fresh installation can display a QR before the account directory exists.
+            # An opened database never matches this placeholder: setup must bind it explicitly.
+            import pwd
+            database = str(Path(pwd.getpwuid(os.geteuid()).pw_dir)/'.wxbridge-unbound'/'db_storage')
+        self.controller = LoginController(pid, database, ui_options=config.get('ui'))
         self.path = self.directory / 'login-state.json'
+
+    def inspect(self):
+        status = self.controller.inspect()
+        if (getattr(self, 'unbound', False) is True and status.phase == 'unknown'
+                and status.reason == 'login_account_mismatch'):
+            return LoginStatus('setup_required', self.controller.pid, 'run_wxbridge_setup')
+        return status
 
     @contextmanager
     def locked(self):
@@ -89,25 +103,28 @@ class LoginRuntime:
 
     def save(self, state, status):
         state.update(phase=status.phase, reason=status.reason, updated_at=int(time.time()))
-        if self.path.is_symlink():
-            raise LoginError('login_runtime_permissions')
-        descriptor, temporary = tempfile.mkstemp(prefix='.login-', dir=self.directory)
-        try:
-            with os.fdopen(descriptor, 'w', encoding='utf-8') as stream:
-                json.dump(state, stream)
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.replace(temporary, self.path)
-        finally:
-            if os.path.exists(temporary):
-                os.unlink(temporary)
+        summary = dict(phase=status.phase, reason=status.reason, pid=status.pid,
+                       process=state['process'], updated_at=state['updated_at'])
+        for path, value in ((self.path,state),(self.directory/'login-status.json',summary)):
+            if path.is_symlink():
+                raise LoginError('login_runtime_permissions')
+            descriptor, temporary = tempfile.mkstemp(prefix='.login-', dir=self.directory)
+            try:
+                with os.fdopen(descriptor, 'w', encoding='utf-8') as stream:
+                    json.dump(value, stream)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(temporary, path)
+            finally:
+                if os.path.exists(temporary):
+                    os.unlink(temporary)
 
     def advance(self):
         """Caller must hold locked(); reserve each action before dispatching it."""
         state = self.state()
         if state['completed']:
             return LoginStatus('completed', self.controller.pid)
-        status = self.controller.inspect()
+        status = self.inspect()
         if status.phase == 'logged_in':
             state['completed'] = True
         action = {'login_ready': 'login', 'open_ready': 'open'}.get(status.phase)
@@ -131,7 +148,7 @@ class LoginRuntime:
     def viewer_snapshot(self):
         """Caller holds locked(); only the explicit viewer may refresh QR codes."""
         state = self.state()
-        status = self.controller.inspect()
+        status = self.inspect()
         if status.phase == 'qr_expired' and not state['qr_refreshed']:
             state['qr_refreshed'] = True
             self.save(state, status)
@@ -167,6 +184,6 @@ def background(runtime):
         if signature != previous:
             print(json.dumps(dict(phase=status.phase, reason=status.reason, pid=status.pid)), flush=True)
             previous = signature
-        if status.phase in ('logged_in', 'completed', 'client_stopped'):
+        if status.phase in ('logged_in', 'completed', 'client_stopped', 'setup_required'):
             return 1 if status.phase == 'client_stopped' else 0
         time.sleep(5)

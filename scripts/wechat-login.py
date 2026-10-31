@@ -25,6 +25,7 @@ MESSAGES = {
     'opening_wechat': '正在进入微信。',
     'unknown': '暂时无法确认登录界面，不执行点击。',
     'waiting': '等待微信登录界面就绪。',
+    'setup_required': '首次登录已打开账号数据库，请运行 sudo wxbridge setup 绑定账号。',
 }
 
 
@@ -45,8 +46,10 @@ def watch(runtime):
             except LoginError as error:
                 status = runtime.controller.inspect() if error.code == 'login_ui_changed' else None
                 reason = error.code
-            if status is not None and status.phase in ('logged_in', 'client_stopped'):
-                return 0 if status.phase == 'logged_in' else 1
+            if status is not None and status.phase in ('logged_in', 'client_stopped', 'setup_required'):
+                if status.phase == 'setup_required':
+                    sys.stdout.write(MESSAGES['setup_required']+'\n')
+                return 0 if status.phase in ('logged_in', 'setup_required') else 1
             size = shutil.get_terminal_size()
             lines = ()
             if qr is not None:
@@ -97,11 +100,11 @@ def main():
             return background(runtime)
         if args.status:
             with runtime.locked():
-                status = runtime.controller.inspect()
+                status = runtime.inspect()
             print(json.dumps(dict(phase=status.phase, reason=status.reason, pid=status.pid)))
             return 0
         result = watch(runtime)
-        print('微信已登录。' if result == 0 else '微信进程已结束。')
+        print(('请运行 sudo wxbridge setup 绑定账号。' if runtime.unbound else '微信已登录。') if result == 0 else '微信进程已结束。')
         return result
     except KeyboardInterrupt:
         return 130

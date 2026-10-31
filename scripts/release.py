@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from copy import copy
 import hashlib
 import io
 import json
@@ -10,6 +11,7 @@ import re
 import runpy
 import subprocess
 import sys
+import tempfile
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -63,6 +65,37 @@ def git(root, *args):
     return subprocess.run(['git', *args], cwd=root, capture_output=True, check=True).stdout
 
 
+def frontend_files(archived):
+    """Build only committed UI sources in isolation; never reuse a stale working-tree dist."""
+    prefix = 'src/webui/'
+    if prefix+'package.json' not in archived.namelist():
+        return {}
+    npm = 'npm.cmd' if sys.platform == 'win32' else 'npm'
+    with tempfile.TemporaryDirectory(prefix='wxbridge-release-ui-') as temporary:
+        directory = Path(temporary)
+        for info in archived.infolist():
+            if not info.filename.startswith(prefix) or info.is_dir():
+                continue
+            name = info.filename[len(prefix):]
+            if not valid_path(name) or name.startswith(('dist/','node_modules/')):
+                raise ValueError('invalid_frontend_source')
+            path = directory/name
+            path.parent.mkdir(parents=True,exist_ok=True)
+            path.write_bytes(archived.read(info.filename))
+        subprocess.run([npm,'ci','--no-audit','--no-fund'],cwd=directory,check=True)
+        subprocess.run([npm,'run','build'],cwd=directory,check=True)
+        dist = directory/'dist'
+        if not (dist/'index.html').is_file():
+            raise ValueError('frontend_build_missing')
+        result = {}
+        for path in dist.rglob('*'):
+            if path.is_symlink():
+                raise ValueError('frontend_symlink')
+            if path.is_file():
+                result[prefix+'dist/'+path.relative_to(dist).as_posix()] = path.read_bytes()
+        return result
+
+
 def build(path, root=ROOT):
     if git(root, 'status', '--porcelain', '--untracked-files=all').strip():
         raise ValueError('commit_changes_before_build')
@@ -80,8 +113,12 @@ def build(path, root=ROOT):
             if info.is_dir():
                 continue
             body = archived.read(info.filename)
-            bundle.writestr(info, body)
+            # writestr updates header_offset; keep the input archive readable for the UI build.
+            bundle.writestr(copy(info), body)
             manifest['files'][info.filename] = dict(sha256=hashlib.sha256(body).hexdigest(), mode=modes[info.filename])
+        for name, body in frontend_files(archived).items():
+            bundle.writestr(name, body)
+            manifest['files'][name] = dict(sha256=hashlib.sha256(body).hexdigest(), mode='100644')
         bundle.writestr(MANIFEST, json.dumps(manifest, ensure_ascii=False, sort_keys=True))
     raw = output.getvalue()
     verify(io.BytesIO(raw))

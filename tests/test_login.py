@@ -201,6 +201,27 @@ class LoginRuntimeTests(unittest.TestCase):
         self.runtime.advance()
         self.runtime.controller.click_login.assert_called_once()
 
+    def test_first_login_requires_explicit_binding_and_never_claims_validated_identity(self):
+        self.runtime.unbound = True
+        self.runtime.controller.inspect.return_value = LoginStatus('unknown',123,'login_account_mismatch')
+        self.assertEqual(self.runtime.advance().phase,'setup_required')
+        self.assertFalse(self.runtime.state()['completed'])
+        self.assertEqual(self.runtime.viewer_snapshot().phase,'setup_required')
+        self.runtime.controller.click_login.assert_not_called()
+        self.runtime.controller.open_wechat.assert_not_called()
+        self.runtime.unbound = False
+        self.assertEqual(self.runtime.inspect().phase,'unknown')
+        self.assertEqual(self.runtime.inspect().reason,'login_account_mismatch')
+
+    def test_login_summary_is_current_process_metadata_without_qr_content(self):
+        self.phase('qr_required')
+        self.runtime.advance()
+        value=json.loads((self.runtime.directory/'login-status.json').read_text())
+        self.assertEqual(value['phase'],'qr_required')
+        self.assertEqual(value['pid'],123)
+        self.assertEqual(value['process'],self.runtime.controller.identity)
+        self.assertNotIn('data',value)
+
     def test_background_never_refreshes_and_viewer_refreshes_once_per_expiry(self):
         self.phase('qr_expired')
         self.runtime.advance()

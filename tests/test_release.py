@@ -6,6 +6,7 @@ import runpy
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -86,6 +87,21 @@ class ReleaseTests(unittest.TestCase):
         data = self.altered(lambda files: files.update({'src/wxbridge/__main__.py': b'tampered'}))
         with self.assertRaisesRegex(ValueError, 'hash_mismatch'):
             release['verify'](data)
+
+    def test_compiled_frontend_is_added_to_the_same_verified_release(self):
+        globals_=release['build'].__globals__
+        assets={'src/webui/dist/index.html':b'<html>synthetic</html>',
+                'src/webui/dist/assets/app.js':b'console.log("synthetic")'}
+        def frontend(archive):
+            # Building the UI rereads source entries after they were copied into the output ZIP.
+            for info in archive.infolist():
+                if not info.is_dir():
+                    self.assertEqual(archive.read(info.filename),(self.root/info.filename).read_bytes())
+            return assets
+        with patch.dict(globals_,frontend_files=frontend):
+            manifest=self.build()
+        self.assertTrue(set(assets)<=set(manifest['files']))
+        self.assertEqual(release['verify'](self.bundle),manifest)
 
     def test_traversal_archive_is_rejected_before_extracting(self):
         data = self.altered(lambda files: files.update({'../outside': b'synthetic'}))
