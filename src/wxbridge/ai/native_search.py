@@ -15,7 +15,7 @@ def answer_with_native_search(cfg, client, messages, on_search=None, *, image_re
     conversation = search_prompt(cfg, messages, native=True)
     image_enabled = cfg.get('image_generation', {}).get('enabled', False) and image_requests is not None
     if image_enabled:
-        from .image_generation import IMAGE_TOOL, collect_image_request
+        from .image_tools import IMAGE_TOOL, collect_image_request
     sources, errors = [], []
     attempted = notified = False
     calls = actions = 0

@@ -21,7 +21,7 @@ def submit(cfg, chat_id, text, request_id):
 
 
 def submit_image(cfg, chat_id, image, request_id):
-    from wxbridge.app.image_generation import artifact_path
+    from wxbridge.app.image_generation_controller import artifact_path
     sender, options = _sender(cfg, sending=True)
     if chat_id not in options['allowed_chat_ids']:
         raise SendError('chat not allowed', code='native_chat_not_allowed', metadata={'submitted': False})

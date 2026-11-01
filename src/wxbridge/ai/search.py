@@ -90,7 +90,7 @@ def answer_with_search(cfg, client, messages, on_search=None, *, search_client=N
     image_enabled = cfg.get('image_generation', {}).get('enabled', False) and image_requests is not None
     search_enabled = settings.get('enabled', True)
     if image_enabled:
-        from .image_generation import IMAGE_TOOL, image_tool_prompt, collect_image_request
+        from .image_tools import IMAGE_TOOL, image_tool_prompt, collect_image_request
         messages = image_tool_prompt(messages)
     backend_kind = settings.get('backend', 'external')
     if backend_kind == 'auto':

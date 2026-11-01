@@ -18,7 +18,7 @@ from provider import GeneratedImage, ImageRequest, ImageResult, ModelError, crea
 from provider.gemini_images import build_gemini_image_payload, parse_gemini_image_response
 from wxbridge.ai.roles import validate_models
 from wxbridge.ai.search import answer_with_search
-from wxbridge.app.image_generation import checked_image, artifact_path
+from wxbridge.app.image_generation_controller import checked_image, artifact_path
 from tests.support.model_support import default_config
 import tests.support.pipeline as pipeline
 from tests.support.synthetic import msg

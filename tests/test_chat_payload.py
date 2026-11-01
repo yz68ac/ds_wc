@@ -6,8 +6,8 @@ import unittest
 from tests.support.model_support import default_config
 from tests.support.synthetic import NOW,msg
 from wxbridge.ai.chat_payload import chat_payload,encode_payload,fit_payload
-from wxbridge.ai.context import ContextError
-from wxbridge.ai.prompts import build_prompt
+from wxbridge.ai.context_selection import ContextError
+from wxbridge.ai.reply_prompt import build_prompt
 from wxbridge.ai.participation import build_prompt as judgment_prompt
 from wxbridge.ai.output import response_prompt
 from wxbridge.ai.search import search_prompt

@@ -41,7 +41,7 @@ def prepare_multimodal(cfg, base_prompt, generation):
     """Resolve explicit images and bind quote slots without rebuilding context."""
     import base64
     import copy
-    from wxbridge.ai.prompts import build_prompt
+    from wxbridge.ai.reply_prompt import build_prompt
     from wxbridge.ai.prompt_parts import PromptComposer
     triggers = copy.deepcopy(generation["triggers"])
     blocks, metadata = [], []

@@ -10,7 +10,7 @@ from unittest.mock import patch, Mock
 import os
 
 from wxbridge.ai.memory import snapshot, member_labels, extract
-from wxbridge.ai.prompts import build_prompt
+from wxbridge.ai.reply_prompt import build_prompt
 from wxbridge.config import DEFAULTS, _deep_merge
 from wxbridge.storage.person_memory import MemoryStore, DAY, fuzzy_time, affinity_value
 from tests.support.pipeline import PipelineFixture
@@ -159,7 +159,7 @@ class MemoryTests(MemoryFixture):
             self.assertNotIn("tools", client.return_value.complete.call_args.kwargs)
 
     def test_image_prompt_rebuild_preserves_memory_and_reference_author_label(self):
-        from wxbridge.ai.images import prepare_multimodal
+        from wxbridge.ai.quoted_images import prepare_multimodal
         a = msg(1, NOW, "这怎么看", "wxid_a")
         a["reference"] = dict(sender="wxid_b", sender_name="同名", kind="image", available=False, text="")
         memory = dict(labels={"wxid_a": "U1", "wxid_b": "U2"}, text="U1 喜欢直接回答")

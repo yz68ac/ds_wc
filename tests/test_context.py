@@ -5,8 +5,8 @@ from contextlib import nullcontext
 
 import unittest
 from wxbridge.config import DEFAULTS, _deep_merge
-from wxbridge.ai.context import ContextError, message_time, select_context
-from wxbridge.ai.prompts import build_prompt
+from wxbridge.ai.context_selection import ContextError, message_time, select_context
+from wxbridge.ai.reply_prompt import build_prompt
 from tests.support.synthetic import NOW, msg
 
 

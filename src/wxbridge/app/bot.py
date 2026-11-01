@@ -9,16 +9,16 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 import time
 
-from wxbridge.ai.context import message_time
+from wxbridge.ai.context_selection import message_time
 from wxbridge.storage.journal import Journal
 from wxbridge.wechat.store import StoreError, WeChatStore
 from wechat_linux.messages.pats import is_pat
 from wxbridge.app.workers import ProcessJob
 from wxbridge.app.session_phases import SessionPhases
-from wxbridge.app.participation import ParticipationController
+from wxbridge.app.participation_controller import ParticipationController
 from wxbridge.app.delivery import DeliveryController
 from wxbridge.app.reply import ReplyController
-from wxbridge.app.memory import MemoryController
+from wxbridge.app.memory_controller import MemoryController
 from wxbridge.wechat.messages import chunk_text
 from wxbridge.app.metrics import Metrics
 from wxbridge.app.build_info import runtime_identity
@@ -89,7 +89,7 @@ class GroupSession(SessionPhases):
         self.started_at = time.time()
         from wxbridge.app.model_runtime import GroupModels
         self.models = GroupModels(cfg)
-        from wxbridge.app.image_generation import ImageGenerationController
+        from wxbridge.app.image_generation_controller import ImageGenerationController
         self.image_generation = ImageGenerationController(self)
         self.job_factory = self._new_job
         self.status_path = Path(cfg["state_file"]).parent / "live-status.json"
@@ -106,7 +106,7 @@ class GroupSession(SessionPhases):
         self.next_poll_at = 0
         self.profile = None
         if cfg['profile']['enabled'] and not cfg['ui'].get('dry_run') and not echo:
-            from wxbridge.app.group_profile import ProfileController
+            from wxbridge.app.group_profile_controller import ProfileController
             try:
                 self.profile = ProfileController(self)
             except Exception:

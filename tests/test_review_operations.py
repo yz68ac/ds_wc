@@ -10,8 +10,8 @@ import unittest
 from unittest.mock import Mock, patch
 
 from wxbridge.config import DEFAULTS
-from wxbridge.ai.context import ContextError
-from wxbridge.ai.prompts import build_prompt
+from wxbridge.ai.context_selection import ContextError
+from wxbridge.ai.reply_prompt import build_prompt
 from wxbridge.storage.memory_selection import MemoryTopic
 from wechat_linux.native import helper
 import tests.support.boot as recovery_tests

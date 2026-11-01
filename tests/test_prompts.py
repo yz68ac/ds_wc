@@ -11,8 +11,8 @@ import unittest
 from unittest.mock import patch
 
 from wxbridge.config import resolve_config, DEFAULTS
-from wxbridge.ai.context import ContextError
-from wxbridge.ai.prompts import build_prompt
+from wxbridge.ai.context_selection import ContextError
+from wxbridge.ai.reply_prompt import build_prompt
 from tests.support.synthetic import NOW, msg
 
 

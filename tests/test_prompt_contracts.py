@@ -7,11 +7,11 @@ from unittest.mock import patch
 
 import tests.support.media as media_tests
 from tests.support.synthetic import NOW, msg
-from wxbridge.ai.context import ContextError
-from wxbridge.ai.images import prepare_multimodal
+from wxbridge.ai.context_selection import ContextError
+from wxbridge.ai.quoted_images import prepare_multimodal
 from wxbridge.ai.output import response_prompt
 from wxbridge.ai.prompt_parts import PromptComposer, PromptMessages
-from wxbridge.ai.prompts import build_prompt
+from wxbridge.ai.reply_prompt import build_prompt
 from wxbridge.ai.search import search_prompt
 
 
@@ -51,7 +51,7 @@ class PromptContractTests(unittest.TestCase):
         generation = self.generation()
         base = self.base(generation)
         base[1]['content'] = '请求级前言\n'+base[1]['content']+'\n本轮额外要求'
-        with patch('wxbridge.ai.prompts.build_prompt', side_effect=AssertionError('must not rebuild')):
+        with patch('wxbridge.ai.reply_prompt.build_prompt', side_effect=AssertionError('must not rebuild')):
             prompt, info = prepare_multimodal(self.cfg, base, generation)
         text = prompt[1]['content'][0]['text']
         self.assertTrue(text.startswith('请求级前言\n'))

@@ -11,7 +11,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from wxbridge_service.supervisor import Child, Supervisor
-from wxbridge_web.control import BOT, COMPONENTS, HELPER, RECOVERY, SESSION, WEB, receive, request
+from wxbridge.control import BOT, COMPONENTS, HELPER, RECOVERY, SESSION, WEB, receive, request
 
 
 class ServiceEntryTests(unittest.TestCase):

@@ -3,10 +3,10 @@ from contextlib import ExitStack
 import re
 import time
 
-from wxbridge.ai.context import read_context, source_anchor
+from wxbridge.ai.context_selection import read_context, source_anchor
 from wxbridge.ai.memory import member_labels
 from wxbridge.ai.output import format_reply
-from wxbridge.ai.prompts import build_prompt
+from wxbridge.ai.reply_prompt import build_prompt
 from wxbridge.ai.roles import model_settings
 from wxbridge.app.task_policy import GenerationFailure
 from wxbridge.app.workers import WorkerLease, WorkerCleanupError

@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import time
 
-from wxbridge.ai.context import ContextError, read_context
+from wxbridge.ai.context_selection import ContextError, read_context
 from wxbridge.ai.participation import build_prompt, parse_decision
 from wxbridge.ai.roles import model_settings
 from wxbridge.app.task_policy import participation_failure_code

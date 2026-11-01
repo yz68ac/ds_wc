@@ -4,7 +4,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass, field
 
-from wxbridge.ai.context import ContextError
+from wxbridge.ai.context_selection import ContextError
 from wxbridge.ai.chat_payload import compact_reference, encode_payload, fit_payload
 
 

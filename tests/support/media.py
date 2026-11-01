@@ -11,8 +11,8 @@ import unittest
 from unittest.mock import Mock
 import zlib
 from wechat_linux.storage.crypto import AES
-from wxbridge.ai.prompts import build_prompt
-from wxbridge.ai.images import V1, V2, prepare_multimodal
+from wxbridge.ai.reply_prompt import build_prompt
+from wxbridge.ai.quoted_images import V1, V2, prepare_multimodal
 from wxbridge.wechat.store import WeChatStore
 from tests.support.synthetic import NOW, msg
 from tests.support.paths import ROOT

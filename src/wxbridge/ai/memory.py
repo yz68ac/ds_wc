@@ -5,9 +5,9 @@ import json
 from copy import deepcopy
 import time
 from pathlib import Path
-from wxbridge.ai.context import select_memory_context, message_time
-from wxbridge.ai.prompts import system_prompt
-from wxbridge.ai.emoticons import semantics_prompt
+from wxbridge.ai.context_selection import select_memory_context, message_time
+from wxbridge.ai.reply_prompt import system_prompt
+from wxbridge.emoticons import semantics_prompt
 from wxbridge.config import PROJECT_ROOT
 from wxbridge.storage.memory_view import MemoryView
 from wechat_linux.messages.pats import is_pat

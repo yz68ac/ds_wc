@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 
-from wxbridge.ai.emoticons import is_token, semantics_prompt, token_pattern
+from wxbridge.emoticons import is_token, semantics_prompt, token_pattern
 from wxbridge.ai.prompt_parts import PromptComposer
 
 

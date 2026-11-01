@@ -9,6 +9,7 @@ import zipfile
 
 CHECK = r'''
 from pathlib import Path
+from importlib.util import find_spec
 import sys
 import json
 import wxbridge
@@ -17,6 +18,22 @@ from wxbridge.paths import SOURCE_ROOT, resource_path
 assert Path(wxbridge.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
 assert SOURCE_ROOT is None
 assert not any(n.split('.')[0] in ('provider','wechat_linux','frida','gi','fastapi') for n in sys.modules)
+renamed = {
+ 'wxbridge.ai.images':'wxbridge.ai.quoted_images',
+ 'wxbridge.ai.image_generation':'wxbridge.ai.image_tools',
+ 'wxbridge.ai.prompts':'wxbridge.ai.reply_prompt',
+ 'wxbridge.ai.context':'wxbridge.ai.context_selection',
+ 'wxbridge.app.image_generation':'wxbridge.app.image_generation_controller',
+ 'wxbridge.app.memory':'wxbridge.app.memory_controller',
+ 'wxbridge.app.participation':'wxbridge.app.participation_controller',
+ 'wxbridge.app.group_profile':'wxbridge.app.group_profile_controller',
+ 'wxbridge.storage.image_generation':'wxbridge.storage.image_generation_journal',
+}
+for old,new in renamed.items():
+ assert find_spec(new) is not None, new
+ assert find_spec(old) is None, old
+for retired in ('wxbridge.ai.emoticons','wxbridge_web.control'):
+ assert find_spec(retired) is None, retired
 from wxbridge.config import DEFAULTS, DEFAULTS_FILE
 assert DEFAULTS_FILE == resource_path('config.defaults.json')
 assert DEFAULTS['target']['context_max_chars'] > 0

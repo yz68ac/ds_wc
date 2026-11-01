@@ -10,7 +10,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from wxbridge.ai.images import read_local_image
+from wxbridge.ai.quoted_images import read_local_image
 from wxbridge.config import DEFAULTS, load_config
 from wxbridge.ai.participation import evaluate
 from wxbridge.storage.journal import Journal

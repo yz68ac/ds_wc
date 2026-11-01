@@ -10,8 +10,8 @@ import unittest
 from unittest.mock import Mock
 
 from wxbridge.config import DEFAULTS, _deep_merge
-from wxbridge.ai.context import ContextError
-from wxbridge.ai.prompts import build_prompt
+from wxbridge.ai.context_selection import ContextError
+from wxbridge.ai.reply_prompt import build_prompt
 from wechat_linux.messages.references import parse_quoted_reply
 from wxbridge.wechat.store import WeChatStore
 from wxbridge.wechat.messages import display_message

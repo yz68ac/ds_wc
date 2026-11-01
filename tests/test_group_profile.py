@@ -10,7 +10,7 @@ from unittest.mock import Mock, patch
 from tests.support.model_support import default_config
 from tests.support.synthetic import NOW, msg
 from wxbridge.ai import group_profile as analysis
-from wxbridge.app.group_profile import ProfileController, participant_ids
+from wxbridge.app.group_profile_controller import ProfileController, participant_ids
 from wxbridge.storage.group_profile import GroupProfile
 
 
@@ -183,7 +183,7 @@ class ProfileControllerTests(unittest.TestCase):
             chat_title='合成群', journal={'identity': IDENTITY}, memory=SimpleNamespace(store=None), last_local_id=10,
             models=Mock(), metrics=Mock(), has_foreground_tasks=Mock(return_value=False), job_factory=Mock())
         self.session.models.status.return_value = {'background': dict(running=False, queued=0)}
-        self.clock = patch('wxbridge.app.group_profile.time.time', return_value=NOW)
+        self.clock = patch('wxbridge.app.group_profile_controller.time.time', return_value=NOW)
         self.clock.start()
         self.addCleanup(self.clock.stop)
         self.controller = ProfileController(self.session)

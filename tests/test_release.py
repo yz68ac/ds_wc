@@ -115,13 +115,16 @@ class ReleaseTests(unittest.TestCase):
                      'src/provider/.env','src/wxbridge/__pycache__/old.pyc'):
             p=self.root/name;p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(b'old or private')
         (self.root/'.gitignore').write_text('build/\ninstance/\n.env\n__pycache__/\n')
+        retired=self.root/'src/wxbridge/retired.py';retired.write_text('retired module')
         self.commit()
+        retired.unlink()
         target=Path(self.temp.name)/'clean';target.mkdir()
         builder['stage_source'](self.root,target)
         self.assertTrue((target/'src/wxbridge/__main__.py').exists())
         self.assertFalse((target/'build').exists())
         self.assertFalse((target/'instance').exists())
         self.assertFalse((target/'src/provider/.env').exists())
+        self.assertFalse((target/'src/wxbridge/retired.py').exists())
 
     def test_installed_module_mismatch_does_not_claim_the_manifest_revision(self):
         from wxbridge.release_integrity import installed_mismatches

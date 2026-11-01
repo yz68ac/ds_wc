@@ -8,8 +8,8 @@ import unittest
 from tests.support.synthetic import NOW, msg
 from wxbridge.config import DEFAULTS
 from wxbridge.ai.participation import build_prompt, ParticipationError
-from wxbridge.ai.prompts import build_prompt as build_reply_prompt
-from wxbridge.ai.context import ContextError
+from wxbridge.ai.reply_prompt import build_prompt as build_reply_prompt
+from wxbridge.ai.context_selection import ContextError
 
 
 def content(prompt):

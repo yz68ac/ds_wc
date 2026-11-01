@@ -1,9 +1,9 @@
-"""Persona loading and shared structured chat context with source-bound quotes."""
+"""Reply prompt assembly with shared chat context and source-bound quotes."""
 from copy import deepcopy
 from pathlib import Path
 
 from wxbridge import config
-from wxbridge.ai.context import ContextError
+from wxbridge.ai.context_selection import ContextError
 from wxbridge.ai.chat_context import ChatContext
 from wxbridge.ai.chat_payload import CHAT_DATA_RULES
 from wxbridge.ai.prompt_parts import PromptLayout, PromptMessages, ReferenceSlot, reference_source

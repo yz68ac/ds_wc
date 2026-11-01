@@ -1,7 +1,7 @@
 """Shared chat assembly for reply and participation requests; no I/O."""
 from dataclasses import dataclass, replace
 
-from wxbridge.ai.context import ContextRows, select_context, source_anchor
+from wxbridge.ai.context_selection import ContextRows, select_context, source_anchor
 from wxbridge.ai.chat_payload import chat_payload, context_stats, encode_payload, fit_payload
 
 

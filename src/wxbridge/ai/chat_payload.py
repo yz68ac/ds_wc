@@ -3,7 +3,7 @@ from copy import deepcopy
 import json
 
 from wechat_linux.messages.pats import is_pat
-from wxbridge.ai.context import ContextError, message_time
+from wxbridge.ai.context_selection import ContextError, message_time
 from wxbridge.ai.identity import member_alias, reference_data
 
 

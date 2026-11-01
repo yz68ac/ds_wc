@@ -14,7 +14,7 @@ from wechat_linux.messages.pats import is_pat
 from wxbridge.native.protocol import NativeError, REQUEST_ID, task_status
 from wxbridge.storage.task_state import validate_task, validate_task_states
 from wxbridge.storage.participation import ParticipationJournal
-from wxbridge.storage.image_generation import ImageGenerationJournal
+from wxbridge.storage.image_generation_journal import ImageGenerationJournal
 
 
 def checked_path(value: str, *, existing: bool = False) -> Path:

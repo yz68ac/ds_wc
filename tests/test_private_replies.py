@@ -15,7 +15,7 @@ class PrivateReplyTests(PrivateReplyFixture):
 
     def test_private_message_starts_full_reply_without_decision_or_mention(self):
         self.add(1, text='你好，聊聊今天的事吧', mention=False)
-        with patch('wxbridge.app.participation.build_prompt', side_effect=AssertionError('no judgment')):
+        with patch('wxbridge.app.participation_controller.build_prompt', side_effect=AssertionError('no judgment')):
             self.bot.tick()
         self.assertEqual([job.kind for job in self.jobs], ['generate'])
         self.assertFalse(self.decision_jobs)

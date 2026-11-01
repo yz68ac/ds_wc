@@ -29,6 +29,8 @@ def stage_source(source, target):
         src = source/name
         if src.is_symlink() or not src.resolve().is_relative_to(source.resolve()):
             raise ValueError('unsafe_build_source')
+        if not manifest.is_file() and not src.exists():
+            continue  # A tracked deletion in an uncommitted working tree.
         if info and hashlib.sha256(src.read_bytes()).hexdigest() != info['sha256']:
             raise ValueError('build_source_hash_mismatch')
         dst = target/name

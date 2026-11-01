@@ -4,11 +4,11 @@ from __future__ import annotations
 import json
 import time
 
-from wxbridge.ai.context import ContextError
+from wxbridge.ai.context_selection import ContextError
 from wxbridge.ai.chat_context import ChatContext
 from wxbridge.ai.chat_payload import CHAT_DATA_RULES
 from wxbridge.ai.prompt_parts import PromptComposer
-from wxbridge.ai.prompts import system_prompt
+from wxbridge.ai.reply_prompt import system_prompt
 
 
 class ParticipationError(ValueError):
