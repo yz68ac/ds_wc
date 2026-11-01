@@ -16,14 +16,12 @@ def catalog():
         raise ValueError('invalid_emoticon_catalog')
     seen = set()
     for item in value['emoticons']:
-        if not item.get('meanings') or not item.get('sources'):
+        if not item.get('meanings'):
             raise ValueError('invalid_emoticon_entry')
         for token in [item['code'], *item['aliases']]:
             if not re.fullmatch(r'\[[^\[\]\s]{1,20}\]', token) or token in seen:
                 raise ValueError('invalid_or_duplicate_emoticon_token')
             seen.add(token)
-        if any(source not in value['sources'] for source in item['sources']):
-            raise ValueError('unknown_emoticon_source')
     return value
 
 
