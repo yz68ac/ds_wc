@@ -1,6 +1,7 @@
 """Fixed local supervisor operations; HTTP never supplies commands or paths."""
 from concurrent.futures import ThreadPoolExecutor
 import os
+import socket
 import threading
 import time
 import uuid
@@ -12,13 +13,21 @@ class ServiceManager:
     def __init__(self, *, allow_control=False, control_socket=DEFAULT_SOCKET):
         self.allow_control = allow_control and os.name == 'posix'
         self.control_socket = control_socket
+        self.status_error = ''
 
     def status(self):
         try:
             if os.name != 'posix':raise OSError()
             values = request('status', self.control_socket)['components']
+            if not isinstance(values, dict):
+                raise ValueError('invalid_control_components')
+            self.status_error = ''
             return {name:values.get(name,dict(state='unavailable',pid=0)) for name in COMPONENTS}
-        except (OSError, ValueError, KeyError, TypeError):
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            self.status_error = ('control_permission_denied' if isinstance(exc, PermissionError)
+                                 else 'control_timeout' if isinstance(exc, (TimeoutError, socket.timeout))
+                                 else 'control_unreachable' if isinstance(exc, OSError)
+                                 else 'control_invalid_response')
             return {name:dict(state='unavailable',pid=0) for name in COMPONENTS}
 
     def perform(self, action):

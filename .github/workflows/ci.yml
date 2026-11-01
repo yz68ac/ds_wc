@@ -97,7 +97,10 @@ jobs:
       - name: Build frontend
         working-directory: src/webui
         run: npm run build
-      - name: Build application wheel
-        run: python -m pip wheel --no-deps --wheel-dir dist .
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: '0.12.24'
+      - name: Build isolated release wheels
+        run: python scripts/build-wheels.py --out dist
       - name: Check installed CLI and resources outside the source checkout
         run: python scripts/smoke-app-wheel.py dist/wxbridge-*.whl

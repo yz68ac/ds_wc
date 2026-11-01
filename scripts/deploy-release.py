@@ -165,7 +165,21 @@ def listener_idle(snapshot, live, *, allow_pending_memory=False):
             and not live.get('blocked_reason') and not live.get('send_blocked')
             and not live.get('generation_workers', 0) and not live.get('memory', {}).get('running')
             and live.get('participation', {}).get('outcome') != 'evaluating'
-            and not any(value.get('participation', {}).get('running') for value in live.get('instances', {}).values()))
+            and not any(
+                value.get('model_workers', 0)
+                or value.get('participation', {}).get('running')
+                or value.get('image_generation', {}).get('running')
+                or any(channel.get('running') or channel.get('queued')
+                       for channel in value.get('model_channels', {}).values())
+                for value in live.get('instances', {}).values()))
+
+
+def require_source_only_update(names):
+    if any(name.startswith(('src/wxbridge/', 'src/wxbridge_service/', 'src/wxbridge_web/',
+                            'src/provider/', 'src/wechat_linux/', 'src/webui/dist/'))
+           or name in ('config.defaults.json', 'pyproject.toml', 'uv.lock', 'requirements.txt', 'requirements-test.txt')
+           for name in names):
+        raise ValueError('package_update_requires_upgrade_installation')
 
 
 def atomic(path, data, mode, uid, gid):
@@ -221,6 +235,9 @@ def deploy(stage, backup, *, apply=False, update_helper=False, allow_pending_mem
                   helper_stop_policy_updated=stop_policy_changed, applied=False)
     if not apply:
         return report
+    # Installed processes import wheels, not APP/src. A source-only transaction
+    # cannot publish package changes; use the prepared environment transaction.
+    require_source_only_update((*planned, *removed))
     import fcntl
     import pwd
     user = pwd.getpwnam('wxbridge')

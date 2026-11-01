@@ -134,6 +134,18 @@ class RepositoryTests(unittest.TestCase):
         self.assertEqual(second['runtime']['state'],'stopped')
         self.assertFalse(second['runtime']['snapshot_current'])
 
+    def test_fresh_heartbeat_with_control_failure_is_not_reported_as_expired(self):
+        services=DemoServices(self.root);services.perform('start')
+        services.status()
+        services.status_error='control_permission_denied'
+        operations=Operations(services,self.repository);self.addCleanup(operations.close)
+        from wxbridge.control import COMPONENTS
+        with patch.object(services,'status',return_value={n:dict(state='unavailable',pid=0) for n in COMPONENTS}):
+            value=overview(self.repository,services,operations)
+        self.assertEqual(value['runtime']['state'],'unavailable')
+        self.assertEqual(value['runtime']['control_error'],'control_permission_denied')
+        self.assertLess(value['runtime']['heartbeat_age_seconds'],10)
+
 
 class ServiceTests(unittest.TestCase):
     def service(self):
@@ -162,3 +174,16 @@ class ServiceTests(unittest.TestCase):
         with patch('wxbridge_web.services.request') as call:
             with self.assertRaises(ManagementError):service.perform('stop sshd.service')
         call.assert_not_called()
+
+    def test_status_preserves_control_failure_category_and_clears_it_after_recovery(self):
+        service=self.service()
+        for error,code in [(PermissionError(),'control_permission_denied'),
+                           (FileNotFoundError(),'control_unreachable'),
+                           (TimeoutError(),'control_timeout'),(ValueError(),'control_invalid_response')]:
+            with self.subTest(code=code),patch('wxbridge_web.services.os.name','posix'), \
+                    patch('wxbridge_web.services.request',side_effect=error):
+                self.assertEqual(service.status()[BOT]['state'],'unavailable')
+                self.assertEqual(service.status_error,code)
+        with patch('wxbridge_web.services.os.name','posix'),patch('wxbridge_web.services.request',return_value=dict(components={})):
+            service.status()
+        self.assertEqual(service.status_error,'')

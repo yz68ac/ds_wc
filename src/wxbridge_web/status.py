@@ -46,7 +46,8 @@ def overview(repository, services, operations, *, demo=False):
             request_id=lifecycle.get('request_id'),error=lifecycle.get('error',''),active_models=status.get('models',{})))
     events, event_error = safe_events(cfg['log_file'])
     return dict(demo=demo, collected_at=now, services=states,
-        runtime=dict(state=('listening' if live.get('instances') else 'idle') if fresh else 'stopped' if bot['state']=='inactive' else 'stale' if live else 'unavailable',
+        runtime=dict(state='unavailable' if bot['state']=='unavailable' else ('listening' if live.get('instances') else 'idle') if fresh else 'stopped' if bot['state']=='inactive' else 'stale' if live else 'unavailable',
+            control_error=getattr(services,'status_error',''),
             heartbeat_age_seconds=max(0,round(age,1)) if age is not None else None,
             snapshot_current=fresh, snapshot_error=failure, queue_length=total, model_workers=workers,
             send_blocked=bool(live.get('send_blocked')), login_phase=login.get('phase','unknown'),

@@ -153,6 +153,12 @@ const stateLabel: Record<string, string> = {
   stale: "心跳已过期",
   unavailable: "状态不可用",
 };
+const controlErrorLabel: Record<string, string> = {
+  control_permission_denied: "管理台没有权限访问主控，请检查控制目录与套接字权限。",
+  control_timeout: "主控连接超时，请检查主控是否阻塞。",
+  control_unreachable: "无法连接主控，请检查 wxbridge.service。",
+  control_invalid_response: "主控返回格式异常，请检查安装版本是否一致。",
+};
 const serviceLabel: Record<string, string> = {
   active: "运行中",
   inactive: "已停止",
@@ -1157,6 +1163,9 @@ onBeforeUnmount(() => {
               <span class="eyebrow">BOT LIFECYCLE</span>
               <h2>{{ stateLabel[snapshot?.runtime?.state] || "状态未知" }}</h2>
               <p>机器人可独立启停；微信和管理台由同一主控保持运行。</p>
+              <p v-if="snapshot?.runtime?.control_error" role="alert">
+                {{ controlErrorLabel[snapshot.runtime.control_error] || "主控状态暂时不可用。" }}
+              </p>
               <small v-if="!snapshot?.capabilities?.service_control"
                 >当前环境未连接机器人主控，暂时无法执行启停。</small
               >

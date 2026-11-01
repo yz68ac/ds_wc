@@ -76,7 +76,7 @@ def run(*args, timeout=60):
 
 def control(action):
     # Reuse the installed Unix control protocol; no model or WeChat operations.
-    return runpy.run_path(str(APP/'src/wxbridge_web/control.py'))['request'](action)
+    return runpy.run_path(str(APP/'src/wxbridge/control.py'))['request'](action)
 
 
 def rewrite_unit(text):
@@ -91,6 +91,9 @@ def rewrite_unit(text):
                                          or line[len(prefix):] == new or line[len(prefix):].startswith(new+' ')):
         raise ValueError('unknown_service_entry')
     lines[indices[0]] = prefix+line[len(prefix):].replace(old, new, 1)
+    directory_access = 'ExecStartPre=/usr/bin/chmod 0750 /run/wxbridge-control'
+    if directory_access not in lines:
+        lines.insert(lines.index('[Service]')+1, directory_access)
     return ('\n'.join(lines)+'\n').encode()
 
 
@@ -152,16 +155,37 @@ def verify_wheels(stage, wheels):
     mappings = {'wxbridge/':'src/wxbridge/', 'wxbridge_service/':'src/wxbridge_service/',
                 'wxbridge_web/':'src/wxbridge_web/', 'provider/':'src/provider/',
                 'wechat_linux/':'src/wechat_linux/'}
+    owners = {'wxbridge': ('wxbridge/', 'wxbridge_service/', 'wxbridge_web/'),
+              'model_provider': ('provider/',), 'wechat_linux_adapter': ('wechat_linux/',)}
     for wheel in sorted(wheels.glob('*.whl')):
         name = wheel.name.split('-', 1)[0]
         if name not in expected or name in found:
             raise ValueError('unexpected_upgrade_wheel')
         found.add(name)
         with zipfile.ZipFile(wheel) as archive:
+            expected_files = set()
+            for prefix in owners[name]:
+                directory = stage/mappings[prefix]
+                for source in directory.rglob('*'):
+                    if source.is_file() and source.suffix in ('.py', '.js', '.json', '.c') and not any(
+                            part in ('build', '__pycache__') or part.endswith('.egg-info')
+                            for part in source.relative_to(directory).parts):
+                        expected_files.add(prefix+source.relative_to(directory).as_posix())
+            packaged = {entry for entry in archive.namelist() if entry.startswith(tuple(mappings))}
+            if packaged != expected_files:
+                raise ValueError('wheel_inventory_mismatch')
             count = 0
             for entry in archive.namelist():
+                if '__pycache__' in entry or entry.endswith(('.pyc', '.pyo', '.env')):
+                    raise ValueError('unsafe_wheel_content')
                 prefix = next((p for p in mappings if entry.startswith(p)), None)
                 if prefix is None:
+                    marker = '.data/data/share/wxbridge/'
+                    if name == 'wxbridge' and marker in entry:
+                        relative = entry.split(marker, 1)[1]
+                        source = stage/('src/webui/dist/'+relative[len('webui/'):] if relative.startswith('webui/') else relative)
+                        if not source.is_file() or archive.read(entry).replace(b'\r\n', b'\n') != source.read_bytes().replace(b'\r\n', b'\n'):
+                            raise ValueError('wheel_resource_mismatch')
                     continue
                 source = stage/(mappings[prefix]+entry[len(prefix):])
                 if not source.is_file() or archive.read(entry).replace(b'\r\n', b'\n') != source.read_bytes().replace(b'\r\n', b'\n'):
@@ -265,6 +289,7 @@ def prepare(stage, wheels, backup, baseline, max_chars):
         'failures=dependency_health();raise SystemExit(bool(failures))')
     run(python, '-I', '-c', 'from wxbridge.app.bot import GroupSession;'
         'from wechat_linux.desktop.login import LoginController;from provider import create_client')
+    check_installed_release(python, stage)
     sys.path.insert(0, str(stage/'src'))
     configurations = {}
     for path in sorted((APP/'instance').glob('*/config.json')):
@@ -279,6 +304,14 @@ def prepare(stage, wheels, backup, baseline, max_chars):
     save_json(backup/'upgrade.json', record)
     return dict(phase='prepared', commit=manifest['commit'], backup=str(backup),
                 changed_files=len(updates), configurations=len(configurations))
+
+
+def check_installed_release(python, stage):
+    run(python, '-I', '-c',
+        'import json,sys;from wxbridge.release_integrity import installed_mismatches;'
+        'm=json.load(open(sys.argv[1],encoding="utf-8"));'
+        'raise SystemExit(bool(installed_mismatches(m["files"])))',
+        stage/'release-manifest.json')
 
 
 def wait_stopped(deadline=360):
@@ -306,6 +339,7 @@ def apply(backup):
         raise ValueError('prepared_release_changed')
     if any(digest(path) != value for path, value in record['wheels'].items()):
         raise ValueError('prepared_wheels_changed')
+    check_installed_release(environment/'bin/python', stage)
     manifest, updates = source_updates(stage, record['baseline'])
     if 'scanner_hashes' not in record:
         raise ValueError('upgrade_requires_reprepare')
@@ -352,6 +386,7 @@ def apply(backup):
         current.symlink_to(environment, target_is_directory=True)
         run(current/'bin/python', '-I', '-c',
             "from wxbridge.config import load_config;load_config('/opt/wxbridge/config.json')")
+        check_installed_release(current/'bin/python', APP)
         for path, value in record['private_hashes'].items():
             if path not in record['configurations'] and digest(path) != value:
                 raise ValueError('private_data_changed')

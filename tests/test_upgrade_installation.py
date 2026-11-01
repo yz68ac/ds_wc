@@ -80,7 +80,8 @@ class UpgradeTests(unittest.TestCase):
     def test_unit_conversion_preserves_lan_binding_and_security_options(self):
         old='[Service]\nUser=root\nExecStart=/opt/wxbridge/.venv/bin/python /opt/wxbridge/scripts/service.py run --web-host 192.168.1.212\nSendSIGKILL=no\n'
         new=upgrade.rewrite_unit(old).decode()
-        self.assertEqual(new,old.replace('/opt/wxbridge/scripts/service.py run','-m wxbridge_service --root /opt/wxbridge'))
+        self.assertEqual(new,old.replace('[Service]\n','[Service]\nExecStartPre=/usr/bin/chmod 0750 /run/wxbridge-control\n')
+                         .replace('/opt/wxbridge/scripts/service.py run','-m wxbridge_service --root /opt/wxbridge'))
         self.assertEqual(upgrade.rewrite_unit(new),new.encode())
         for text in (old+'ExecStart=/other\n',old.replace('/opt/wxbridge/.venv/bin/python','/unreviewed/python')):
             with self.assertRaises(ValueError):upgrade.rewrite_unit(text)
@@ -141,6 +142,20 @@ class UpgradeTests(unittest.TestCase):
             self.assertEqual(upgrade.finish(backup)['phase'],'complete')
         control.assert_called_once_with('status');run.assert_not_called()
 
+    def test_wheel_missing_a_new_module_or_containing_another_package_is_rejected(self):
+        stage,wheels=self.root/'stage',self.root/'wheels';stage.mkdir();wheels.mkdir()
+        source=stage/'src/wxbridge';source.mkdir(parents=True)
+        (source/'__init__.py').write_bytes(b'synthetic')
+        (source/'control.py').write_bytes(b'new control module')
+        wheel=wheels/'wxbridge-1-py3-none-any.whl'
+        for entries in ({'wxbridge/__init__.py':b'synthetic'},
+                        {'wxbridge/__init__.py':b'synthetic','wxbridge/control.py':b'new control module',
+                         'wechat_linux/__init__.py':b'old SDK'}):
+            with zipfile.ZipFile(wheel,'w') as archive:
+                for name,data in entries.items():archive.writestr(name,data)
+            with self.assertRaisesRegex(ValueError,'wheel_inventory_mismatch'):
+                upgrade.verify_wheels(stage,wheels)
+
     def test_runtime_health_checks_transitive_requirements_without_unrelated_system_packages(self):
         from wxbridge_service.install import dependency_health
         requires, version = importlib.metadata.requires, importlib.metadata.version
@@ -175,7 +190,7 @@ class UpgradeTests(unittest.TestCase):
         def run(*args,**kwargs):
             if '-I' in args:raise subprocess.CalledProcessError(1,['synthetic validation'])
         patches=dict(APP=app,UNIT=unit,LAUNCHER=launcher,STATE=state,BACKUPS=backup.parent,SCANNER=self.root/'scanner')
-        with patch.multiple(upgrade,**patches),patch.object(upgrade,'run',side_effect=run),patch.object(upgrade,'control',return_value=dict(components=dict(bot=dict(state='inactive')))):
+        with patch.multiple(upgrade,**patches),patch.object(upgrade,'check_installed_release'),patch.object(upgrade,'run',side_effect=run),patch.object(upgrade,'control',return_value=dict(components=dict(bot=dict(state='inactive')))):
             with self.assertRaises(subprocess.CalledProcessError):upgrade.apply(backup)
         self.assertEqual(target.read_bytes(),b'old')
         self.assertFalse(current.is_symlink());self.assertEqual((current/'bin/python').read_bytes(),b'old python')

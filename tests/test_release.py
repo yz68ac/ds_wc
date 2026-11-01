@@ -1,5 +1,6 @@
 """发布包只取已提交代码，校验篡改、私密文件与路径穿越。"""
 import io
+import hashlib
 import json
 from pathlib import Path
 import runpy
@@ -107,3 +108,47 @@ class ReleaseTests(unittest.TestCase):
         data = self.altered(lambda files: files.update({'../outside': b'synthetic'}))
         with self.assertRaisesRegex(ValueError, 'invalid_release_path'):
             release['verify'](data)
+
+    def test_clean_wheel_snapshot_excludes_old_builds_and_private_runtime(self):
+        builder=runpy.run_path(str(ROOT/'scripts/build-wheels.py'))
+        for name in ('build/lib/wechat_linux/retired.py','instance/private/config.json',
+                     'src/provider/.env','src/wxbridge/__pycache__/old.pyc'):
+            p=self.root/name;p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(b'old or private')
+        (self.root/'.gitignore').write_text('build/\ninstance/\n.env\n__pycache__/\n')
+        self.commit()
+        target=Path(self.temp.name)/'clean';target.mkdir()
+        builder['stage_source'](self.root,target)
+        self.assertTrue((target/'src/wxbridge/__main__.py').exists())
+        self.assertFalse((target/'build').exists())
+        self.assertFalse((target/'instance').exists())
+        self.assertFalse((target/'src/provider/.env').exists())
+
+    def test_installed_module_mismatch_does_not_claim_the_manifest_revision(self):
+        from wxbridge.release_integrity import installed_mismatches
+        from wxbridge.app import build_info
+        package=self.root/'installed';package.mkdir()
+        module=package/'control.py';module.write_bytes(b'new')
+        manifest=dict(commit='a'*40,files={'src/wxbridge/control.py':dict(sha256=hashlib.sha256(b'new').hexdigest())})
+        (self.root/'release-manifest.json').write_text(json.dumps(manifest))
+        locations={'wxbridge':package}
+        self.assertEqual(installed_mismatches(manifest['files'],locations=locations),[])
+        defaults=ROOT/'config.defaults.json'
+        resource={'config.defaults.json':dict(sha256=hashlib.sha256(defaults.read_bytes()).hexdigest())}
+        self.assertEqual(installed_mismatches(resource,locations=locations),[])
+        self.assertEqual(installed_mismatches(resource,locations=locations,data_root=package),['config.defaults.json'])
+        module.write_bytes(b'old')
+        failures=installed_mismatches(manifest['files'],locations=locations)
+        self.assertEqual(failures,['src/wxbridge/control.py'])
+        with patch.object(build_info,'PROJECT_ROOT',self.root), \
+                patch('wxbridge.release_integrity.installed_mismatches',return_value=failures):
+            build_info.code_revision.cache_clear()
+            try:self.assertEqual(build_info.code_revision(),'unknown')
+            finally:build_info.code_revision.cache_clear()
+
+    def test_source_only_deployment_rejects_package_and_resource_changes(self):
+        check=runpy.run_path(str(ROOT/'scripts/deploy-release.py'))['require_source_only_update']
+        for name in ('src/wxbridge/control.py','src/provider/client.py','config.defaults.json',
+                     'src/webui/dist/index.html','requirements.txt'):
+            with self.subTest(name=name),self.assertRaisesRegex(ValueError,'package_update_requires_upgrade_installation'):
+                check([name])
+        check(['scripts/wechat-login.py'])

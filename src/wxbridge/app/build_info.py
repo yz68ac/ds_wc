@@ -14,7 +14,11 @@ def code_revision():
     try:
         manifest = PROJECT_ROOT/'release-manifest.json'
         if manifest.is_file():
-            revision = json.loads(manifest.read_text(encoding='utf-8'))['commit']
+            release = json.loads(manifest.read_text(encoding='utf-8'))
+            from wxbridge.release_integrity import installed_mismatches
+            if not release.get('files') or installed_mismatches(release['files']):
+                return 'unknown'
+            revision = release['commit']
         else:
             if SOURCE_ROOT is None:
                 return 'unknown'

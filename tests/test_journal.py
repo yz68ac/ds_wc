@@ -160,7 +160,7 @@ class JournalSafetyTests(unittest.TestCase):
 
     @unittest.skipUnless(sys.platform == "linux", "实际 fcntl 锁在 Linux 验证")
     def test_single_instance_lock_excludes_second_listener(self):
-        with patch("wxbridge.app.runtime.require_memory_directory"):
+        with patch("wxbridge.app.locks.require_memory_directory"):
             with instance_lock(str(self.path)):
                 with self.assertRaisesRegex(ValueError, "resource_busy"):
                     with instance_lock(str(self.path)):

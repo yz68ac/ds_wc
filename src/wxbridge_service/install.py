@@ -257,6 +257,14 @@ def doctor(paths):
         add('运行依赖',not failures, ', '.join(failures))
     except ImportError:
         add('运行依赖',False,'请在项目虚拟环境运行。')
+    manifest = paths.app/'release-manifest.json'
+    if manifest.is_file():
+        try:
+            from wxbridge.release_integrity import installed_mismatches
+            failures = installed_mismatches(json.loads(manifest.read_text())['files'])
+            add('安装包与发布清单一致',not failures,'安装包需要统一更新。' if failures else '')
+        except (OSError,ValueError,KeyError,ImportError):
+            add('安装包与发布清单一致',False,'发布校验失败。')
     for name in ('Xvfb','dbus-launch','xdotool','xauth','fluxbox'):
         add(name,shutil.which(name) is not None)
     if cfg.get('ui',{}).get('backend') != 'native_service':

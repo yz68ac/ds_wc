@@ -181,7 +181,7 @@ class MemoryTests(MemoryFixture):
         self.cfg["queue"]["file"] = str(Path(self.temp.name)/"queue.sqlite3")
         self.cfg["decrypted_dir"] = str(Path(self.temp.name)/"decrypted")
         Path(self.cfg["decrypted_dir"]).mkdir(mode=0o700)
-        with patch("wxbridge.app.runtime.require_memory_directory"):
+        with patch("wxbridge.app.locks.require_memory_directory"):
             with instance_lock(self.cfg["queue"]["file"]+".lock"):
                 with self.assertRaisesRegex(ValueError, "resource_busy"):
                     memory_command(self.cfg, Namespace(action="clear"))

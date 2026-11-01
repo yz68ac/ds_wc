@@ -25,6 +25,9 @@ ProtectHome=yes
 ReadWritePaths=/run/wxbridge-trial /run/wxbridge-control /var/lib/wxbridge /var/lib/wxbridge-web /var/lib/wxbridge-service /opt/wxbridge/instance /tmp /var/tmp
 RuntimeDirectory=wxbridge-control
 RuntimeDirectoryMode=0750
+# Image helper drop-ins use 0700 for their runtime directory; systemd applies
+# that mode to all RuntimeDirectory entries. Restore access to this socket only.
+ExecStartPre=/usr/bin/chmod 0750 /run/wxbridge-control
 StateDirectory=wxbridge-service
 StateDirectoryMode=0700
 

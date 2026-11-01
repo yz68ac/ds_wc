@@ -93,6 +93,9 @@ class NativeImageDeploymentTests(unittest.TestCase):
         for line in installer.IMAGE_RUNTIME_POLICY.splitlines():
             self.assertIn(line.encode(), deployment.IMAGE_STOP_POLICY)
         self.assertIn('RuntimeDirectoryPreserve=yes', installer.IMAGE_RUNTIME_POLICY)
+        unit = (Path(__file__).resolve().parents[1]/'scripts/systemd/wxbridge.service').read_text()
+        self.assertIn('ExecStartPre=/usr/bin/chmod 0750 /run/wxbridge-control', unit)
+        self.assertIn('RuntimeDirectoryMode=0700', installer.IMAGE_RUNTIME_POLICY)
         with patch.object(deployment, 'active', return_value=True), \
                 patch.object(deployment, 'run', return_value=Mock(stdout='TimeoutStopUSec=infinity\nSendSIGKILL=no\n')), \
                 patch.object(deployment.subprocess, 'run') as stop:
