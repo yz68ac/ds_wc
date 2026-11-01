@@ -1,5 +1,6 @@
 """Lifecycle tests with fake child processes; no live services or accounts."""
 import json
+import os
 from pathlib import Path
 import signal
 from types import SimpleNamespace
@@ -93,6 +94,26 @@ class SupervisorTests(unittest.TestCase):
             if child.process is not None:return False
             self.started.append(name);child.process=object();return True
         s.start=start
+
+    @unittest.skipUnless(sys.platform=='linux','Linux Unix socket and filesystem modes')
+    def test_bind_restores_group_access_after_systemd_reapplies_private_mode(self):
+        s=self.supervisor;s.control_path=self.directory/'control.sock'
+        s.account=SimpleNamespace(pw_gid=os.getgid())
+        s.socket=None;s.lock_fd=None
+        self.directory.chmod(0o700)
+        original=Path.stat
+        def metadata(path,*args,**kwargs):
+            value=original(path,*args,**kwargs)
+            return SimpleNamespace(st_uid=0,st_mode=value.st_mode) if path==self.directory else value
+        try:
+            with patch.object(Path,'stat',metadata),patch('wxbridge_service.supervisor.os.chown') as chown:
+                s.bind()
+            self.assertEqual(self.directory.stat().st_mode & 0o777,0o750)
+            self.assertEqual(s.control_path.stat().st_mode & 0o777,0o660)
+            chown.assert_any_call(self.directory,0,os.getgid())
+        finally:
+            if s.socket:s.socket.close()
+            if s.lock_fd is not None:os.close(s.lock_fd)
 
     def desktop(self):
         (self.directory/'env').write_text('DISPLAY=:99')

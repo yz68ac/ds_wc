@@ -214,6 +214,10 @@ class Supervisor:
         parent = self.control_path.parent
         if parent.is_symlink() or parent.stat().st_uid != 0 or parent.stat().st_mode & 0o022:
             raise ValueError('unsafe_control_directory')
+        # systemd reapplies RuntimeDirectoryMode for each Exec command, so an
+        # ExecStartPre chmod alone cannot make this socket reachable by Web.
+        os.chown(parent, 0, self.account.pw_gid)
+        os.chmod(parent, 0o750)
         self.lock_fd = os.open(parent/'supervisor.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
         fcntl.flock(self.lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         if self.control_path.exists():
