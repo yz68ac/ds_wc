@@ -323,6 +323,19 @@ def wait_stopped(deadline=360):
     raise ValueError('bot_did_not_drain')
 
 
+def wait_supervisor(deadline=20):
+    until = time.monotonic()+deadline
+    while time.monotonic() < until:
+        try:
+            value = control('status')
+            if value.get('components') and value.get('bot_enabled') is False:
+                return
+        except (OSError, ValueError):
+            pass
+        time.sleep(.5)
+    raise ValueError('new_supervisor_not_ready')
+
+
 def load_record(backup):
     backup = plain_path(backup)
     if not backup.is_relative_to(BACKUPS) or backup == BACKUPS:
@@ -395,10 +408,12 @@ def apply(backup):
         save_json(backup/'upgrade.json', record)
         run('systemctl', 'daemon-reload')
         run('systemctl', 'start', 'wxbridge.service')
+        wait_supervisor()
         return dict(phase=record['phase'], commit=manifest['commit'], bot_paused=True, backup=str(backup))
     except BaseException:
         if stopped:
             if switched:
+                run('systemctl', 'stop', 'wxbridge.service', timeout=None)
                 (APP/'.venv').unlink(missing_ok=True)
                 if 'old_environment_link' in record:
                     (APP/'.venv').symlink_to(record['old_environment_link'], target_is_directory=True)
@@ -408,6 +423,7 @@ def apply(backup):
                 transaction.restore()
             save_json(STATE, original)
             run('systemctl', 'daemon-reload')
+            run('systemctl', 'reset-failed', 'wxbridge.service')
             run('systemctl', 'start', 'wxbridge.service')
         else:
             save_json(STATE, original)
@@ -427,8 +443,13 @@ def finish(backup, *, rollback=False):
             raise ValueError('rollback_target_changed')
         if not (APP/'.venv').is_symlink() or (APP/'.venv').resolve() != Path(record['environment']):
             raise ValueError('active_environment_changed')
-        control('stop')
-        wait_stopped()
+        try:
+            control('stop')
+            wait_stopped()
+        except (OSError, ValueError):
+            # A failed supervisor may never have created its socket. The unit
+            # stop below still owns shutdown and draining of all its children.
+            pass
         run('systemctl', 'stop', 'wxbridge.service', timeout=None)
         (APP/'.venv').unlink()
         if 'old_environment_link' in record:
@@ -438,6 +459,7 @@ def finish(backup, *, rollback=False):
         FileTransaction(backup/'files').restore()
         save_json(STATE, record['original_state'])
         run('systemctl', 'daemon-reload')
+        run('systemctl', 'reset-failed', 'wxbridge.service')
         run('systemctl', 'start', 'wxbridge.service')
         record['phase'] = 'rolled_back'
     else:

@@ -4,11 +4,59 @@ from pathlib import Path
 import signal
 from types import SimpleNamespace
 import tempfile
+import subprocess
+import sys
 import unittest
 from unittest.mock import Mock, patch
 
 from wxbridge_service.supervisor import Child, Supervisor
 from wxbridge_web.control import BOT, COMPONENTS, HELPER, RECOVERY, SESSION, WEB, receive, request
+
+
+class ServiceEntryTests(unittest.TestCase):
+    def test_runtime_preparation_is_an_isolated_process(self):
+        from wxbridge_service import __main__ as entry
+        with patch.object(entry.os,'geteuid',return_value=0,create=True), \
+                patch.object(entry.subprocess,'run') as run, \
+                patch('wxbridge_service.supervisor.Supervisor') as supervisor, \
+                patch.object(entry.signal,'signal'):
+            self.assertEqual(entry.main(['--root',str(Path.cwd())]),0)
+        run.assert_called_once_with(['/usr/bin/python3',str(Path.cwd()/'scripts/boot-recovery.py'),'runtime'],check=True)
+        supervisor.return_value.run.assert_called_once()
+
+    @unittest.skipUnless(sys.platform=='linux','Linux system Python recovery process')
+    def test_real_entry_does_not_keep_the_recovery_scanner_package_in_sys_modules(self):
+        root=Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(dir=root/'.test-tmp') as directory:
+            target=Path(directory);(target/'scripts').mkdir()
+            scanner=target/'scanner/wxbridge/storage';scanner.mkdir(parents=True)
+            for path in (scanner.parent/'__init__.py',scanner/'__init__.py',scanner/'memoryfs.py'):
+                path.write_text('')
+            (target/'scripts/boot-recovery.py').write_text(
+                'import sys\nfrom pathlib import Path\n'
+                'def runtime():\n'
+                ' sys.path.insert(0,str(Path(__file__).parents[1]/"scanner"))\n'
+                ' import wxbridge.storage.memoryfs\n'
+                'if __name__=="__main__":runtime()\n')
+            code='''
+import sys,types
+sys.path.insert(0,sys.argv[1])
+from wxbridge_service import __main__ as entry
+module=types.ModuleType('wxbridge_service.supervisor')
+class Supervisor:
+ def __init__(self,*args,**kwargs):
+  from wxbridge.control import request
+ def run(self):print('entry_imports_complete_package')
+module.Supervisor=Supervisor
+sys.modules['wxbridge_service.supervisor']=module
+entry.os.geteuid=lambda:0
+entry.signal.signal=lambda *args:None
+entry.main(['--root',sys.argv[2]])
+'''
+            result=subprocess.run([sys.executable,'-I','-c',code,str(root/'src'),str(target)],
+                                  capture_output=True,text=True,timeout=10)
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertIn('entry_imports_complete_package',result.stdout)
 
 
 class FakeChild:

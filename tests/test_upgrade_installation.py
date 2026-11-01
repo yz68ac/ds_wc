@@ -142,6 +142,15 @@ class UpgradeTests(unittest.TestCase):
             self.assertEqual(upgrade.finish(backup)['phase'],'complete')
         control.assert_called_once_with('status');run.assert_not_called()
 
+    def test_acceptance_requires_the_new_supervisor_socket_and_a_paused_bot(self):
+        with patch.object(upgrade,'control',side_effect=[FileNotFoundError(),
+                dict(bot_enabled=True,components={'bot':{}}),dict(bot_enabled=False,components={'bot':{}})]), \
+                patch.object(upgrade.time,'sleep'):
+            upgrade.wait_supervisor()
+        with patch.object(upgrade,'control',side_effect=FileNotFoundError()), \
+                patch.object(upgrade.time,'monotonic',side_effect=[0,0,21]),patch.object(upgrade.time,'sleep'):
+            with self.assertRaisesRegex(ValueError,'new_supervisor_not_ready'):upgrade.wait_supervisor()
+
     def test_wheel_missing_a_new_module_or_containing_another_package_is_rejected(self):
         stage,wheels=self.root/'stage',self.root/'wheels';stage.mkdir();wheels.mkdir()
         source=stage/'src/wxbridge';source.mkdir(parents=True)
@@ -175,6 +184,13 @@ class UpgradeTests(unittest.TestCase):
 
     @unittest.skipIf(os.name=='nt','Linux venv symlink switch and rollback')
     def test_failed_configuration_validation_restores_environment_code_and_enable_state(self):
+        self._assert_failed_upgrade_rolls_back()
+
+    @unittest.skipIf(os.name=='nt','Linux venv symlink switch and rollback')
+    def test_failed_supervisor_start_restores_environment_and_resets_start_limit(self):
+        self._assert_failed_upgrade_rolls_back(supervisor_failure=True)
+
+    def _assert_failed_upgrade_rolls_back(self, *, supervisor_failure=False):
         app,stage,name=self.stage();target=app/name;target.parent.mkdir(parents=True);target.write_bytes(b'old')
         current=app/'.venv';(current/'bin').mkdir(parents=True);(current/'bin/python').write_bytes(b'old python')
         environment=self.root/'environment';(environment/'bin').mkdir(parents=True)
@@ -188,10 +204,14 @@ class UpgradeTests(unittest.TestCase):
                     scanner_hashes={str(self.root/'scanner'/relative):None for relative in upgrade.RECOVERY_MODULES})
         (backup/'upgrade.json').write_text(json.dumps(record))
         def run(*args,**kwargs):
-            if '-I' in args:raise subprocess.CalledProcessError(1,['synthetic validation'])
+            if '-I' in args and not supervisor_failure:raise subprocess.CalledProcessError(1,['synthetic validation'])
         patches=dict(APP=app,UNIT=unit,LAUNCHER=launcher,STATE=state,BACKUPS=backup.parent,SCANNER=self.root/'scanner')
-        with patch.multiple(upgrade,**patches),patch.object(upgrade,'check_installed_release'),patch.object(upgrade,'run',side_effect=run),patch.object(upgrade,'control',return_value=dict(components=dict(bot=dict(state='inactive')))):
-            with self.assertRaises(subprocess.CalledProcessError):upgrade.apply(backup)
+        with patch.multiple(upgrade,**patches),patch.object(upgrade,'check_installed_release'), \
+                patch.object(upgrade,'run',side_effect=run) as calls, \
+                patch.object(upgrade,'wait_supervisor',side_effect=ValueError('new_supervisor_not_ready')), \
+                patch.object(upgrade,'control',return_value=dict(components=dict(bot=dict(state='inactive')))):
+            with self.assertRaises(ValueError if supervisor_failure else subprocess.CalledProcessError):upgrade.apply(backup)
+        self.assertIn(('systemctl','reset-failed','wxbridge.service'),[call.args for call in calls.call_args_list])
         self.assertEqual(target.read_bytes(),b'old')
         self.assertFalse(current.is_symlink());self.assertEqual((current/'bin/python').read_bytes(),b'old python')
         self.assertEqual(launcher.read_bytes(),b'old launcher')

@@ -1,10 +1,10 @@
 """Private system service entry; human-facing control lives in wxbridge CLI."""
 import argparse
-import importlib.util
 import logging
 import os
 from pathlib import Path
 import signal
+import subprocess
 
 
 def main(argv=None):
@@ -17,10 +17,9 @@ def main(argv=None):
         parser.error('The supervisor must run as root; business children drop privileges.')
     root = args.root.resolve()
     logging.basicConfig(level=logging.INFO,format='%(asctime)s %(levelname)s %(message)s')
-    spec = importlib.util.spec_from_file_location('boot_recovery',root/'scripts/boot-recovery.py')
-    recovery = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(recovery)
-    recovery.runtime()
+    # Recovery deliberately imports a minimal package projection through SCANNER.
+    # Keep those sys.path/sys.modules changes outside the long-lived supervisor.
+    subprocess.run(['/usr/bin/python3', str(root/'scripts/boot-recovery.py'), 'runtime'], check=True)
     from wxbridge_service.supervisor import Supervisor
     supervisor = Supervisor(root,web_host=args.web_host,web_port=args.web_port)
     def stop(_signal,_frame):
