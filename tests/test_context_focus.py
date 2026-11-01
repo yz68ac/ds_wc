@@ -12,10 +12,10 @@ import tests.support.memory as memory_tests
 from tests.support.memory import IDENTITY, suggestion
 import tests.support.pipeline as pipeline
 import tests.support.conversation as conversation
-from wxbridge.ai.memory import snapshot
-from wxbridge.ai.identity import member_labels, reference_data
-from wxbridge.ai.reply_prompt import build_prompt as normal_prompt
-from wxbridge.ai.participation import build_prompt, evaluate, ParticipationError
+from wxbridge.ai.background.memory import snapshot
+from wxbridge.ai.context.identity import member_labels, reference_data
+from wxbridge.ai.reply.prompt import build_prompt as normal_prompt
+from wxbridge.ai.background.participation import build_prompt, evaluate, ParticipationError
 from wxbridge.config import DEFAULTS
 from wxbridge.storage.memory_selection import memory_dialogue, MemoryTopic
 

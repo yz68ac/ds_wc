@@ -2,7 +2,7 @@
 from copy import deepcopy
 import unittest
 
-from wxbridge.ai.citations import without_citations
+from wxbridge.ai.reply.citations import without_citations
 from provider.adapters import get_protocol_adapter
 
 URL = 'https://example.com/source'
@@ -119,7 +119,7 @@ class CitationOutputTests(unittest.TestCase):
         self.assertEqual(without_citations(original+'(('+link+'))', SOURCES), original)
 
     def test_common_output_formatter_does_not_reintroduce_the_shell(self):
-        from wxbridge.ai.output import format_reply
+        from wxbridge.ai.reply.output import format_reply
         link = '[来源]('+URL+')'
         text = '合成回答(('+link+'))'
         start = text.index(link)

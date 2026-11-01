@@ -5,7 +5,7 @@ import json
 from .base import ModelError, ModelResult
 from .common import (
     build_anthropic_image_source, build_continuation_message, build_tool_call,
-    extract_image_url_and_detail, extract_tool_definition, get_continuation_items,
+    extract_image_url_and_detail, extract_tool_definitions, get_continuation_items,
     get_search_call_limit, guard_conversion_errors, nonnegative_int_or_none, parse_web_source,
 )
 
@@ -78,11 +78,10 @@ class AnthropicAdapter:
                     and settings.get('temperature') is not None):
                 payload['temperature'] = settings['temperature']
         tools = []
-        for tool in request.tools or []:
-            f = extract_tool_definition(tool)
+        definitions = extract_tool_definitions(request.tools, native_search=request.native_search is not None)
+        for f in definitions:
             tools.append(dict(name=f['name'], description=f.get('description', ''), input_schema=f['parameters']))
         if request.native_search is not None:
-            if tools:raise ModelError('mixed_search_tools')
             version = settings.get('anthropic_web_search_version', 'web_search_20250305')
             search = dict(type=version, name='web_search', max_uses=get_search_call_limit(request.native_search))
             if version != 'web_search_20250305':search['allowed_callers'] = ['direct']
@@ -92,6 +91,7 @@ class AnthropicAdapter:
             if isinstance(choice, str):
                 choice = {'auto': {'type': 'auto'}, 'none': {'type': 'none'}, 'required': {'type': 'any'}}.get(choice)
             elif isinstance(choice, dict) and choice.get('type') == 'function':
+                if not isinstance(choice.get('function'), dict) or choice['function'].get('name') not in {f['name'] for f in definitions}:raise ModelError('invalid_tool_choice')
                 choice = dict(type='tool', name=choice['function']['name'])
             else:choice = None
             if choice is None:raise ModelError('invalid_tool_choice')

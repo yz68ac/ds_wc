@@ -2,7 +2,7 @@
 import copy
 import unittest
 
-from wxbridge.ai.output import plain_text, response_prompt
+from wxbridge.ai.reply.output import plain_text, response_prompt
 from wxbridge.wechat.messages import reply_chunks
 
 
@@ -45,7 +45,7 @@ class OutputTests(unittest.TestCase):
         saved = copy.deepcopy(messages)
         prompt = response_prompt(messages)
         self.assertTrue(prompt[0]['content'].startswith('有主见的合成人格'))
-        from wxbridge.ai.output import reply_rules
+        from wxbridge.ai.reply.output import reply_rules
         self.assertIn(reply_rules(), prompt[0]['content'])
         self.assertNotIn('尽量不超过30字', prompt[0]['content'])
         self.assertEqual(prompt[1], messages[1])

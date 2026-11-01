@@ -5,7 +5,7 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch, Mock
 
-from wxbridge.ai.memory import snapshot, extract
+from wxbridge.ai.background.memory import snapshot, extract
 from wxbridge.config import DEFAULTS, load_config
 from wxbridge.storage import expression_memory as expressions
 from wxbridge.storage.person_memory import MemoryStore, DAY

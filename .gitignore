@@ -44,6 +44,7 @@ bot.log.*
 venv/
 .venv/
 .test-tmp/
+/.pytest_cache/
 /build/
 /dist/
 /*.egg-info/
@@ -62,9 +63,9 @@ Thumbs.db
 
 # Local per-group configuration and prompts.
 /instance/
-/src/webui/node_modules/
-/src/webui/dist/
-/src/webui/*.tsbuildinfo
-/src/wxbridge_web/*.egg-info/
-/src/wxbridge_web/build/
-/src/wxbridge_web/dist/
+/src/web/frontend/node_modules/
+/src/web/frontend/dist/
+/src/web/frontend/*.tsbuildinfo
+/src/web/backend/*.egg-info/
+/src/web/backend/build/
+/src/web/backend/dist/

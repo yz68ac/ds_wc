@@ -18,10 +18,10 @@ import zlib
 from wxbridge.config import DEFAULTS, _deep_merge, load_config
 from wechat_linux.storage.crypto import AES
 from tests.support.model_support import ClientFixture, ModelError
-from wxbridge.ai.reply_prompt import build_prompt
-from wxbridge.ai.quoted_images import MediaError, V1, V2, decode_dat, key_candidates, prepare_multimodal, read_local_image, validate_image
+from wxbridge.ai.reply.prompt import build_prompt
+from wxbridge.ai.reply.images import MediaError, V1, V2, decode_dat, key_candidates, prepare_multimodal, read_local_image, validate_image
 from wechat_linux.messages.references import image_md5, local_image_cache_key
-from wxbridge.ai.identity import prompt_reference
+from wxbridge.ai.context.identity import prompt_reference
 from wxbridge.wechat.store import WeChatStore
 from tests.support.synthetic import NOW, msg
 from tests.support.messages import parse_message, quoted_xml
@@ -117,7 +117,7 @@ class LocalImageTests(LocalImageFixture):
         self.path.write_bytes(png())
         generation = self.generation()
         prompt, metadata = self.prepare(generation)
-        from wxbridge.ai.reply_prompt import system_prompt
+        from wxbridge.ai.reply.prompt import system_prompt
         self.assertEqual(prompt[0], dict(role='system', content=system_prompt(self.cfg)))
         blocks = prompt[1]["content"]
         self.assertEqual(blocks[-1]["type"], "image_url")
@@ -279,7 +279,7 @@ class ImageBindingTests(ImageBindingFixture):
         generation = dict(context=[], triggers=[trigger], chat_title="合成群",
                           images=[dict(trigger_index=0, depth=0, **binding)])
         self.store._query_messages.reset_mock()
-        with patch("wxbridge.ai.quoted_images.time.sleep", side_effect=lambda _: full.write_bytes(png())):
+        with patch("wxbridge.ai.reply.images.time.sleep", side_effect=lambda _: full.write_bytes(png())):
             _, meta = prepare_multimodal(cfg, build_prompt(cfg, [], trigger, "合成群"), generation)
         self.assertEqual(meta["images"], 1)
         self.assertEqual(meta["items"][0]["quality"], "original")

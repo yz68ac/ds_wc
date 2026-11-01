@@ -1,7 +1,7 @@
 include pyproject.toml
 include README.md config.defaults.json
 recursive-include prompts *.md *.json
-recursive-include src/webui/dist *.html *.css *.js
+recursive-include src/web/frontend/dist *.html *.css *.js
 exclude CONTRIBUTING.md
 prune tests
 prune src/wechat_linux

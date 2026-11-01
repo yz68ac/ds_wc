@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from provider import ModelError
-from wxbridge.ai.participation import evaluate, parse_decision, ParticipationError
+from wxbridge.ai.background.participation import evaluate, parse_decision, ParticipationError
 from wxbridge.config import DEFAULTS
 
 
@@ -55,7 +55,7 @@ class EvaluationTests(unittest.TestCase):
         client.complete.return_value = dict(content='{"reply_to":[12,10]}', reasoning_content='PRIVATE_REASONING')
         with patch('wxbridge.ai.client.client_for', return_value=client) as factory, \
              patch('wxbridge.ai.roles.model_settings', return_value=dict(timeout_seconds=20)) as settings, \
-             patch('wxbridge.ai.participation.time.monotonic', return_value=100):
+             patch('wxbridge.ai.background.participation.time.monotonic', return_value=100):
             result = evaluate(self.cfg, self.prompt, source_ids=[10, 11, 12], timeout_seconds=5)
         self.assertEqual(result, dict(reply_to=[10, 12]))
         factory.assert_called_once_with('participation')
@@ -70,7 +70,7 @@ class EvaluationTests(unittest.TestCase):
         client.complete.return_value = dict(content='{"reply_to":[]}')
         with patch('wxbridge.ai.client.client_for', return_value=client), \
              patch('wxbridge.ai.roles.model_settings', return_value=dict(timeout_seconds=20)), \
-             patch('wxbridge.ai.participation.time.monotonic', return_value=100):
+             patch('wxbridge.ai.background.participation.time.monotonic', return_value=100):
             self.assertEqual(evaluate(self.cfg, self.prompt, source_ids=[1], timeout_seconds=50), dict(reply_to=[]))
         self.assertEqual(client.complete.call_args.kwargs['deadline'], 120)
 

@@ -15,4 +15,4 @@ def resource_path(relative):
 
 
 def frontend_path():
-    return SOURCE_ROOT/'src/webui/dist' if SOURCE_ROOT else DATA_ROOT/'webui'
+    return SOURCE_ROOT/'src/web/frontend/dist' if SOURCE_ROOT else DATA_ROOT/'webui'

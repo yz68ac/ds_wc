@@ -3,13 +3,15 @@ from copy import deepcopy
 from pathlib import Path
 import json
 import tempfile
+import subprocess
+import sys
 import unittest
 from unittest.mock import patch
 
-from wxbridge_web.demo import DEMO_PASSWORD, DemoServices, seed
-from wxbridge_web.repository import ConfigRepository, ManagementError
-from wxbridge_web.services import BOT, RECOVERY, SESSION, ServiceManager, Operations
-from wxbridge_web.status import overview
+from web.backend.demo import DEMO_PASSWORD, DemoServices, seed
+from wxbridge.management.repository import ConfigRepository, ManagementError
+from web.backend.services import BOT, RECOVERY, SESSION, ServiceManager, Operations
+from web.backend.status import overview
 
 
 class RepositoryTests(unittest.TestCase):
@@ -24,6 +26,50 @@ class RepositoryTests(unittest.TestCase):
 
     def item(self):
         return self.repository.get('private_demo')
+
+    def test_management_lock_does_not_require_a_writable_application_code_directory(self):
+        self.root.chmod(0o555)
+        try:
+            repository=ConfigRepository(self.root)
+            self.assertEqual(repository.lock.path,self.root/'instance/.management.lock')
+            self.assertEqual(repository.get('private_demo')['id'],'private_demo')
+        finally:
+            self.root.chmod(0o755)
+
+    def test_process_lock_covers_revision_check_and_supports_nested_repository_calls(self):
+        item=self.item()
+        source=Path(__file__).resolve().parents[1]/'src'
+        code='''
+import json,sys
+sys.path.insert(0,sys.argv[1])
+from wxbridge.management.repository import ConfigRepository,ManagementError
+repository=ConfigRepository(sys.argv[2])
+print('waiting',flush=True)
+try:
+ repository.save('private_demo',json.loads(sys.argv[3]),sys.argv[4])
+except ManagementError as exc:
+ print(exc.code,flush=True)
+else:
+ raise SystemExit('stale write was accepted')
+'''
+        with self.repository.lock:
+            child=subprocess.Popen([sys.executable,'-I','-c',code,str(source),str(self.root),
+                                    json.dumps(item['config']),item['revision']],
+                                   stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+            try:
+                self.assertEqual(child.stdout.readline().strip(),'waiting')
+                with self.assertRaises(subprocess.TimeoutExpired):child.communicate(timeout=.2)
+                changed=dict(item['config'],enabled=False)
+                self.repository.save('private_demo',changed,item['revision'])
+            except BaseException:
+                child.kill();child.communicate();raise
+        try:
+            output,error=child.communicate(timeout=10)
+            self.assertEqual(child.returncode,0,error)
+            self.assertIn('revision_conflict',output)
+            self.assertFalse(self.item()['config']['enabled'])
+        finally:
+            if child.poll() is None:child.kill();child.communicate()
 
     def test_edit_preserves_unknown_business_settings_and_does_not_open_database(self):
         item=self.item()
@@ -154,24 +200,24 @@ class ServiceTests(unittest.TestCase):
 
     def test_stop_is_one_fixed_supervisor_action(self):
         service=self.service()
-        with patch('wxbridge_web.services.request',return_value=dict(applied=True)) as call:
+        with patch('web.backend.services.request',return_value=dict(applied=True)) as call:
             service.perform('stop')
         call.assert_called_once_with('stop',service.control_socket)
 
     def test_apply_never_starts_deliberately_stopped_bot(self):
         service=self.service()
-        with patch('wxbridge_web.services.request',return_value=dict(applied=False)) as call:
+        with patch('web.backend.services.request',return_value=dict(applied=False)) as call:
             self.assertFalse(service.perform('apply')['applied'])
         call.assert_called_once_with('apply',service.control_socket)
 
     def test_supervisor_unavailable_is_reported_without_shell_fallback(self):
         service=self.service()
-        with patch('wxbridge_web.services.request',side_effect=OSError):
+        with patch('web.backend.services.request',side_effect=OSError):
             with self.assertRaisesRegex(ManagementError,'主控暂时不可用'):service.perform('apply')
 
     def test_arbitrary_unit_or_action_is_never_executed(self):
         service=self.service()
-        with patch('wxbridge_web.services.request') as call:
+        with patch('web.backend.services.request') as call:
             with self.assertRaises(ManagementError):service.perform('stop sshd.service')
         call.assert_not_called()
 
@@ -180,10 +226,10 @@ class ServiceTests(unittest.TestCase):
         for error,code in [(PermissionError(),'control_permission_denied'),
                            (FileNotFoundError(),'control_unreachable'),
                            (TimeoutError(),'control_timeout'),(ValueError(),'control_invalid_response')]:
-            with self.subTest(code=code),patch('wxbridge_web.services.os.name','posix'), \
-                    patch('wxbridge_web.services.request',side_effect=error):
+            with self.subTest(code=code),patch('web.backend.services.os.name','posix'), \
+                    patch('web.backend.services.request',side_effect=error):
                 self.assertEqual(service.status()[BOT]['state'],'unavailable')
                 self.assertEqual(service.status_error,code)
-        with patch('wxbridge_web.services.os.name','posix'),patch('wxbridge_web.services.request',return_value=dict(components={})):
+        with patch('web.backend.services.os.name','posix'),patch('web.backend.services.request',return_value=dict(components={})):
             service.status()
         self.assertEqual(service.status_error,'')

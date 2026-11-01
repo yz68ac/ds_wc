@@ -1,7 +1,6 @@
 """Nonblocking Unix socket served only by the existing listener/main DB owner."""
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 import selectors
@@ -10,7 +9,7 @@ import stat
 import struct
 import time
 
-from wxbridge.native.protocol import MAX_FRAME, REQUEST_ID, NativeError, decode, encode, settings, validate_send
+from wxbridge.native.protocol import MAX_FRAME, NativeError, decode, encode, settings
 from wxbridge.storage.memoryfs import require_memory_directory
 
 

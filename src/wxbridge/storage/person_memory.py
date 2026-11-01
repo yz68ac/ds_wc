@@ -14,7 +14,7 @@ from wxbridge.storage import expression_memory, relationships
 from wxbridge.emoticons import token_pattern
 from wxbridge.storage.memory_rules import (DAY, LIMITS, TTL, ambiguous_labels, usable_entries,
                                            fuzzy_time, affinity_value, active_entries)
-from wxbridge.storage.member_references import MEMBER_LABEL, ambiguous_fields, bind_text, safe_legacy_metadata
+from wxbridge.storage.member_references import MEMBER_LABEL, ambiguous_fields, bind_text
 
 
 def bind_summary(summary, owner, mapping, members, source_texts):

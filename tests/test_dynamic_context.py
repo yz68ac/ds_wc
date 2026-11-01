@@ -9,11 +9,11 @@ from unittest.mock import Mock
 
 from tests.support.model_support import default_config
 from tests.support.synthetic import NOW, msg, history_page
-from wxbridge.ai.context_selection import (ContextError, read_context, select_context, select_memory_context)
-from wxbridge.ai.chat_payload import chat_payload, encode_payload, fit_payload
-from wxbridge.ai.reply_prompt import build_prompt
-from wxbridge.ai.participation import build_prompt as judgment_prompt
-from wxbridge.ai.prompt_parts import PromptComposer
+from wxbridge.ai.context.selection import (ContextError, read_context, select_context, select_memory_context)
+from wxbridge.ai.context.payload import chat_payload, encode_payload, fit_payload
+from wxbridge.ai.reply.prompt import build_prompt
+from wxbridge.ai.background.participation import build_prompt as judgment_prompt
+from wxbridge.ai.composer import PromptComposer
 from wxbridge.config import migrate_context_data, resolve_config
 from wxbridge.wechat.store import WeChatStore
 import tests.support.conversation as conversation

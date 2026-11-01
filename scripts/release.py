@@ -67,7 +67,7 @@ def git(root, *args):
 
 def frontend_files(archived):
     """Build only committed UI sources in isolation; never reuse a stale working-tree dist."""
-    prefix = 'src/webui/'
+    prefix = 'src/web/frontend/'
     if prefix+'package.json' not in archived.namelist():
         return {}
     npm = 'npm.cmd' if sys.platform == 'win32' else 'npm'

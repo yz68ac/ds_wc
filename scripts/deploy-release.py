@@ -8,6 +8,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 from pathlib import Path, PurePosixPath
 import shutil
 import stat
@@ -113,7 +114,7 @@ def require_application_layout():
     except (OSError,subprocess.CalledProcessError):
         raise ValueError('application_environment_upgrade_required') from None
     command = run('systemctl','show',UNITS[0],'-p','ExecStart','--value').stdout
-    if '-m wxbridge_service' not in command:
+    if not re.search(r'-m wxbridge(?:\s|;|$)', command):
         raise ValueError('service_entry_upgrade_required')
 
 
@@ -175,8 +176,8 @@ def listener_idle(snapshot, live, *, allow_pending_memory=False):
 
 
 def require_source_only_update(names):
-    if any(name.startswith(('src/wxbridge/', 'src/wxbridge_service/', 'src/wxbridge_web/',
-                            'src/provider/', 'src/wechat_linux/', 'src/webui/dist/'))
+    if any(name.startswith(('src/wxbridge/', 'src/wxbridge_cli/', 'src/wxbridge_service/', 'src/web/',
+                            'src/provider/', 'src/wechat_linux/'))
            or name in ('config.defaults.json', 'pyproject.toml', 'uv.lock', 'requirements.txt', 'requirements-test.txt')
            for name in names):
         raise ValueError('package_update_requires_upgrade_installation')

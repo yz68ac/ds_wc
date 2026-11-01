@@ -5,7 +5,7 @@ from .base import ModelError, ModelResult
 from .openai_chat_completions import ChatCompletionsAdapter
 from .common import (
     build_continuation_message, build_tool_call, extract_image_url_and_detail,
-    extract_tool_definition, get_continuation_items, get_search_call_limit,
+    extract_tool_definitions, get_continuation_items, get_search_call_limit,
     guard_conversion_errors, nonnegative_int_or_none, parse_web_source,
 )
 
@@ -57,12 +57,11 @@ class ResponsesAdapter(ChatCompletionsAdapter):
         # Reasoning models reject sampling parameters when effort is not none.
         if effort == 'none' and settings.get('temperature') is not None:payload['temperature'] = settings['temperature']
         tools = []
-        for tool in request.tools or []:
-            f = extract_tool_definition(tool)
+        definitions = extract_tool_definitions(request.tools, native_search=request.native_search is not None)
+        for f in definitions:
             tools.append(dict(type='function', name=f['name'], description=f.get('description', ''),
                               parameters=f['parameters'], strict=f.get('strict', False)))
         if request.native_search is not None:
-            if tools:raise ModelError('mixed_search_tools')
             tools.append(dict(type='web_search'))
             payload['max_tool_calls'] = get_search_call_limit(request.native_search)
             payload['include'].append('web_search_call.action.sources')
@@ -70,6 +69,7 @@ class ResponsesAdapter(ChatCompletionsAdapter):
             choice = request.tool_choice or 'auto'
             if isinstance(choice, dict):
                 if choice.get('type') != 'function' or not isinstance(choice.get('function'), dict):raise ModelError('invalid_tool_choice')
+                if choice['function'].get('name') not in {f['name'] for f in definitions}:raise ModelError('invalid_tool_choice')
                 choice = dict(type='function', name=choice['function']['name'])
             elif choice not in ('auto', 'none', 'required'):raise ModelError('invalid_tool_choice')
             payload.update(tools=tools, tool_choice=choice)

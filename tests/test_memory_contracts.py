@@ -10,7 +10,7 @@ import tests.support.memory as memory_tests
 import tests.support.pipeline as pipeline
 import tests.support.conversation as conversation
 from tests.support.synthetic import NOW, msg
-from wxbridge.ai.memory import snapshot
+from wxbridge.ai.background.memory import snapshot
 from wxbridge.storage.memory_render import render_memory
 
 

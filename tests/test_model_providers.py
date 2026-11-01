@@ -14,7 +14,8 @@ from unittest.mock import Mock, patch
 from tests.support.model_support import ClientFixture, ModelError, capture_metrics
 from provider.adapters import ModelRequest, ModelResult, get_protocol_adapter
 from wxbridge.ai.roles import validate_models
-from wxbridge.ai.search import SearchClient, SearchError, answer_with_search
+from wxbridge.ai.tools.web import SearchClient, SearchError
+from tests.support.tool_support import run_answer
 from wxbridge.config import DEFAULTS
 from provider import create_client, load_config as provider_config
 from wxbridge.ai.roles import model_settings
@@ -90,7 +91,7 @@ class ProviderTests(unittest.TestCase):
                  dict(answer='合成结论')]
         backend=Mock();backend.search.return_value=dict(results=[dict(url='https://example.com/source',title='合成来源')])
         with patch.object(client, '_post', side_effect=replies) as post,capture_metrics() as metrics:
-            text,meta=answer_with_search(cfg,client,[dict(role='user',content='PRIVATE_CHAT')],search_client=backend)
+            text,meta=run_answer(cfg,client,[dict(role='user',content='PRIVATE_CHAT')],search_client=backend)
         self.assertEqual(post.call_count,2);self.assertTrue(meta['attempted'])
         self.assertTrue(text.startswith('合成结论'));self.assertNotIn('PRIVATE',text)
         second=post.call_args_list[1].args[0]
@@ -128,7 +129,7 @@ class ProviderTests(unittest.TestCase):
         for key in ('search-key', ''):
             config=provider_config(ROOT/'tests/.synthetic-provider.env', environ={
                 'DEEPSEEK_API_KEY':key, 'OPENAI_API_KEY':'chat-key'})
-            with patch('wxbridge.ai.search.load_config',return_value=config):
+            with patch('wxbridge.ai.tools.web.load_config',return_value=config):
                 if key: self.assertEqual(SearchClient(cfg).api_key,'search-key')
                 else:
                     with self.assertRaisesRegex(SearchError,'missing_api_key'):SearchClient(cfg)
@@ -180,7 +181,7 @@ assert callable(get_protocol_adapter('deepseek').build_payload)
         self.assertEqual(run.returncode,0,run.stderr.decode())
 
     def test_business_entrypoints_use_neutral_names_and_search_has_no_vendor_replay(self):
-        for name in ('src/wxbridge/ai/avatars.py','src/wxbridge/ai/memory.py','src/wxbridge/ai/participation.py','src/wxbridge/app/workers.py'):
+        for name in ('src/wxbridge/ai/background/avatars.py','src/wxbridge/ai/background/memory.py','src/wxbridge/ai/background/participation.py','src/wxbridge/app/workers.py'):
             text=(ROOT/name).read_text(encoding='utf-8')
             self.assertNotIn('ClientFixture',text)
-        self.assertNotIn('reasoning_content',(ROOT/'src/wxbridge/ai/search.py').read_text(encoding='utf-8'))
+        self.assertNotIn('reasoning_content',(ROOT/'src/wxbridge/ai/reply/runner.py').read_text(encoding='utf-8'))

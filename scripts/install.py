@@ -6,5 +6,5 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/'src'))
 
 if __name__ == '__main__':
-    from wxbridge_service.install import main
+    from wxbridge_cli.install import main
     raise SystemExit(main(source=ROOT))

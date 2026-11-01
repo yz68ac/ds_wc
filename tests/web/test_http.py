@@ -4,8 +4,8 @@ import tempfile
 import unittest
 
 from fastapi.testclient import TestClient
-from wxbridge_web.app import create_app
-from wxbridge_web.demo import DEMO_PASSWORD,DemoServices,seed
+from web.backend.app import create_app
+from web.backend.demo import DEMO_PASSWORD,DemoServices,seed
 
 
 class HTTPTests(unittest.TestCase):
@@ -13,13 +13,20 @@ class HTTPTests(unittest.TestCase):
         parent=Path(__file__).resolve().parents[2]/'.test-tmp';parent.mkdir(exist_ok=True)
         temp=tempfile.TemporaryDirectory(dir=parent);self.addCleanup(temp.cleanup)
         root=Path(temp.name);seed(root)
-        self.app=create_app(root,DEMO_PASSWORD,services=DemoServices(root),demo=True,allowed_hosts=['testserver'])
+        self.app=create_app(root,DEMO_PASSWORD,services=DemoServices(root),demo=True,allowed_hosts=['testserver'],health_token='synthetic-health-token')
         self.client=self.enterContext(TestClient(self.app))
 
     def login(self):
         response=self.client.post('/api/login',json={'password':DEMO_PASSWORD})
         self.assertEqual(response.status_code,200)
         return {'X-CSRF-Token':response.json()['csrf']}
+
+    def test_health_is_public_and_contains_no_private_state(self):
+        response=self.client.get('/healthz')
+        self.assertEqual(response.status_code,200)
+        self.assertEqual(response.content,b'{"status":"ok"}')
+        self.assertEqual(response.headers['x-wxbridge-health'],'synthetic-health-token')
+        self.assertEqual(response.headers['cache-control'],'no-store')
 
     def test_authentication_and_secret_inputs_not_echoed(self):
         self.assertEqual(self.client.get('/api/instances').status_code,401)

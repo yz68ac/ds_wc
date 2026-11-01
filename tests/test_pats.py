@@ -12,8 +12,8 @@ from unittest.mock import patch
 from wechat_linux.messages.pats import parse_pat, is_pat
 from wxbridge.wechat.store import WeChatStore
 from wxbridge.wechat.messages import display_message
-from wxbridge.ai.memory import snapshot, extract
-from wxbridge.ai.reply_prompt import build_prompt
+from wxbridge.ai.background.memory import snapshot, extract
+from wxbridge.ai.reply.prompt import build_prompt
 from wxbridge.config import DEFAULTS, _deep_merge, load_config, resolve_config
 from wxbridge.storage.person_memory import MemoryStore
 from tests.support.pipeline import PipelineFixture

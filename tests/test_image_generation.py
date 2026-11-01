@@ -17,7 +17,8 @@ from PIL import Image
 from provider import GeneratedImage, ImageRequest, ImageResult, ModelError, create_client, load_config
 from provider.gemini_images import build_gemini_image_payload, parse_gemini_image_response
 from wxbridge.ai.roles import validate_models
-from wxbridge.ai.search import answer_with_search
+from wxbridge.ai.reply.runner import run_tool_loop
+from tests.support.tool_support import model_result
 from wxbridge.app.image_generation_controller import checked_image, artifact_path
 from tests.support.model_support import default_config
 import tests.support.pipeline as pipeline
@@ -152,32 +153,31 @@ class ImageProviderTests(unittest.TestCase):
         cfg['search']['enabled'] = False
         cfg['image_generation']['enabled'] = True
         client = Mock()
-        client.complete.return_value = dict(content=None, tool_calls=[dict(id='one', function=dict(
-            name='generate_image', arguments=json.dumps(dict(prompt='PRIVATE_DRAWING'))))])
-        proposals = []
-        with patch('wxbridge.ai.search.SearchClient') as search:
-            text, metadata = answer_with_search(cfg, client, [dict(role='user',content='画一只猫')], image_requests=proposals)
-        self.assertEqual(proposals, [dict(prompt='PRIVATE_DRAWING')])
-        self.assertNotIn('成功', text)
-        self.assertFalse(metadata['attempted'])
+        client.request.side_effect = [model_result(dict(content=None, tool_calls=[dict(id='one', function=dict(
+            name='generate_image', arguments=json.dumps(dict(prompt='PRIVATE_DRAWING'))))])), model_result(dict(content=''))]
+        with patch('wxbridge.ai.tools.web.SearchClient') as search:
+            result = run_tool_loop(cfg, client, [dict(role='user',content='画一只猫')])
+        self.assertEqual(result.image_requests, (dict(prompt='PRIVATE_DRAWING'),))
+        self.assertNotIn('成功', result.text)
+        self.assertFalse(result.search['attempted'])
         search.assert_not_called()
-        tools = client.complete.call_args.kwargs['tools']
+        tools = client.request.call_args_list[0].kwargs['tools']
         self.assertEqual([t['function']['name'] for t in tools], ['generate_image'])
 
-    def test_image_tool_coexists_with_hosted_search_without_an_extra_model_round(self):
+    def test_image_tool_coexists_with_hosted_search_and_returns_its_tool_result(self):
         from provider import ModelResult
         cfg = default_config()
         cfg['search']['backend'] = 'native'
         cfg['image_generation']['enabled'] = True
         client = Mock()
-        client.request.return_value = ModelResult(dict(content='', tool_calls=[dict(id='one', function=dict(
-            name='generate_image', arguments='{"prompt":"synthetic drawing"}'))]), 'tool_calls', {}, {})
-        proposals = []
-        text, _ = answer_with_search(cfg, client, [dict(role='user', content='画一只猫')], image_requests=proposals)
-        self.assertEqual(proposals, [dict(prompt='synthetic drawing')])
-        client.request.assert_called_once()
-        self.assertIn('native_search', client.request.call_args.kwargs)
-        self.assertEqual(client.request.call_args.kwargs['tools'][0]['function']['name'], 'generate_image')
+        client.request.side_effect = [ModelResult(dict(content='', tool_calls=[dict(id='one', function=dict(
+            name='generate_image', arguments='{"prompt":"synthetic drawing"}'))]), 'tool_calls', {}, {}),
+            model_result(dict(content=''))]
+        result = run_tool_loop(cfg, client, [dict(role='user', content='画一只猫')])
+        self.assertEqual(result.image_requests, (dict(prompt='synthetic drawing'),))
+        self.assertEqual(client.request.call_count, 2)
+        self.assertIn('native_search', client.request.call_args_list[0].kwargs)
+        self.assertEqual(client.request.call_args_list[0].kwargs['tools'][0]['function']['name'], 'generate_image')
 
 
 class ImagePipelineTests(unittest.TestCase):
@@ -195,11 +195,43 @@ class ImagePipelineTests(unittest.TestCase):
         self.add(1)
         self.bot.tick()
         worker = next(job for job in self.jobs if job.kind == 'generate')
-        worker.result = dict(ok=True, reply='在画了', image_requests=[dict(prompt='PRIVATE_DRAWING')])
+        worker.result = dict(ok=True, reply='', image_requests=[dict(prompt='PRIVATE_DRAWING')])
         self.bot.replies.collect()
         image = self.bot.journal.image_tasks()[0]
         self.bot.image_generation.step()
         return image
+
+    def test_owner_adds_confirmation_only_to_an_accepted_image_proposal(self):
+        image = self.ready_image()
+        parent = self.bot.journal.task(image['parent_task_id'])
+        self.assertEqual(parent['chunks'], ['在画了，稍后发给你'])
+        self.assertEqual(len(self.bot.journal.image_tasks()), 1)
+
+    def test_full_queue_rejects_proposal_without_a_success_confirmation(self):
+        self.cfg['image_generation']['enabled'] = True
+        self.cfg['queue']['max_pending'] = 1
+        self.add(1)
+        self.bot.tick()
+        worker = next(job for job in self.jobs if job.kind == 'generate')
+        worker.result = dict(ok=True, reply='', image_requests=[dict(prompt='cat')])
+        self.bot.replies.collect()
+        self.assertEqual(self.bot.journal.image_tasks(), [])
+        self.assertNotIn('在画了', json.dumps(self.bot.journal.tasks(), ensure_ascii=False))
+
+    def test_late_parent_version_discards_image_proposal_and_confirmation(self):
+        self.cfg['image_generation']['enabled'] = True
+        self.add(1)
+        self.bot.tick()
+        worker = next(job for job in self.jobs if job.kind == 'generate')
+        parent = self.bot.journal.head()
+        with self.bot.journal.db:
+            parent['version'] += 1
+            self.bot.journal.put(parent)
+        worker.result = dict(ok=True, reply='', image_requests=[dict(prompt='cat')])
+        self.bot.replies.collect()
+        self.assertTrue(worker.closed)
+        self.assertEqual(self.bot.journal.image_tasks(), [])
+        self.assertNotIn('在画了', json.dumps(self.bot.journal.tasks(), ensure_ascii=False))
 
     def test_slow_image_does_not_block_new_foreground_generation_and_uses_snapshot(self):
         task = self.ready_image()

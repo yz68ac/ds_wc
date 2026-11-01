@@ -2,8 +2,8 @@
 from pathlib import Path
 import time
 
-from wxbridge.ai.context_selection import memory_bounds
-from wxbridge.ai.memory import snapshot
+from wxbridge.ai.context.selection import memory_bounds
+from wxbridge.ai.background.memory import snapshot
 from wxbridge.ai.roles import model_settings
 from wxbridge.app.learning import enqueue_if_active, eligible_messages
 from wxbridge.app.workers import WorkerLease, WorkerCleanupError

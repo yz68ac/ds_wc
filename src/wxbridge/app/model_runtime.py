@@ -157,28 +157,27 @@ class GroupModels:
             image_requests = []
             if echo is not None:
                 answer = echo
-            elif cfg['search']['enabled'] or cfg.get('image_generation', {}).get('enabled', False):
-                from wxbridge.ai.search import answer_with_search
-                answer, search = answer_with_search(cfg, client_for('reply'), prompt,
-                    on_search=lambda: job.events.put(dict(event='search_started')),
-                    **(dict(image_requests=image_requests) if cfg.get('image_generation', {}).get('enabled', False) else {}))
             else:
-                from wxbridge.ai.output import format_reply, response_prompt
-                answer = format_reply(client_for('reply').chat(response_prompt(prompt, cfg)), cfg)
-            if not answer.strip():
+                from wxbridge.ai.reply.runner import run_tool_loop
+                result = run_tool_loop(cfg, client_for('reply'), prompt,
+                    on_search=lambda: job.events.put(dict(event='search_started')),
+                    deadline=job.deadline, check=job.check)
+                answer, search = result.text, result.search
+                image_requests = list(result.image_requests)
+            if not answer.strip() and not image_requests:
                 raise ModelError('empty_reply', retryable=True)
             return dict(reply=answer, vision=vision, search=search, image_requests=image_requests,
                         context_stats=getattr(prompt,'context_stats',{}))
         if kind == 'request':
             return dict(result=client_for(payload[1]).request(payload[2]))
         if kind == 'memory':
-            from wxbridge.ai.memory import extract
+            from wxbridge.ai.background.memory import extract
             return dict(proposal=extract(cfg, payload[1]))
         if kind == 'group_profile':
-            from wxbridge.ai.group_profile import analyze
+            from wxbridge.ai.background.group_profile import analyze
             return dict(proposal=analyze(cfg, payload[1], deadline=job.deadline))
         if kind == 'participation':
-            from wxbridge.ai.participation import evaluate
+            from wxbridge.ai.background.participation import evaluate
             return dict(decision=evaluate(cfg, payload[1], **payload[2]))
         raise ValueError('unknown_model_job')
 

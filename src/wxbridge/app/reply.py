@@ -3,10 +3,10 @@ from contextlib import ExitStack
 import re
 import time
 
-from wxbridge.ai.context_selection import read_context, source_anchor
-from wxbridge.ai.memory import member_labels
-from wxbridge.ai.output import format_reply
-from wxbridge.ai.reply_prompt import build_prompt
+from wxbridge.ai.context.selection import read_context, source_anchor
+from wxbridge.ai.context.identity import member_labels
+from wxbridge.ai.reply.output import format_reply
+from wxbridge.ai.reply.prompt import build_prompt
 from wxbridge.ai.roles import model_settings
 from wxbridge.app.task_policy import GenerationFailure
 from wxbridge.app.workers import WorkerLease, WorkerCleanupError
@@ -56,6 +56,8 @@ class ReplyController:
                 except Exception as exc:
                     self._failed(task_id, version, dict(error=getattr(exc, 'code', 'invalid_image_tool'), retryable=False))
                     continue
+                if proposal is not None:
+                    chunks.extend(reply_chunks('在画了，稍后发给你', int(self.bot.cfg['target'].get('max_reply_chars', 1800))))
                 accepted = self.bot.journal.generated(task_id, version, chunks, vision=result.get('vision'),
                     search=result.get('search'), image_request=proposal, now=time.time())
                 if not accepted:
@@ -108,7 +110,8 @@ class ReplyController:
                     self.bot.journal.set('context', {**self.bot.journal.get('context', {}), 'reply':prompt.context_stats})
                 echo = "[echo] " + "\n".join(m["text"] for m in task["triggers"]) if self.bot.echo else None
                 timeout = float(model_settings(self.bot.cfg)['timeout_seconds']) + 15
-                if self.bot.cfg.get("search", {}).get("enabled", True) and not self.bot.echo:
+                if (self.bot.cfg.get("search", {}).get("enabled", True)
+                        or self.bot.cfg.get('image_generation', {}).get('enabled', False)) and not self.bot.echo:
                     timeout = float(self.bot.cfg.get("search", {}).get("total_timeout_seconds", 120)) + 15
                 images = []
                 if self.bot.cfg.get("vision", {}).get("enabled", True) and not self.bot.echo:

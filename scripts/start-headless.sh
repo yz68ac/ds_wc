@@ -6,8 +6,8 @@
 #   ./start-headless.sh --no-wechat
 #
 # 之后用：
-#   DISPLAY=:99 python3 -m wxbridge check
-#   DISPLAY=:99 python3 -m wxbridge run
+#   DISPLAY=:99 python3 -m wxbridge_cli debug check
+#   DISPLAY=:99 python3 -m wxbridge_cli debug run
 set -euo pipefail
 
 DISPLAY_NUM="${WX_DISPLAY:-:99}"
@@ -154,4 +154,4 @@ log "日志目录：$RUNTIME"
 if [ "$START_VNC" = "1" ]; then
   log "VNC：ssh -L 5900:127.0.0.1:5900 用户@这台机器 后连接 localhost:5900"
 fi
-log "检查：DISPLAY=$DISPLAY python3 -m wxbridge check"
+log "检查：DISPLAY=$DISPLAY python3 -m wxbridge_cli debug check"

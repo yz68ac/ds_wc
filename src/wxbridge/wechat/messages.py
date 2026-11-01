@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import re
-from typing import Any
 
 
 def chunk_text(text: str, limit: int) -> list[str]:

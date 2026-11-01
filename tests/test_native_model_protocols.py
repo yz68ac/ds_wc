@@ -12,7 +12,7 @@ from unittest.mock import Mock, patch
 from tests.support.model_support import ClientFixture, ModelError, capture_metrics
 from provider.adapters import ModelRequest, get_protocol_adapter
 from wxbridge.ai.roles import model_settings, validate_models
-from wxbridge.ai.search import answer_with_search
+from tests.support.tool_support import run_answer
 from wxbridge.app.metrics import Metrics
 from wxbridge.config import DEFAULTS, _deep_merge, load_config
 
@@ -162,7 +162,7 @@ class NativeSearchTests(unittest.TestCase):
                 cfg=config(provider);c=client(cfg);backend=Mock()
                 backend.search.return_value=dict(results=[dict(url=URL,title='来源')])
                 with patch.object(c, '_post', side_effect=[first,second]) as send:
-                    text,meta=answer_with_search(cfg,c,MESSAGES,search_client=backend)
+                    text,meta=run_answer(cfg,c,MESSAGES,search_client=backend)
                 self.assertEqual(send.call_count,2);self.assertEqual(meta['calls'],1)
                 self.assertNotIn(URL,text);self.assertNotIn('PRIVATE',text)
                 wire=send.call_args.args[0]
@@ -179,7 +179,7 @@ class NativeSearchTests(unittest.TestCase):
         c=client(cfg)
         self.http=patch.object(c,'_post',side_effect=responses).start()
         self.addCleanup(patch.stopall)
-        return answer_with_search(cfg,c,MESSAGES)
+        return run_answer(cfg,c,MESSAGES)
 
     def test_responses_native_search_keeps_evidence_without_adding_citation_links(self):
         data=response([dict(type='web_search_call',id='w1',status='completed',action=dict(type='search',sources=[dict(url=URL)])),
@@ -231,17 +231,18 @@ class NativeSearchTests(unittest.TestCase):
         text,meta=self.run_search('openai_responses',[data])
         self.assertIn('核实不了',text);self.assertNotIn('127.0.0.1',text);self.assertEqual(meta['results'],0)
 
-    def test_excess_server_calls_and_unknown_client_tools_are_rejected(self):
+    def test_excess_server_calls_are_rejected_and_unknown_tools_return_errors(self):
         data=response([dict(type='web_search_call',id='w'+str(i),status='completed',action={'type':'search'}) for i in range(2)])
         with self.assertRaisesRegex(ModelError,'invalid_native_search_result'):
             self.run_search('openai_responses',[data],max_requests=1)
         data=response([dict(type='function_call',call_id='call-1',name='not_allowed',arguments='{}')])
-        with self.assertRaisesRegex(ModelError,'unexpected_client_tool'):self.run_search('openai_responses',[data])
+        _, meta = self.run_search('openai_responses', [data, response()])
+        self.assertIn('invalid_tool', meta['errors'])
 
     def test_http_failure_does_not_fall_back_to_external_search(self):
         cfg=config();cfg['search']['backend']='native';c=client(cfg)
-        with patch.object(c,'_post',side_effect=ModelError('http_429',retryable=True)),patch('wxbridge.ai.search.SearchClient') as external:
-            with self.assertRaisesRegex(ModelError,'http_429'):answer_with_search(cfg,c,MESSAGES)
+        with patch.object(c,'_post',side_effect=ModelError('http_429',retryable=True)),patch('wxbridge.ai.tools.web.SearchClient') as external:
+            with self.assertRaisesRegex(ModelError,'http_429'):run_answer(cfg,c,MESSAGES)
         external.assert_not_called()
 
 
@@ -250,12 +251,12 @@ class ProfileTests(unittest.TestCase):
 
     def test_auto_search_is_selected_before_http_and_explicit_external_override_works(self):
         cfg=config();cfg['search']['backend']='auto';c=client(cfg)
-        with patch.object(c,'_post',return_value=response()) as post,patch('wxbridge.ai.search.SearchClient') as external:
-            answer_with_search(cfg,c,MESSAGES)
+        with patch.object(c,'_post',return_value=response()) as post,patch('wxbridge.ai.tools.web.SearchClient') as external:
+            run_answer(cfg,c,MESSAGES)
         self.assertEqual(post.call_args.args[0]['tools'],[dict(type='web_search')]);external.assert_not_called()
         cfg['search']['backend']='external';c=client(cfg)
-        with patch.object(c,'_post',return_value=response()) as post, patch('wxbridge.ai.search.SearchClient'):
-            answer_with_search(cfg,c,MESSAGES)
+        with patch.object(c,'_post',return_value=response()) as post, patch('wxbridge.ai.tools.web.SearchClient'):
+            run_answer(cfg,c,MESSAGES)
         self.assertEqual(post.call_args.args[0]['tools'][0]['type'],'function')
         cfg['model_clients']['reply']='deepseek';cfg['search']['backend']='native'
         with self.assertRaisesRegex(ValueError, 'unsupported_native_search'):validate_models(cfg)

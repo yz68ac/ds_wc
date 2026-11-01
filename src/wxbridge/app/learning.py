@@ -1,5 +1,5 @@
 """活跃闲聊登记记忆任务；只由主进程读取数据库，不额外生成发言。"""
-from wxbridge.ai.context_selection import message_time
+from wxbridge.ai.context.selection import message_time
 from wechat_linux.messages.pats import is_pat
 
 

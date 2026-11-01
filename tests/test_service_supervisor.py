@@ -10,16 +10,16 @@ import sys
 import unittest
 from unittest.mock import Mock, patch
 
-from wxbridge_service.supervisor import Child, Supervisor
+from wxbridge.host.supervisor import Child, Supervisor
 from wxbridge.control import BOT, COMPONENTS, HELPER, RECOVERY, SESSION, WEB, receive, request
 
 
 class ServiceEntryTests(unittest.TestCase):
     def test_runtime_preparation_is_an_isolated_process(self):
-        from wxbridge_service import __main__ as entry
+        from wxbridge import __main__ as entry
         with patch.object(entry.os,'geteuid',return_value=0,create=True), \
                 patch.object(entry.subprocess,'run') as run, \
-                patch('wxbridge_service.supervisor.Supervisor') as supervisor, \
+                patch('wxbridge.host.supervisor.Supervisor') as supervisor, \
                 patch.object(entry.signal,'signal'):
             self.assertEqual(entry.main(['--root',str(Path.cwd())]),0)
         run.assert_called_once_with(['/usr/bin/python3',str(Path.cwd()/'scripts/boot-recovery.py'),'runtime'],check=True)
@@ -42,14 +42,14 @@ class ServiceEntryTests(unittest.TestCase):
             code='''
 import sys,types
 sys.path.insert(0,sys.argv[1])
-from wxbridge_service import __main__ as entry
-module=types.ModuleType('wxbridge_service.supervisor')
+from wxbridge import __main__ as entry
+module=types.ModuleType('wxbridge.host.supervisor')
 class Supervisor:
  def __init__(self,*args,**kwargs):
   from wxbridge.control import request
  def run(self):print('entry_imports_complete_package')
 module.Supervisor=Supervisor
-sys.modules['wxbridge_service.supervisor']=module
+sys.modules['wxbridge.host.supervisor']=module
 entry.os.geteuid=lambda:0
 entry.signal.signal=lambda *args:None
 entry.main(['--root',sys.argv[2]])
@@ -84,6 +84,19 @@ class SupervisorTests(unittest.TestCase):
         self.directory=Path(temp.name)
         s=self.supervisor=Supervisor.__new__(Supervisor)
         s.state_file=self.directory/'state.json'
+        s.web_config=self.directory/'web.json'
+        s.web_config.write_text(json.dumps(dict(host='127.0.0.1',port=8730)))
+        s.web_config.chmod(0o600)
+        s.web_saved=dict(host='127.0.0.1',port=8730)
+        s.web_effective=None
+        s.web_enabled=True
+        s.web_ready=False
+        s.web_generation,s.web_applied_generation=0,-1
+        s.web_error=''
+        s.web_health_token='synthetic-start-token'
+        s.probe_web=Mock()
+        self.web_reader=patch('wxbridge.host.supervisor.read_web',return_value=dict(s.web_saved))
+        self.web_reader.start();self.addCleanup(self.web_reader.stop)
         s.run_dir=self.directory
         s.enabled,s.stopping,s.ready,s.checkpoint_needed=True,False,False,False
         s.phase,s.error,s.next_prepare='starting','',0
@@ -106,7 +119,7 @@ class SupervisorTests(unittest.TestCase):
             value=original(path,*args,**kwargs)
             return SimpleNamespace(st_uid=0,st_mode=value.st_mode) if path==self.directory else value
         try:
-            with patch.object(Path,'stat',metadata),patch('wxbridge_service.supervisor.os.chown') as chown:
+            with patch.object(Path,'stat',metadata),patch('wxbridge.host.supervisor.os.chown') as chown:
                 s.bind()
             self.assertEqual(self.directory.stat().st_mode & 0o777,0o750)
             self.assertEqual(s.control_path.stat().st_mode & 0o777,0o660)
@@ -178,10 +191,88 @@ class SupervisorTests(unittest.TestCase):
         with self.assertRaises(ValueError):self.supervisor.action('stop sshd.service')
         self.assertFalse(self.supervisor.state_file.exists())
 
+    def test_web_stop_is_persistent_and_does_not_stop_other_components(self):
+        self.desktop();s=self.supervisor;s.children[BOT].process=object()
+        s.action('web_stop');s.tick()
+        state=json.loads(s.state_file.read_text())
+        self.assertEqual(state,dict(schema=2,bot_enabled=True,web_enabled=False))
+        self.assertTrue(s.children[WEB].stopping)
+        for name in (SESSION,HELPER,BOT):self.assertFalse(s.children[name].stopping)
+        s.children[WEB].event=(0,None,True);s.tick();s.tick()
+        self.assertNotIn(WEB,self.started)
+
+    def test_web_restart_waits_for_old_process_exit(self):
+        self.desktop();s=self.supervisor
+        s.action('web_restart');s.tick()
+        self.assertNotIn(WEB,self.started)
+        self.assertTrue(s.children[WEB].stopping)
+        s.children[WEB].event=(0,None,True);s.tick()
+        self.assertEqual(self.started.count(WEB),1)
+        self.assertTrue(s.enabled)
+
+    def test_web_reload_preserves_disabled_switch_and_resets_readiness(self):
+        s=self.supervisor;s.web_enabled=False;s.web_ready=True
+        s.action('web_reload');s.tick()
+        self.assertFalse(s.web_enabled);self.assertFalse(s.web_ready)
+        self.assertNotIn(WEB,self.started)
+
+    def test_web_crash_is_recovered_only_when_enabled(self):
+        self.desktop();s=self.supervisor
+        s.children[WEB].event=(1,None,False);s.tick()
+        self.assertIn(WEB,self.started)
+        self.assertEqual(s.web_error,'web_process_exited')
+        s.action('web_stop');s.children[WEB].event=(0,None,True)
+        self.started.clear();s.tick()
+        self.assertNotIn(WEB,self.started)
+
+    def test_service_user_cannot_control_web_but_can_control_bot(self):
+        s=self.supervisor
+        for action in ('web_start','web_stop','web_restart','web_reload'):
+            with self.assertRaisesRegex(ValueError,'requires_root'):s.action(action,uid=995)
+        self.assertFalse(s.state_file.exists())
+        s.action('stop',uid=995)
+        self.assertFalse(s.enabled)
+
+    def test_health_probe_uses_no_proxy_and_only_marks_running_generation(self):
+        s=self.supervisor;self.desktop()
+        s.web_next_probe=0;s.web_launch_settings=dict(s.web_saved)
+        response=Mock();response.status=200;response.read.return_value=b'{"status":"ok"}'
+        response.headers={'X-WXBridge-Health':s.web_health_token}
+        response.__enter__=Mock(return_value=response);response.__exit__=Mock(return_value=False)
+        opener=Mock();opener.open.return_value=response
+        with patch('wxbridge.host.supervisor.urllib.request.build_opener',return_value=opener), \
+                patch('wxbridge.host.supervisor.urllib.request.ProxyHandler') as proxy:
+            Supervisor.probe_web(s)
+        proxy.assert_called_once_with({})
+        self.assertTrue(s.web_ready);self.assertEqual(s.web_effective,s.web_saved)
+        self.assertEqual(s.web_applied_generation,s.web_generation)
+        s.children[WEB].stopping=True;s.web_generation+=1;s.web_next_probe=0
+        with patch('wxbridge.host.supervisor.urllib.request.build_opener') as probe:
+            Supervisor.probe_web(s)
+        probe.assert_not_called()
+
+    def test_other_process_health_response_cannot_confirm_this_web_process(self):
+        s=self.supervisor;self.desktop()
+        s.web_next_probe=0;s.web_launch_settings=dict(s.web_saved)
+        response=Mock();response.status=200;response.read.return_value=b'{"status":"ok"}'
+        response.headers={'X-WXBridge-Health':'another-process'}
+        response.__enter__=Mock(return_value=response);response.__exit__=Mock(return_value=False)
+        opener=Mock();opener.open.return_value=response
+        with patch('wxbridge.host.supervisor.urllib.request.build_opener',return_value=opener):
+            Supervisor.probe_web(s)
+        self.assertFalse(s.web_ready);self.assertIsNone(s.web_effective)
+
+    def test_failed_health_probe_does_not_report_ready(self):
+        s=self.supervisor;self.desktop()
+        s.web_next_probe=0;s.web_launch_settings=dict(s.web_saved)
+        with patch('wxbridge.host.supervisor.urllib.request.build_opener',side_effect=OSError()):
+            Supervisor.probe_web(s)
+        self.assertFalse(s.web_ready);self.assertIsNone(s.web_effective)
+
     def test_process_credentials_are_dropped_at_spawn(self):
         child=Child(BOT,['python','fixed-script.py'],uid=995,gid=984,groups=[984],cwd='/trusted')
         process=Mock();process.poll.return_value=None
-        with patch('wxbridge_service.supervisor.subprocess.Popen',return_value=process) as spawn:
+        with patch('wxbridge.host.supervisor.subprocess.Popen',return_value=process) as spawn:
             self.assertTrue(child.start({'PATH':'/usr/bin'},capture=True))
         self.assertEqual(spawn.call_args.kwargs['user'],995)
         self.assertEqual(spawn.call_args.kwargs['group'],984)
@@ -204,7 +295,7 @@ class SupervisorTests(unittest.TestCase):
 
     def test_desktop_daemon_cleanup_excludes_supervisor_and_other_cgroups(self):
         with patch('pathlib.Path.read_text',side_effect=['0::/system.slice/wxbridge.service\n','123\n456\n']),\
-             patch('wxbridge_service.supervisor.os.getpid',return_value=123):
+             patch('wxbridge.host.supervisor.os.getpid',return_value=123):
             self.assertEqual(Supervisor.remaining_processes(),[456])
         with patch('pathlib.Path.read_text',return_value='0::/system.slice/other.service\n'):
             with self.assertRaisesRegex(ValueError,'own_systemd_cgroup'):

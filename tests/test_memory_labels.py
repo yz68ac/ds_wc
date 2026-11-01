@@ -6,8 +6,8 @@ from pathlib import Path
 
 import tests.support.memory as memory_tests
 from tests.support.synthetic import NOW, msg
-from wxbridge.ai.memory import snapshot
-from wxbridge.ai.output import reply_rules
+from wxbridge.ai.background.memory import snapshot
+from wxbridge.ai.reply.output import reply_rules
 
 
 class MemoryLabelTests(unittest.TestCase):

@@ -5,12 +5,12 @@ import unittest
 
 from tests.support.model_support import default_config
 from tests.support.synthetic import NOW,msg
-from wxbridge.ai.chat_payload import chat_payload,encode_payload,fit_payload
-from wxbridge.ai.context_selection import ContextError
-from wxbridge.ai.reply_prompt import build_prompt
-from wxbridge.ai.participation import build_prompt as judgment_prompt
-from wxbridge.ai.output import response_prompt
-from wxbridge.ai.search import search_prompt
+from wxbridge.ai.context.payload import chat_payload,encode_payload,fit_payload
+from wxbridge.ai.context.selection import ContextError
+from wxbridge.ai.reply.prompt import build_prompt
+from wxbridge.ai.background.participation import build_prompt as judgment_prompt
+from wxbridge.ai.reply.output import response_prompt
+from wxbridge.ai.tools.web import apply_search_instructions
 
 
 class ChatPayloadTests(unittest.TestCase):
@@ -90,8 +90,8 @@ class ChatPayloadTests(unittest.TestCase):
 
     def test_context_protocol_is_sent_once_even_after_repeated_policy_composition(self):
         prompt=build_prompt(self.cfg,[self.old],self.new,'合成群',account=self.account)
-        once=search_prompt(self.cfg,prompt)
-        twice=search_prompt(self.cfg,response_prompt(once,self.cfg))
+        once=apply_search_instructions(response_prompt(prompt,self.cfg))
+        twice=apply_search_instructions(response_prompt(once,self.cfg))
         self.assertEqual(once,twice);self.assertEqual(twice[0]['content'].count('【聊天记录协议】'),1)
         self.assertIn('sender等于bot',twice[0]['content'])
         self.assertEqual(twice[1]['content'],prompt[1]['content'])

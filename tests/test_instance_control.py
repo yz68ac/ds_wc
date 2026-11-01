@@ -12,8 +12,8 @@ from wxbridge.config import load_config
 from wxbridge.app.instance_control import InstanceControl
 from wxbridge.app.coordinator import Coordinator
 from wxbridge.app.model_runtime import ModelLane
-from wxbridge_web.demo import seed
-from wxbridge_web.repository import ConfigRepository
+from web.backend.demo import seed
+from wxbridge.management.repository import ConfigRepository
 
 
 class FakeSession:

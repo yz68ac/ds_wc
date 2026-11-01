@@ -81,10 +81,31 @@ class UpgradeTests(unittest.TestCase):
         old='[Service]\nUser=root\nExecStart=/opt/wxbridge/.venv/bin/python /opt/wxbridge/scripts/service.py run --web-host 192.168.1.212\nSendSIGKILL=no\n'
         new=upgrade.rewrite_unit(old).decode()
         self.assertEqual(new,old.replace('[Service]\n','[Service]\nExecStartPre=/usr/bin/chmod 0750 /run/wxbridge-control\n')
-                         .replace('/opt/wxbridge/scripts/service.py run','-m wxbridge_service --root /opt/wxbridge'))
+                         .replace('/opt/wxbridge/scripts/service.py run --web-host 192.168.1.212','-m wxbridge --root /opt/wxbridge'))
         self.assertEqual(upgrade.rewrite_unit(new),new.encode())
         for text in (old+'ExecStart=/other\n',old.replace('/opt/wxbridge/.venv/bin/python','/unreviewed/python')):
             with self.assertRaises(ValueError):upgrade.rewrite_unit(text)
+
+    def test_web_settings_migration_is_explicit_and_does_not_overwrite_existing(self):
+        unit='[Service]\nExecStart=/opt/wxbridge/.venv/bin/python -m wxbridge_service --root /opt/wxbridge --web-host 192.168.1.212 --web-port 8740\n'
+        expected=dict(host='192.168.1.212',port=8740)
+        self.assertEqual(upgrade.migrate_web_settings(unit),expected)
+        self.assertEqual(upgrade.migrate_web_settings(unit,expected),expected)
+        with self.assertRaisesRegex(ValueError,'conflicting_web_settings'):
+            upgrade.migrate_web_settings(unit,dict(host='127.0.0.1',port=8730))
+        new=upgrade.rewrite_unit(unit).decode()
+        self.assertNotIn('--web-host',new);self.assertNotIn('--web-port',new)
+        self.assertEqual(upgrade.migrate_web_settings(new,expected),expected)
+        for args in ('--web-host 0.0.0.0','--web-port 0','--web-port 8730 --web-port 8740','--unknown value'):
+            with self.subTest(args=args),self.assertRaises(ValueError):
+                upgrade.migrate_web_settings(new.strip()+' '+args+'\n')
+
+    def test_service_state_migration_keeps_web_paused(self):
+        original=dict(schema=2,bot_enabled=True,web_enabled=False)
+        self.assertEqual(upgrade.migrate_service_state(original),original)
+        self.assertEqual(upgrade.migrate_service_state(dict(schema=1,bot_enabled=False)),
+                         dict(schema=2,bot_enabled=False,web_enabled=True))
+        with self.assertRaises(ValueError):upgrade.migrate_service_state(dict(schema=1,bot_enabled='false'))
 
     def stage(self):
         app,stage=self.root/'app',self.root/'stage';app.mkdir();stage.mkdir()
@@ -125,6 +146,11 @@ class UpgradeTests(unittest.TestCase):
             source=stage/'src'/prefix/'__init__.py';source.parent.mkdir(parents=True);source.write_bytes(b'synthetic')
             with zipfile.ZipFile(wheels/(project+'-1-py3-none-any.whl'),'w') as archive:
                 archive.writestr(prefix+'/__init__.py',b'synthetic')
+                if project == 'wxbridge':
+                    for name in ('web/__init__.py', 'web/backend/__init__.py'):
+                        module=stage/'src'/name;module.parent.mkdir(parents=True,exist_ok=True)
+                        module.write_bytes(b'synthetic')
+                        archive.writestr(name,b'synthetic')
         self.assertEqual(len(upgrade.verify_wheels(stage,wheels)),3)
         target=wheels/'model_provider-1-py3-none-any.whl'
         with zipfile.ZipFile(target,'w') as archive:archive.writestr('provider/__init__.py',b'tampered')
@@ -166,7 +192,7 @@ class UpgradeTests(unittest.TestCase):
                 upgrade.verify_wheels(stage,wheels)
 
     def test_runtime_health_checks_transitive_requirements_without_unrelated_system_packages(self):
-        from wxbridge_service.install import dependency_health
+        from wxbridge_cli.install import dependency_health
         requires, version = importlib.metadata.requires, importlib.metadata.version
         visited = set()
         def requirements(name):
@@ -205,7 +231,7 @@ class UpgradeTests(unittest.TestCase):
         (backup/'upgrade.json').write_text(json.dumps(record))
         def run(*args,**kwargs):
             if '-I' in args and not supervisor_failure:raise subprocess.CalledProcessError(1,['synthetic validation'])
-        patches=dict(APP=app,UNIT=unit,LAUNCHER=launcher,STATE=state,BACKUPS=backup.parent,SCANNER=self.root/'scanner')
+        patches=dict(APP=app,UNIT=unit,LAUNCHER=launcher,STATE=state,WEB_CONFIG=self.root/'web.json',BACKUPS=backup.parent,SCANNER=self.root/'scanner')
         with patch.multiple(upgrade,**patches),patch.object(upgrade,'check_installed_release'), \
                 patch.object(upgrade,'run',side_effect=run) as calls, \
                 patch.object(upgrade,'wait_supervisor',side_effect=ValueError('new_supervisor_not_ready')), \

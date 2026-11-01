@@ -22,7 +22,7 @@ dependencies = [
 ]
 
 [project.scripts]
-wxbridge = "wxbridge.cli:main"
+wxbridge = "wxbridge_cli.cli:main"
 
 [project.optional-dependencies]
 database = ["wechat-linux-adapter[database]"]
@@ -51,11 +51,11 @@ version = { attr = "wxbridge.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["wxbridge", "wxbridge.*", "wxbridge_service", "wxbridge_service.*", "wxbridge_web", "wxbridge_web.*"]
+include = ["wxbridge", "wxbridge.*", "wxbridge_cli", "wxbridge_cli.*", "web", "web.*"]
 namespaces = false
 
 [tool.setuptools.data-files]
 "share/wxbridge" = ["config.defaults.json"]
 "share/wxbridge/prompts" = ["prompts/*.md", "prompts/*.json"]
-"share/wxbridge/webui" = ["src/webui/dist/*.html"]
-"share/wxbridge/webui/assets" = ["src/webui/dist/assets/*"]
+"share/wxbridge/webui" = ["src/web/frontend/dist/*.html"]
+"share/wxbridge/webui/assets" = ["src/web/frontend/dist/assets/*"]

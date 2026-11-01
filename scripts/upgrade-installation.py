@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import runpy
 import shutil
 import stat
@@ -28,6 +29,7 @@ STATE = Path('/var/lib/wxbridge-service/state.json')
 BACKUPS = Path('/var/backups/wxbridge')
 ENVIRONMENTS = Path('/opt/wxbridge-envs')
 SCANNER = Path('/usr/local/lib/wxbridge-recovery')
+WEB_CONFIG = Path('/etc/wxbridge/web.json')
 PRESERVE = {'prompts/system.md', 'prompts/memory.md', 'prompts/topic_aliases.json'}
 RECOVERY_MODULES = (
     'wxbridge/__init__.py', 'wxbridge/storage/__init__.py', 'wxbridge/storage/memoryfs.py',
@@ -79,22 +81,75 @@ def control(action):
     return runpy.run_path(str(APP/'src/wxbridge/control.py'))['request'](action)
 
 
-def rewrite_unit(text):
+def unit_entry(text):
     lines = text.splitlines()
     indices = [i for i, line in enumerate(lines) if line.startswith('ExecStart=')]
     if len(indices) != 1:
         raise ValueError('ambiguous_service_entry')
-    line = lines[indices[0]]
-    prefix = 'ExecStart=/opt/wxbridge/.venv/bin/python '
-    old, new = '/opt/wxbridge/scripts/service.py run', '-m wxbridge_service --root /opt/wxbridge'
-    if not line.startswith(prefix) or not (line[len(prefix):] == old or line[len(prefix):].startswith(old+' ')
-                                         or line[len(prefix):] == new or line[len(prefix):].startswith(new+' ')):
+    args = shlex.split(lines[indices[0]][len('ExecStart='):])
+    if not args or args.pop(0) != '/opt/wxbridge/.venv/bin/python':
         raise ValueError('unknown_service_entry')
-    lines[indices[0]] = prefix+line[len(prefix):].replace(old, new, 1)
+    if args[:2] not in (['-m', 'wxbridge_service'], ['-m', 'wxbridge'],
+                        ['/opt/wxbridge/scripts/service.py', 'run']):
+        raise ValueError('unknown_service_entry')
+    args = args[2:]
+    options = {}
+    while args:
+        if len(args) < 2 or args[0] not in ('--root', '--web-host', '--web-port') or args[0] in options:
+            raise ValueError('unknown_service_arguments')
+        options[args[0]] = args[1]
+        args = args[2:]
+    if options.get('--root', '/opt/wxbridge') != '/opt/wxbridge':
+        raise ValueError('unknown_service_root')
+    return lines, indices[0], options
+
+
+def rewrite_unit(text):
+    lines, index, _ = unit_entry(text)
+    lines[index] = 'ExecStart=/opt/wxbridge/.venv/bin/python -m wxbridge --root /opt/wxbridge'
     directory_access = 'ExecStartPre=/usr/bin/chmod 0750 /run/wxbridge-control'
     if directory_access not in lines:
         lines.insert(lines.index('[Service]')+1, directory_access)
     return ('\n'.join(lines)+'\n').encode()
+
+
+def migrate_web_settings(text, existing=None):
+    # Keep bootstrap migration usable before the new application wheel is active.
+    import ipaddress
+    _, _, options = unit_entry(text)
+    if existing is not None and (not isinstance(existing, dict) or set(existing) != {'host', 'port'}):
+        raise ValueError('web_settings_invalid')
+    value = dict(existing) if existing is not None else dict(host='127.0.0.1', port=8730)
+    supplied = {}
+    if '--web-host' in options:supplied['host'] = options['--web-host']
+    if '--web-port' in options:
+        try:supplied['port'] = int(options['--web-port'])
+        except ValueError:raise ValueError('web_port_invalid') from None
+    def normalized(data):
+        host = '127.0.0.1' if data['host'] == 'localhost' else data['host']
+        try:address = ipaddress.ip_address(host)
+        except ValueError:raise ValueError('web_host_invalid') from None
+        private = address.version == 4 and any(address in ipaddress.ip_network(net)
+            for net in ('10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'))
+        if not address.is_loopback and not private:raise ValueError('web_host_not_local_or_private')
+        if type(data['port']) is not int or not 1 <= data['port'] <= 65535:raise ValueError('web_port_invalid')
+        return dict(host=str(address), port=data['port'])
+    value = normalized(value)
+    migrated = normalized({**value, **supplied})
+    if existing is not None and migrated != value:
+        raise ValueError('conflicting_web_settings')
+    return migrated
+
+
+def migrate_service_state(value):
+    if not isinstance(value, dict) or type(value.get('schema')) is not int:
+        raise ValueError('invalid_service_state')
+    if value['schema'] == 1 and set(value) == {'schema', 'bot_enabled'}:
+        value = dict(schema=2, bot_enabled=value['bot_enabled'], web_enabled=True)
+    if (value.get('schema') != 2 or set(value) != {'schema', 'bot_enabled', 'web_enabled'}
+            or type(value['bot_enabled']) is not bool or type(value['web_enabled']) is not bool):
+        raise ValueError('invalid_service_state')
+    return dict(value)
 
 
 def context_upgrade(data, max_chars=None):
@@ -152,10 +207,10 @@ def source_updates(stage, baseline):
 def verify_wheels(stage, wheels):
     expected = {'wxbridge', 'model_provider', 'wechat_linux_adapter'}
     found, result = set(), {}
-    mappings = {'wxbridge/':'src/wxbridge/', 'wxbridge_service/':'src/wxbridge_service/',
-                'wxbridge_web/':'src/wxbridge_web/', 'provider/':'src/provider/',
+    mappings = {'wxbridge/':'src/wxbridge/', 'wxbridge_cli/':'src/wxbridge_cli/',
+                'web/':'src/web/', 'provider/':'src/provider/',
                 'wechat_linux/':'src/wechat_linux/'}
-    owners = {'wxbridge': ('wxbridge/', 'wxbridge_service/', 'wxbridge_web/'),
+    owners = {'wxbridge': ('wxbridge/', 'wxbridge_cli/', 'web/'),
               'model_provider': ('provider/',), 'wechat_linux_adapter': ('wechat_linux/',)}
     for wheel in sorted(wheels.glob('*.whl')):
         name = wheel.name.split('-', 1)[0]
@@ -168,7 +223,7 @@ def verify_wheels(stage, wheels):
                 directory = stage/mappings[prefix]
                 for source in directory.rglob('*'):
                     if source.is_file() and source.suffix in ('.py', '.js', '.json', '.c') and not any(
-                            part in ('build', '__pycache__') or part.endswith('.egg-info')
+                            part in ('frontend', 'build', '__pycache__') or part.endswith('.egg-info')
                             for part in source.relative_to(directory).parts):
                         expected_files.add(prefix+source.relative_to(directory).as_posix())
             packaged = {entry for entry in archive.namelist() if entry.startswith(tuple(mappings))}
@@ -176,14 +231,15 @@ def verify_wheels(stage, wheels):
                 raise ValueError('wheel_inventory_mismatch')
             count = 0
             for entry in archive.namelist():
-                if '__pycache__' in entry or entry.endswith(('.pyc', '.pyo', '.env')):
+                if (entry.startswith('wxbridge_service/') or '__pycache__' in entry
+                        or entry.endswith(('.pyc', '.pyo', '.env'))):
                     raise ValueError('unsafe_wheel_content')
                 prefix = next((p for p in mappings if entry.startswith(p)), None)
                 if prefix is None:
                     marker = '.data/data/share/wxbridge/'
                     if name == 'wxbridge' and marker in entry:
                         relative = entry.split(marker, 1)[1]
-                        source = stage/('src/webui/dist/'+relative[len('webui/'):] if relative.startswith('webui/') else relative)
+                        source = stage/('src/web/frontend/dist/'+relative[len('webui/'):] if relative.startswith('webui/') else relative)
                         if not source.is_file() or archive.read(entry).replace(b'\r\n', b'\n') != source.read_bytes().replace(b'\r\n', b'\n'):
                             raise ValueError('wheel_resource_mismatch')
                     continue
@@ -285,7 +341,7 @@ def prepare(stage, wheels, backup, baseline, max_chars):
         '-r', stage/'requirements-test.txt', *wheel_hashes, timeout=1200)
     # GI comes from Debian's system site-packages. Validate the application's
     # complete dependency closure without treating unrelated apt metadata as pip packages.
-    run(python, '-I', '-c', 'from wxbridge_service.install import dependency_health;'
+    run(python, '-I', '-c', 'from wxbridge_cli.install import dependency_health;'
         'failures=dependency_health();raise SystemExit(bool(failures))')
     run(python, '-I', '-c', 'from wxbridge.app.bot import GroupSession;'
         'from wechat_linux.desktop.login import LoginController;from provider import create_client')
@@ -364,9 +420,22 @@ def apply(backup):
         if digest(path) != config['before']:
             raise ValueError('instance_changed_after_prepare')
         updates[path] = ((json.dumps(config['data'], ensure_ascii=False, indent=2)+'\n').encode(), 0o600)
-    updates[UNIT] = (rewrite_unit(UNIT.read_text()), 0o644)
-    updates[LAUNCHER] = (b'#!/bin/sh\nexec /opt/wxbridge/.venv/bin/python -m wxbridge "$@"\n', 0o755)
+    unit_text = UNIT.read_text()
+    web_before = digest(plain_path(WEB_CONFIG))
+    existing = json.loads(WEB_CONFIG.read_text()) if web_before is not None else None
+    if existing is not None:
+        info = WEB_CONFIG.stat()
+        if info.st_uid != 0 or stat.S_IMODE(info.st_mode) != 0o600:
+            raise ValueError('unsafe_web_settings')
+    web_settings = migrate_web_settings(unit_text, existing)
+    if existing is None:
+        updates[WEB_CONFIG] = ((json.dumps(web_settings)+'\n').encode(), 0o600)
+    updates[UNIT] = (rewrite_unit(unit_text), 0o644)
+    updates[LAUNCHER] = (b'#!/bin/sh\nexec /opt/wxbridge/.venv/bin/python -m wxbridge_cli "$@"\n', 0o755)
     original = json.loads(STATE.read_text())
+    migrated = migrate_service_state(original)
+    migrated['bot_enabled'] = False
+    updates[STATE] = ((json.dumps(migrated)+'\n').encode(), 0o600)
     record.update(original_state=original, phase='draining')
     save_json(backup/'upgrade.json', record)
     switched = stopped = False
@@ -377,6 +446,8 @@ def apply(backup):
         # The supervisor drains native callbacks and checkpoints queues before exiting.
         run('systemctl', 'stop', 'wxbridge.service', timeout=None)
         stopped = True
+        if UNIT.read_text() != unit_text or digest(WEB_CONFIG) != web_before:
+            raise ValueError('host_settings_changed_while_draining')
         source_updates(stage, record['baseline'])
         for name, config in record['configurations'].items():
             if digest(name) != config['before']:
@@ -404,7 +475,9 @@ def apply(backup):
             if path not in record['configurations'] and digest(path) != value:
                 raise ValueError('private_data_changed')
         record.update(phase='awaiting_acceptance', commit=manifest['commit'],
-                      installed_hashes={str(path):digest(path) for path in updates})
+                      # Component switches change during resume and normal CLI
+                      # use; rollback restores original_state explicitly.
+                      installed_hashes={str(path):digest(path) for path in updates if path != STATE})
         save_json(backup/'upgrade.json', record)
         run('systemctl', 'daemon-reload')
         run('systemctl', 'start', 'wxbridge.service')

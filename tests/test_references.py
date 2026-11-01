@@ -10,8 +10,8 @@ import unittest
 from unittest.mock import Mock
 
 from wxbridge.config import DEFAULTS, _deep_merge
-from wxbridge.ai.context_selection import ContextError
-from wxbridge.ai.reply_prompt import build_prompt
+from wxbridge.ai.context.selection import ContextError
+from wxbridge.ai.reply.prompt import build_prompt
 from wechat_linux.messages.references import parse_quoted_reply
 from wxbridge.wechat.store import WeChatStore
 from wxbridge.wechat.messages import display_message
@@ -114,7 +114,7 @@ class ReferencePromptTests(unittest.TestCase):
     def test_unavailable_media_and_nested_quote_have_clear_boundary(self):
         trigger = parse_message(quoted_xml(content="IMAGE_PRIVATE_XML", kind=3))
         prompt = build_prompt(self.cfg, [], trigger, "合成群")
-        from wxbridge.ai.output import response_prompt
+        from wxbridge.ai.reply.output import response_prompt
         rules = response_prompt(prompt)[0]["content"]
         prompt = prompt[1]["content"]
         self.assertIn('"available":false', prompt)

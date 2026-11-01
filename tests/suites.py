@@ -70,6 +70,7 @@ SUITES = {
         'test_review_recovery',
         'test_runtime',
         'test_search',
+        'test_tool_loop',
         'test_store',
         'test_ui',
         'test_worker_lifecycle',

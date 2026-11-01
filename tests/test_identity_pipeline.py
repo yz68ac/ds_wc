@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 import tests.support.pipeline as pipeline
 import tests.support.memory as memory_tests
 from tests.support.synthetic import NOW
-from wxbridge.ai.memory import extract
+from wxbridge.ai.background.memory import extract
 
 
 class MemoryIdentityPipelineTests(unittest.TestCase):

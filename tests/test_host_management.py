@@ -10,8 +10,8 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from wxbridge_service import cli, install, setup
-from wxbridge_service.host import Paths, atomic_file, private_json
+from wxbridge_cli import cli, install, setup
+from wxbridge.host.system import Paths, atomic_file, private_json
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -30,21 +30,21 @@ class HostCLITests(unittest.TestCase):
     def test_stop_uses_the_supervisor_and_waits_without_stopping_wechat(self):
         values = [status(), dict(applied=True,message='stopping'), status(enabled=False,pid=0,state='inactive')]
         with patch.object(cli,'control_request',side_effect=values) as request, patch.object(cli,'system_service') as system:
-            self.assertEqual(self.call(['stop','--wait']),0)
+            self.assertEqual(self.call(['bot','stop','--wait']),0)
         self.assertEqual([c.args[0] for c in request.call_args_list],['status','stop','status'])
         system.assert_not_called()
 
     def test_restart_keeps_a_paused_bot_paused(self):
         values = [status(enabled=False,pid=0,state='inactive'), dict(applied=False,message='paused')]
         with patch.object(cli,'control_request',side_effect=values) as request, patch.object(cli,'system_service') as system:
-            self.assertEqual(self.call(['restart','--wait']),0)
+            self.assertEqual(self.call(['bot','restart','--wait']),0)
         self.assertEqual([c.args[0] for c in request.call_args_list],['status','apply'])
         system.assert_not_called()
 
     def test_start_bootstraps_only_the_fixed_service_when_socket_is_absent(self):
         values = [FileNotFoundError(),status(enabled=False,pid=0,state='inactive'),dict(applied=True,message='starting')]
         with patch.object(cli,'control_request',side_effect=values), patch.object(cli,'system_service',return_value=SimpleNamespace(returncode=0)) as service:
-            self.assertEqual(self.call(['start']),0)
+            self.assertEqual(self.call(['bot','start']),0)
         service.assert_called_once_with('start')
 
     def test_whole_service_operations_are_explicit_and_fixed(self):
@@ -79,6 +79,132 @@ class HostCLITests(unittest.TestCase):
         with patch.object(Path,'read_text',return_value='123'), patch.object(cli,'private_json',return_value=dict(process={'pid':123},phase='qr_required')):
             self.assertEqual(cli.login_snapshot(Paths())['phase'],'qr_required')
 
+    def test_top_level_commands_only_control_the_whole_service(self):
+        for action in ('start','stop','restart','enable','disable'):
+            with self.subTest(action=action), patch.object(cli,'system_service',return_value=SimpleNamespace(returncode=0)) as system, \
+                    patch.object(cli,'control_request') as control:
+                self.assertEqual(self.call([action]),0)
+                system.assert_called_once_with(action);control.assert_not_called()
+
+    def test_removed_commands_are_not_silent_aliases(self):
+        for command in ('service','apply'):
+            with redirect_stderr(io.StringIO()),self.assertRaises(SystemExit):cli.parser().parse_args([command])
+
+    def test_web_control_never_bootstraps_the_whole_service(self):
+        with patch.object(cli,'need_root'),patch.object(cli,'control_request',side_effect=FileNotFoundError()), \
+                patch.object(cli,'system_service') as system:
+            self.assertEqual(self.call(['web','start']),1)
+        system.assert_not_called()
+
+    def test_web_restart_waits_for_new_ready_pid_and_generation(self):
+        before=dict(enabled=True,pid=10,state='active')
+        after=dict(enabled=True,pid=11,state='active',ready=True,pending=False,generation=2)
+        values=[dict(web=before),dict(message='accepted',generation=2),dict(web=after)]
+        with patch.object(cli,'need_root'),patch.object(cli,'control_request',side_effect=values) as control:
+            self.assertEqual(self.call(['web','restart','--wait']),0)
+        self.assertEqual([c.args[0] for c in control.call_args_list],['status','web_restart','status'])
+
+    def test_web_wait_timeout_is_not_reported_as_success(self):
+        value=dict(web=dict(enabled=True,pid=10,state='active',ready=False,pending=True,generation=0))
+        with patch.object(cli,'control_request',return_value=value), \
+                patch.object(cli.time,'monotonic',side_effect=[0,0,3]),patch.object(cli.time,'sleep'):
+            with self.assertRaisesRegex(ValueError,'超时'):cli.wait_web('web_restart',2,10)
+
+    def test_config_reload_keeps_disabled_web_stopped(self):
+        values=[dict(web=dict(enabled=False,pid=0)),dict(generation=2)]
+        with patch.object(cli,'control_request',side_effect=values) as control,patch.object(cli,'wait_web') as wait,redirect_stdout(io.StringIO()):
+            cli.reload_web(30)
+        wait.assert_not_called()
+        self.assertEqual([c.args[0] for c in control.call_args_list],['status','web_reload'])
+
+    def test_failed_config_reload_reports_saved_but_not_applied(self):
+        values=[dict(web=dict(enabled=True,pid=10)),dict(generation=2)]
+        with patch.object(cli,'control_request',side_effect=values),patch.object(cli,'wait_web',side_effect=ValueError('timeout')):
+            with self.assertRaisesRegex(ValueError,'已保存但未生效'):cli.reload_web(30)
+
+    def test_failed_control_connection_does_not_claim_pending_settings_are_successful(self):
+        for error in (TimeoutError(),PermissionError(),ValueError('invalid-response')):
+            with self.subTest(error=type(error).__name__),patch.object(cli,'control_request',side_effect=error):
+                with self.assertRaisesRegex(ValueError,'已保存但未生效'):cli.reload_web(30)
+
+    def test_missing_supervisor_saves_settings_for_next_start(self):
+        with patch.object(cli,'control_request',side_effect=FileNotFoundError()), \
+                redirect_stdout(io.StringIO()) as output:
+            cli.reload_web(30)
+        self.assertIn('下次启动',output.getvalue())
+
+
+class WebSettingsTests(unittest.TestCase):
+    def test_settings_reject_public_wildcard_and_invalid_types(self):
+        from wxbridge.host.settings import validate_web
+        for host in ('0.0.0.0','::','8.8.8.8','example.com',None,True):
+            with self.subTest(host=host),self.assertRaises(ValueError):validate_web(dict(host=host,port=8730))
+        for port in (0,65536,True,'8730'):
+            with self.subTest(port=port),self.assertRaises(ValueError):validate_web(dict(host='127.0.0.1',port=port))
+        self.assertEqual(validate_web(dict(host='localhost',port=8730)),dict(host='127.0.0.1',port=8730))
+
+    def test_state_upgrade_preserves_component_switches_and_rejects_unknown_fields(self):
+        from wxbridge.host.settings import migrate_state
+        self.assertEqual(migrate_state(dict(schema=1,bot_enabled=False)),dict(schema=2,bot_enabled=False,web_enabled=True))
+        current=dict(schema=2,bot_enabled=True,web_enabled=False)
+        self.assertEqual(migrate_state(current),current)
+        for value in (dict(schema=True,bot_enabled=False),dict(schema=1,bot_enabled=0),dict(current,extra=True)):
+            with self.assertRaises(ValueError):migrate_state(value)
+
+    def test_cli_configuration_is_saved_without_starting_a_stopped_web(self):
+        from wxbridge.host.settings import read_web
+        with tempfile.TemporaryDirectory(dir=ROOT/'.test-tmp') as directory:
+            path=Path(directory)/'web.json'
+            path.write_text('{"host":"127.0.0.1","port":8730}');path.chmod(0o600)
+            from wxbridge.host import settings
+            def read(value):return json.loads(Path(value).read_text())
+            def write(value,data):Path(value).write_text(json.dumps(data))
+            with patch.object(cli,'WEB_CONFIG',path),patch.object(cli,'need_root'), \
+                    patch.object(cli,'read_web',side_effect=read),patch.object(settings,'read_web',side_effect=read), \
+                    patch.object(settings,'atomic_json',side_effect=write), \
+                    patch.object(cli,'reload_web') as reload,redirect_stdout(io.StringIO()):
+                self.assertEqual(cli.main(['web','config','set','--port','8740']),0)
+                self.assertEqual(read(path)['port'],8740)
+            reload.assert_called_once_with(30)
+
+    def test_password_reset_writes_only_private_password_and_reloads_only_web(self):
+        from wxbridge.host import system
+        account=SimpleNamespace(pw_uid=912,pw_gid=913)
+        with tempfile.TemporaryDirectory(dir=ROOT/'.test-tmp') as directory:
+            settings=Path(directory)/'web.json';password=Path(directory)/'web-password'
+            with patch.object(cli,'WEB_CONFIG',settings),patch.object(cli,'WEB_PASSWORD',password), \
+                    patch.object(cli,'need_root'),patch.object(install,'password_input',return_value='synthetic-password'), \
+                    patch.object(system,'service_account',return_value=account),patch.object(system,'atomic_file') as write, \
+                    patch.object(cli,'reload_web') as reload,patch.object(cli,'system_service') as service, \
+                    redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(cli.main(['web','password','reset']),0)
+            write.assert_called_once_with(password,b'synthetic-password\n',uid=912,gid=913)
+            reload.assert_called_once_with(30);service.assert_not_called()
+            self.assertNotIn('synthetic-password',output.getvalue())
+
+    def test_password_is_never_accepted_as_a_command_argument(self):
+        with redirect_stderr(io.StringIO()),self.assertRaises(SystemExit):
+            cli.parser().parse_args(['web','password','reset','--password','synthetic-password'])
+
+    def test_web_settings_owner_mode_and_symlink_are_checked(self):
+        from wxbridge.host import settings
+        with tempfile.TemporaryDirectory(dir=ROOT/'.test-tmp') as directory:
+            path=Path(directory)/'web.json'
+            value=dict(host='127.0.0.1',port=8730)
+            original_stat=Path.stat
+            def mode(uid,permissions):
+                def info(current,*args,**kwargs):
+                    if current==path:return SimpleNamespace(st_uid=uid,st_mode=permissions)
+                    return original_stat(current,*args,**kwargs)
+                return info
+            with patch.object(settings,'private_json',return_value=value),patch.object(Path,'is_symlink',return_value=False), \
+                    patch.object(settings,'os',SimpleNamespace(name='posix')):
+                for uid,permissions in ((0,0o644),(995,0o600)):
+                    with self.subTest(uid=uid,mode=permissions),patch.object(Path,'stat',mode(uid,permissions)),self.assertRaisesRegex(ValueError,'unsafe'):
+                        settings.read_web(path)
+                with patch.object(Path,'stat',mode(0,0o600)):
+                    self.assertEqual(settings.read_web(path),value)
+
 
 class InstallerTests(unittest.TestCase):
     def setUp(self):
@@ -91,16 +217,16 @@ class InstallerTests(unittest.TestCase):
         source.mkdir()
         (source/'scripts').mkdir()
         (source/'scripts/check-repository.py').write_bytes((ROOT/'scripts/check-repository.py').read_bytes())
-        names = ['config.json','src/provider/.env','instance/a/config.json','src/webui/node_modules/lib.js',
+        names = ['config.json','src/provider/.env','instance/a/config.json','src/web/frontend/node_modules/lib.js',
                  'src/provider/build/old.py','src/provider/__pycache__/old.pyc','src/provider/models.json',
-                 'src/webui/dist/index.html','src/provider/client.py','.env.example']
+                 'src/web/frontend/dist/index.html','src/provider/client.py','.env.example']
         for name in names:
             path=source/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_text('synthetic')
         values={p.as_posix() for p in install.public_files(source)}
-        self.assertIn('src/webui/dist/index.html',values)
+        self.assertIn('src/web/frontend/dist/index.html',values)
         self.assertIn('src/provider/client.py',values)
         self.assertIn('.env.example',values)
-        self.assertEqual(values.intersection(names),{'src/webui/dist/index.html','src/provider/client.py','.env.example'})
+        self.assertEqual(values.intersection(names),{'src/web/frontend/dist/index.html','src/provider/client.py','.env.example'})
 
     def test_template_never_restores_api_credentials(self):
         raw=b'GEMINI_API_KEY=PRIVATE\nGEMINI_BASE_URL=http://127.0.0.1:8317/v1\nOPENAI_API_KEY=PRIVATE\n'
@@ -113,7 +239,8 @@ class InstallerTests(unittest.TestCase):
         mount,service=install.render_units(ROOT,account,'192.168.8.20')
         self.assertIn('uid=912,gid=913,noswap',mount)
         self.assertNotIn('@UID@',mount)
-        self.assertIn('-m wxbridge_service --root /opt/wxbridge --web-host 192.168.8.20',service)
+        self.assertIn('-m wxbridge --root /opt/wxbridge',service)
+        self.assertNotIn('--web-host',service)
         self.assertIn('TimeoutStopSec=infinity',service)
         self.assertIn('SendSIGKILL=no',service)
 
@@ -155,7 +282,7 @@ class InstallerTests(unittest.TestCase):
             install.verify_source(self.root,files)
 
     def test_missing_locked_requirements_fails_before_any_host_changes(self):
-        frontend=self.root/'src/webui/dist/index.html'
+        frontend=self.root/'src/web/frontend/dist/index.html'
         frontend.parent.mkdir(parents=True)
         frontend.write_text('synthetic frontend')
         args=SimpleNamespace(web_host='127.0.0.1',wechat_deb=None,frida_wheel=None,with_vnc=False,dry_run=False)

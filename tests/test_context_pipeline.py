@@ -719,14 +719,15 @@ class PipelineTests(PipelineFixture):
 class WorkerTests(unittest.TestCase):
     def test_search_disabled_still_uses_plain_text_and_output_preferences(self):
         from wxbridge.app.model_runtime import GroupModels
-        from wxbridge.ai.output import reply_rules
+        from wxbridge.ai.reply.output import reply_rules
         cfg=default_config();cfg['search']['enabled']=False
         runtime=GroupModels(cfg)
         try:
             with patch('wxbridge.app.model_runtime.client_for') as client:
-                client.return_value.chat.return_value = "**简单说**，先这样。"
+                from tests.support.tool_support import model_result
+                client.return_value.request.return_value = model_result(dict(content="**简单说**，先这样。"))
                 result=runtime.submit('generate',(cfg,[dict(role='system',content='合成指令')],None),timeout=5).future.result(timeout=2)
-                prompt = client.return_value.chat.call_args.args[0]
+                prompt = client.return_value.request.call_args.args[0]
                 self.assertTrue(prompt[0]['content'].startswith('合成指令'))
                 self.assertIn(reply_rules(cfg),prompt[0]['content'])
         finally:
@@ -737,11 +738,12 @@ class WorkerTests(unittest.TestCase):
     def test_progress_event_does_not_replace_final_result(self):
         from wxbridge.app.model_runtime import GroupModels
         cfg=default_config();runtime=GroupModels(cfg)
-        def answer(cfg, client, prompt, on_search):
+        def answer(cfg, client, prompt, on_search, **kwargs):
             on_search()
-            return "联网回答", dict(attempted=True, calls=1, results=1, errors=[])
+            from wxbridge.ai.tools.base import ToolReply
+            return ToolReply("联网回答", dict(attempted=True, calls=1, results=1, errors=[]))
         try:
-            with patch('wxbridge.app.model_runtime.client_for'), patch('wxbridge.ai.search.answer_with_search',side_effect=answer):
+            with patch('wxbridge.app.model_runtime.client_for'), patch('wxbridge.ai.reply.runner.run_tool_loop',side_effect=answer):
                 job=runtime.submit('generate',(cfg,[],None),timeout=5)
                 job.future.result(timeout=2)
                 self.assertEqual(job.poll(),dict(event='search_started'))
@@ -749,6 +751,24 @@ class WorkerTests(unittest.TestCase):
                 self.assertTrue(result['ok'])
                 self.assertEqual(result['reply'],'联网回答')
                 self.assertIsNone(job.poll())
+        finally:
+            runtime.close()
+
+    def test_image_proposal_can_finish_without_worker_confirmation_text(self):
+        from wxbridge.app.model_runtime import GroupModels
+        from wxbridge.ai.tools.base import ToolReply
+        cfg = default_config()
+        cfg['image_generation']['enabled'] = True
+        runtime = GroupModels(cfg)
+        try:
+            with patch('wxbridge.app.model_runtime.client_for'), patch('wxbridge.ai.reply.runner.run_tool_loop',
+                    return_value=ToolReply('', {}, (dict(prompt='cat'),))) as loop:
+                result = runtime.submit('generate', (cfg, [], None), timeout=5).future.result(timeout=2)
+            self.assertTrue(result['ok'])
+            self.assertEqual(result['reply'], '')
+            self.assertEqual(result['image_requests'], [dict(prompt='cat')])
+            self.assertIsNotNone(loop.call_args.kwargs['deadline'])
+            self.assertTrue(callable(loop.call_args.kwargs['check']))
         finally:
             runtime.close()
 

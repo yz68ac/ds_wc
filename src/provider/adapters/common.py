@@ -41,6 +41,18 @@ def extract_tool_definition(tool):
     return deepcopy(f)
 
 
+def extract_tool_definitions(tools, *, native_search=False):
+    definitions, names = [], set()
+    for tool in tools or []:
+        function = extract_tool_definition(tool)
+        name = function['name']
+        if name in names or (native_search and name == 'web_search'):
+            raise ModelError('invalid_tool_definition')
+        names.add(name)
+        definitions.append(function)
+    return definitions
+
+
 def build_tool_call(identifier, name, arguments):
     if not isinstance(identifier, str) or not 1 <= len(identifier) <= 256 or not isinstance(name, str) or not 1 <= len(name) <= 128:
         raise ModelError('invalid_response')

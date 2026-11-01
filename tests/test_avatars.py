@@ -10,8 +10,8 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from wxbridge.ai.avatars import classify, validate_visual
-from wxbridge.ai.memory import extract, snapshot
+from wxbridge.ai.background.avatars import classify, validate_visual
+from wxbridge.ai.background.memory import extract, snapshot
 from wxbridge.config import DEFAULTS, _deep_merge
 from wxbridge.storage.person_memory import MemoryStore, DAY
 from wxbridge.wechat.store import WeChatStore

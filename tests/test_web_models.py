@@ -4,9 +4,9 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from wxbridge_web.demo import seed
-from wxbridge_web.models import ModelCatalog
-from wxbridge_web.repository import ConfigRepository,ManagementError
+from web.backend.demo import seed
+from wxbridge.management.models import ModelCatalog
+from wxbridge.management.repository import ConfigRepository,ManagementError
 
 
 class ModelCatalogTests(unittest.TestCase):
@@ -18,7 +18,7 @@ class ModelCatalogTests(unittest.TestCase):
         self.catalog=ModelCatalog(self.repository,demo=True);self.addCleanup(self.catalog.close)
 
     def test_cache_read_does_not_create_client_and_never_returns_credentials(self):
-        with patch('wxbridge_web.models.create_client',side_effect=AssertionError('no live client')):
+        with patch('wxbridge.management.models.create_client',side_effect=AssertionError('no live client')):
             result=self.catalog.read()
         provider=next(row for row in result['providers'] if row['id']=='anthropic')
         self.assertEqual(provider['models'][0]['id'],'claude-haiku-5-5')

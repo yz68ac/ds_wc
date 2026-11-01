@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import patch
 
 from tests.support.model_support import default_config
-from wxbridge.ai.participation import ParticipationError, parse_decision
+from wxbridge.ai.background.participation import ParticipationError, parse_decision
 from wxbridge.app.model_runtime import GroupModels
 import tests.support.conversation as conversation
 
@@ -22,7 +22,7 @@ class StageTests(unittest.TestCase):
                                ('PRIVATE_MODEL_OUTPUT', 'participation_worker_failed')):
             runtime = GroupModels(cfg)
             try:
-                with patch('wxbridge.ai.participation.evaluate', side_effect=ParticipationError(code)):
+                with patch('wxbridge.ai.background.participation.evaluate', side_effect=ParticipationError(code)):
                     result = runtime.submit('participation', (cfg, [], dict(source_ids=[7])), timeout=5).future.result(timeout=2)
             finally:
                 runtime.close()

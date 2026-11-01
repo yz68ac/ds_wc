@@ -106,9 +106,9 @@ set -eu
 cd /opt/wxbridge
 export PYTHONPATH=/opt/wxbridge/src
 if [ "$(id -u)" -eq 0 ]; then
-    exec /usr/sbin/runuser -u {account.pw_name} -- /usr/bin/env PYTHONPATH=/opt/wxbridge/src /usr/bin/python3 -m wxbridge native-api "$@"
+    exec /usr/sbin/runuser -u {account.pw_name} -- /usr/bin/env PYTHONPATH=/opt/wxbridge/src /usr/bin/python3 -m wxbridge_cli debug native-api "$@"
 fi
-exec /usr/bin/python3 -m wxbridge native-api "$@"
+exec /usr/bin/python3 -m wxbridge_cli debug native-api "$@"
 ''')
     SHORTCUT.chmod(0o755)
     provenance=dict(frida_version=version,wheel_sha256=WHEEL_SHA256,uid=account.pw_uid,gid=account.pw_gid,

@@ -24,7 +24,7 @@ def stage_source(source, target):
         path = Path(name)
         if (path.is_absolute() or '..' in path.parts or '\\' in name or ':' in name or private(name)
                 or any(p in ('build', 'dist', '__pycache__', 'node_modules') or p.endswith('.egg-info')
-                       for p in path.parts) and not name.startswith('src/webui/dist/')):
+                       for p in path.parts) and not name.startswith('src/web/frontend/dist/')):
             raise ValueError('unsafe_build_source')
         src = source/name
         if src.is_symlink() or not src.resolve().is_relative_to(source.resolve()):
@@ -36,7 +36,7 @@ def stage_source(source, target):
         dst = target/name
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(src, dst)
-    for src in (source/'src/webui/dist').rglob('*'):
+    for src in (source/'src/web/frontend/dist').rglob('*'):
         if src.is_file():
             if src.is_symlink() or not src.resolve().is_relative_to(source.resolve()):
                 raise ValueError('unsafe_frontend_file')

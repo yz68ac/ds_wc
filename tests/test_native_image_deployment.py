@@ -33,7 +33,7 @@ class NativeImageDeploymentTests(unittest.TestCase):
                 deployment.require_application_layout()
 
     def test_packaged_application_and_module_service_entry_are_accepted(self):
-        with patch.object(deployment,'run',side_effect=[Mock(),Mock(stdout='python -m wxbridge_service --root /opt/wxbridge')]):
+        with patch.object(deployment,'run',side_effect=[Mock(),Mock(stdout='python -m wxbridge --root /opt/wxbridge')]):
             deployment.require_application_layout()
 
     def setUp(self):

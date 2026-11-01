@@ -4,7 +4,7 @@ import json
 import unittest
 from unittest.mock import patch
 
-from wxbridge.ai.memory import extract, snapshot
+from wxbridge.ai.background.memory import extract, snapshot
 from wxbridge.storage.person_memory import MemoryStore, DAY, affinity_value
 from wxbridge.storage import relationships as relation
 import tests.support.memory as memory_tests

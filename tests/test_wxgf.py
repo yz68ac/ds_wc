@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 import zlib
 
 from wechat_linux.media.wxgf import WxgfError, _chroma, decode_wxgf, extract_hevc
-from wxbridge.ai.quoted_images import validate_image
+from wxbridge.ai.reply.images import validate_image
 
 # 现有 FFmpeg/libx265 生成的红色静态图；只保留 VPS/SPS/PPS/IDR，无外部素材。
 RED = base64.b64decode('AAAAAUABDAH//wFgAAADAJAAAAMAAAMAHpWYCQAAAAFCAQEBYAAAAwCQAAADAAADAB6gQhFllZqvK8BaAgAAAwACAAADADIQAAAAAUQBwXPQiQAAAAEoAa8dgPAOCP+JeffqFlV+eA==')

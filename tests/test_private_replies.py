@@ -21,7 +21,7 @@ class PrivateReplyTests(PrivateReplyFixture):
         self.assertFalse(self.decision_jobs)
         self.assertEqual(self.bot.journal.head()['trigger_ids'], [1])
         prompt = self.jobs[0].payload[1]
-        from wxbridge.ai.output import response_prompt
+        from wxbridge.ai.reply.output import response_prompt
         self.assertEqual(json.loads(prompt[1]['content'])['chat'], '合成私聊')
         self.assertIn('本轮是微信私聊', response_prompt(prompt)[0]['content'])
         self.assertFalse(self.bot.journal.participation_status()['decision_required'])

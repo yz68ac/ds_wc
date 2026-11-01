@@ -7,12 +7,12 @@ from unittest.mock import patch
 
 import tests.support.media as media_tests
 from tests.support.synthetic import NOW, msg
-from wxbridge.ai.context_selection import ContextError
-from wxbridge.ai.quoted_images import prepare_multimodal
-from wxbridge.ai.output import response_prompt
-from wxbridge.ai.prompt_parts import PromptComposer, PromptMessages
-from wxbridge.ai.reply_prompt import build_prompt
-from wxbridge.ai.search import search_prompt
+from wxbridge.ai.context.selection import ContextError
+from wxbridge.ai.reply.images import prepare_multimodal
+from wxbridge.ai.reply.output import response_prompt
+from wxbridge.ai.composer import PromptComposer, PromptMessages
+from wxbridge.ai.reply.prompt import build_prompt
+from wxbridge.ai.tools.web import apply_search_instructions
 
 
 class PromptContractTests(unittest.TestCase):
@@ -27,10 +27,10 @@ class PromptContractTests(unittest.TestCase):
         original = [dict(role='system', content='合成人格'), dict(role='user', content='普通提问'),
                     dict(role='assistant', content='', _provider_state={'opaque': ['signed-state']})]
         expected = deepcopy(original)
-        once = search_prompt(self.cfg, original)
-        twice = search_prompt(self.cfg, response_prompt(once, self.cfg))
+        once = apply_search_instructions(response_prompt(original, self.cfg))
+        twice = apply_search_instructions(response_prompt(once, self.cfg))
         self.assertEqual(once, twice)
-        from wxbridge.ai.output import reply_rules
+        from wxbridge.ai.reply.output import reply_rules
         self.assertEqual(twice[0]['content'].count(reply_rules(self.cfg)), 1)
         self.assertEqual(twice[0]['content'].count('【联网工具规则】'), 1)
         self.assertEqual(twice[-1]['_provider_state'], original[-1]['_provider_state'])
@@ -51,7 +51,7 @@ class PromptContractTests(unittest.TestCase):
         generation = self.generation()
         base = self.base(generation)
         base[1]['content'] = '请求级前言\n'+base[1]['content']+'\n本轮额外要求'
-        with patch('wxbridge.ai.reply_prompt.build_prompt', side_effect=AssertionError('must not rebuild')):
+        with patch('wxbridge.ai.reply.prompt.build_prompt', side_effect=AssertionError('must not rebuild')):
             prompt, info = prepare_multimodal(self.cfg, base, generation)
         text = prompt[1]['content'][0]['text']
         self.assertTrue(text.startswith('请求级前言\n'))

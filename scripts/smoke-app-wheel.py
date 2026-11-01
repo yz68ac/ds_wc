@@ -13,16 +13,30 @@ from importlib.util import find_spec
 import sys
 import json
 import wxbridge
-from wxbridge import cli
+from wxbridge_cli import cli
 from wxbridge.paths import SOURCE_ROOT, resource_path
 assert Path(wxbridge.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
 assert SOURCE_ROOT is None
 assert not any(n.split('.')[0] in ('provider','wechat_linux','frida','gi','fastapi') for n in sys.modules)
 renamed = {
- 'wxbridge.ai.images':'wxbridge.ai.quoted_images',
- 'wxbridge.ai.image_generation':'wxbridge.ai.image_tools',
- 'wxbridge.ai.prompts':'wxbridge.ai.reply_prompt',
- 'wxbridge.ai.context':'wxbridge.ai.context_selection',
+ 'wxbridge.ai.images':'wxbridge.ai.reply.images',
+ 'wxbridge.ai.image_generation':'wxbridge.ai.tools.image',
+ 'wxbridge.ai.prompts':'wxbridge.ai.reply.prompt',
+ 'wxbridge.ai.context_selection':'wxbridge.ai.context.selection',
+ 'wxbridge.ai.chat_context':'wxbridge.ai.context.chat',
+ 'wxbridge.ai.chat_payload':'wxbridge.ai.context.payload',
+ 'wxbridge.ai.identity':'wxbridge.ai.context.identity',
+ 'wxbridge.ai.prompt_parts':'wxbridge.ai.composer',
+ 'wxbridge.ai.reply_prompt':'wxbridge.ai.reply.prompt',
+ 'wxbridge.ai.quoted_images':'wxbridge.ai.reply.images',
+ 'wxbridge.ai.output':'wxbridge.ai.reply.output',
+ 'wxbridge.ai.citations':'wxbridge.ai.reply.citations',
+ 'wxbridge.ai.tool_loop':'wxbridge.ai.reply.runner',
+ 'wxbridge.ai.memory':'wxbridge.ai.background.memory',
+ 'wxbridge.ai.participation':'wxbridge.ai.background.participation',
+ 'wxbridge.ai.group_profile':'wxbridge.ai.background.group_profile',
+ 'wxbridge.ai.avatars':'wxbridge.ai.background.avatars',
+ 'wxbridge.ai.native_search':'wxbridge.ai.tools.native_search',
  'wxbridge.app.image_generation':'wxbridge.app.image_generation_controller',
  'wxbridge.app.memory':'wxbridge.app.memory_controller',
  'wxbridge.app.participation':'wxbridge.app.participation_controller',
@@ -30,10 +44,20 @@ renamed = {
  'wxbridge.storage.image_generation':'wxbridge.storage.image_generation_journal',
 }
 for old,new in renamed.items():
- assert find_spec(new) is not None, new
+ module = Path(wxbridge.__file__).parent.joinpath(*new.split('.')[1:])
+ assert module.with_suffix('.py').is_file() or (module/'__init__.py').is_file(), new
  assert find_spec(old) is None, old
-for retired in ('wxbridge.ai.emoticons','wxbridge_web.control'):
+for name in ('reply/runner.py','tools/native_search.py','tools/registry.py','tools/base.py','tools/web.py','tools/image.py'):
+ assert (Path(wxbridge.__file__).parent/'ai'/name).is_file(), name
+for retired in ('wxbridge.ai.emoticons','web.backend.control','wxbridge.ai.search','wxbridge.ai.image_tools',
+                'wxbridge.ai.search_prompt','wxbridge.ai.providers'):
  assert find_spec(retired) is None, retired
+assert find_spec('web.backend') is not None
+assert find_spec('wxbridge_web') is None
+assert find_spec('wxbridge_service') is None
+assert find_spec('wxbridge.cli') is None
+assert find_spec('wxbridge.host.supervisor') is not None
+assert find_spec('wxbridge.management.repository') is not None
 from wxbridge.config import DEFAULTS, DEFAULTS_FILE
 assert DEFAULTS_FILE == resource_path('config.defaults.json')
 assert DEFAULTS['target']['context_max_chars'] > 0
@@ -75,13 +99,13 @@ def main():
                        cwd=root,env=environment,check=True,stdout=subprocess.DEVNULL)
         subprocess.run([str(python),'-I','-B','-c',CHECK],cwd=root,env=environment,check=True)
         commands = ([str(python),'-I','-m','wxbridge','--help'],
-                    [str(python),'-I','-m','wxbridge','debug','--help'],
-                    [str(python),'-I','-m','wxbridge','debug','native-api','--help'],
-                    [str(python),'-I','-m','wxbridge','--root',str(root),'config'],
+                    [str(python),'-I','-m','wxbridge_cli','debug','--help'],
+                    [str(python),'-I','-m','wxbridge_cli','debug','native-api','--help'],
+                    [str(python),'-I','-m','wxbridge_cli','--root',str(root),'config'],
                     [str(binary/('wxbridge.exe' if sys.platform=='win32' else 'wxbridge')),'--help'])
         for command in commands:
             subprocess.run(command,cwd=root,env=environment,check=True,stdout=subprocess.DEVNULL)
-        print('OK: console script and python -m wxbridge share one CLI')
+        print('OK: console script and python -m wxbridge_cli share one CLI')
 
 
 if __name__ == '__main__':

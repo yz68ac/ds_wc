@@ -91,8 +91,8 @@ class ReleaseTests(unittest.TestCase):
 
     def test_compiled_frontend_is_added_to_the_same_verified_release(self):
         globals_=release['build'].__globals__
-        assets={'src/webui/dist/index.html':b'<html>synthetic</html>',
-                'src/webui/dist/assets/app.js':b'console.log("synthetic")'}
+        assets={'src/web/frontend/dist/index.html':b'<html>synthetic</html>',
+                'src/web/frontend/dist/assets/app.js':b'console.log("synthetic")'}
         def frontend(archive):
             # Building the UI rereads source entries after they were copied into the output ZIP.
             for info in archive.infolist():
@@ -142,6 +142,12 @@ class ReleaseTests(unittest.TestCase):
         module.write_bytes(b'old')
         failures=installed_mismatches(manifest['files'],locations=locations)
         self.assertEqual(failures,['src/wxbridge/control.py'])
+        web_root=self.root/'installed-web';(web_root/'backend').mkdir(parents=True)
+        web_module=web_root/'backend/app.py';web_module.write_bytes(b'new')
+        web_files={'src/web/backend/app.py':dict(sha256=hashlib.sha256(b'new').hexdigest())}
+        self.assertEqual(installed_mismatches(web_files,locations={'web':web_root}),[])
+        web_module.write_bytes(b'old')
+        self.assertEqual(installed_mismatches(web_files,locations={'web':web_root}),['src/web/backend/app.py'])
         with patch.object(build_info,'PROJECT_ROOT',self.root), \
                 patch('wxbridge.release_integrity.installed_mismatches',return_value=failures):
             build_info.code_revision.cache_clear()
@@ -151,7 +157,7 @@ class ReleaseTests(unittest.TestCase):
     def test_source_only_deployment_rejects_package_and_resource_changes(self):
         check=runpy.run_path(str(ROOT/'scripts/deploy-release.py'))['require_source_only_update']
         for name in ('src/wxbridge/control.py','src/provider/client.py','config.defaults.json',
-                     'src/webui/dist/index.html','requirements.txt'):
+                     'src/web/backend/app.py','src/web/frontend/dist/index.html','requirements.txt'):
             with self.subTest(name=name),self.assertRaisesRegex(ValueError,'package_update_requires_upgrade_installation'):
                 check([name])
         check(['scripts/wechat-login.py'])

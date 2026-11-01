@@ -12,7 +12,7 @@ from google import genai
 from provider import Client, ImageRequest, ModelError, ModelRequest, capture_metrics, create_client, load_config
 from provider.adapters import get_protocol_adapter
 from wxbridge.ai.roles import validate_models
-from wxbridge.ai.search import answer_with_search
+from tests.support.tool_support import run_answer
 from tests.support.model_support import default_config
 
 
@@ -186,7 +186,7 @@ class GeminiNativeTests(unittest.TestCase):
         backend=Mock();backend.search.return_value=dict(results=[dict(url='https://example.com/source',title='synthetic')])
         with Client(dict(provider='gemini',model='gemini-test',base_url='https://example.test'),api_key='synthetic') as client:
             with patch.object(client,'_post',side_effect=[tool_response('web_search'),response([dict(text='合成结论')])]) as post:
-                text,info=answer_with_search(cfg,client,[dict(role='user',content='synthetic')],search_client=backend)
+                text,info=run_answer(cfg,client,[dict(role='user',content='synthetic')],search_client=backend)
         self.assertIn('合成结论',text);self.assertTrue(info['attempted']);self.assertEqual(info['calls'],1)
         self.assertEqual(post.call_args.args[0]['contents'][-1]['parts'][0]['function_response']['name'],'web_search')
 

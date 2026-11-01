@@ -9,7 +9,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 import time
 
-from wxbridge.ai.context_selection import message_time
+from wxbridge.ai.context.selection import message_time
 from wxbridge.storage.journal import Journal
 from wxbridge.wechat.store import StoreError, WeChatStore
 from wechat_linux.messages.pats import is_pat

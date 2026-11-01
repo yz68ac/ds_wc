@@ -3,7 +3,7 @@ from tests.support.model_support import default_config
 from pathlib import Path
 import tempfile
 import unittest
-from wxbridge.ai.memory import snapshot
+from wxbridge.ai.background.memory import snapshot
 from wxbridge.storage.person_memory import MemoryStore
 from tests.support.pipeline import PipelineFixture
 from tests.support.synthetic import NOW, msg

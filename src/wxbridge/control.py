@@ -4,7 +4,8 @@ import socket
 
 BOT, SESSION, HELPER, RECOVERY, WEB = 'bot', 'wechat', 'sender', 'recovery', 'web'
 COMPONENTS = (SESSION, HELPER, BOT, WEB, RECOVERY)
-ACTIONS = frozenset(('status', 'start', 'stop', 'apply'))
+WEB_ACTIONS = frozenset(('web_start', 'web_stop', 'web_restart', 'web_reload'))
+ACTIONS = frozenset(('status', 'start', 'stop', 'apply')) | WEB_ACTIONS
 MAX_FRAME = 8192
 DEFAULT_SOCKET = '/run/wxbridge-control/control.sock'
 

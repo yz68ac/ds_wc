@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-from contextlib import closing
 import multiprocessing as mp
 import os
 import time
@@ -48,7 +47,7 @@ def _work(connection, kind, payload):
         with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink), capture_metrics() as metrics:
             try:
                 if kind == 'prepare_images':
-                    from wxbridge.ai.quoted_images import prepare_multimodal
+                    from wxbridge.ai.reply.images import prepare_multimodal
                     prompt, vision = prepare_multimodal(*payload)
                     result = dict(prompt=prompt, vision=vision)
                 elif kind == "send":
@@ -69,7 +68,7 @@ def _work(connection, kind, payload):
             except Exception as exc:
                 # 只返回类别，异常消息可能包含输入参数。
                 result = {"ok": False, "error": type(exc).__name__}
-                from wxbridge.ai.context_selection import ContextError
+                from wxbridge.ai.context.selection import ContextError
                 if isinstance(exc, ContextError):
                     result.update(error=exc.code, retryable=False)
                 if isinstance(exc, ModelError):

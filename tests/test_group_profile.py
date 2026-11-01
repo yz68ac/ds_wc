@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 
 from tests.support.model_support import default_config
 from tests.support.synthetic import NOW, msg
-from wxbridge.ai import group_profile as analysis
+from wxbridge.ai.background import group_profile as analysis
 from wxbridge.app.group_profile_controller import ProfileController, participant_ids
 from wxbridge.storage.group_profile import GroupProfile
 
