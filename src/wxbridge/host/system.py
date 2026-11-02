@@ -19,6 +19,16 @@ class Paths:
     helper: Path = Path('/opt/wxbridge-native-helper')
     settings: Path = Path('/etc/wxbridge-boot.json')
 
+    @property
+    def boot_settings(self):
+        from .layout import container
+        return Path('/etc/wxbridge/boot.json') if container() else self.settings
+
+    @property
+    def code(self):
+        from .layout import container, code_root
+        return code_root() if container() else self.app
+
 
 def service_account():
     import pwd
@@ -55,7 +65,8 @@ def atomic_json(path, value, **kwargs):
 
 
 def user_environment(paths, account):
-    return dict(PATH='/usr/local/bin:/usr/bin:/bin', HOME=account.pw_dir, LANG='C.UTF-8',
+    from .layout import environment
+    return dict(**environment(), PATH='/usr/local/bin:/usr/bin:/bin', HOME=account.pw_dir, LANG='C.UTF-8',
                 WX_RUNTIME_DIR=str(paths.runtime))
 
 

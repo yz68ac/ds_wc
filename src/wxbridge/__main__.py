@@ -13,11 +13,13 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if not hasattr(os,'geteuid') or os.geteuid() != 0:
         parser.error('The supervisor must run as root; business children drop privileges.')
-    root = args.root.resolve()
+    from wxbridge.host.layout import container, config_root, code_root
+    root = config_root() if container() else args.root.resolve()
+    code = code_root() if container() else root
     logging.basicConfig(level=logging.INFO,format='%(asctime)s %(levelname)s %(message)s')
     # Recovery deliberately imports a minimal package projection through SCANNER.
     # Keep those sys.path/sys.modules changes outside the long-lived supervisor.
-    subprocess.run(['/usr/bin/python3', str(root/'scripts/boot-recovery.py'), 'runtime'], check=True)
+    subprocess.run(['/usr/bin/python3', str(code/'scripts/boot-recovery.py'), 'runtime'], check=True)
     from wxbridge.host.supervisor import Supervisor
     supervisor = Supervisor(root)
     def stop(_signal,_frame):
@@ -25,7 +27,7 @@ def main(argv=None):
     signal.signal(signal.SIGTERM,stop)
     signal.signal(signal.SIGINT,stop)
     supervisor.run()
-    return 0
+    return 1 if getattr(supervisor, 'forced_shutdown', False) is True else 0
 
 
 if __name__ == '__main__':

@@ -22,7 +22,8 @@ def bind_host(value):
         raise ValueError('web_host_invalid') from None
     private = address.version == 4 and any(address in ipaddress.ip_network(net)
         for net in ('10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'))
-    if not address.is_loopback and not private:
+    from .layout import container
+    if not address.is_loopback and not private and not (container() and value == '0.0.0.0'):
         raise ValueError('web_host_not_local_or_private')
     return str(address)
 

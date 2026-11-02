@@ -81,6 +81,7 @@ class LoginControllerTests(unittest.TestCase):
         cases = [('push button', 'Log In', 'login_ready'),
                  ('button', 'Open WeChat', 'open_ready'),
                  ('label', 'Confirm login on your phone', 'phone_confirmation'),
+                 ('label', 'Confirm on Phone', 'phone_confirmation'),
                  ('image', 'Scan QR code', 'qr_required'),
                  ('label', '二维码已过期', 'qr_expired')]
         for role, name, expected in cases:

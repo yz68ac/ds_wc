@@ -18,8 +18,13 @@ def parser():
     p = argparse.ArgumentParser(prog='wxbridge', description='微信机器人主机管理；顶层启停整个服务，bot/web 控制单个组件。')
     from wxbridge import __version__
     p.add_argument('--version', action='version', version=__version__)
+    p.add_argument('--backend', choices=('systemd', 'compose'), default='systemd')
+    p.add_argument('--project-dir', type=Path)
     p.add_argument('--root', type=Path, help='账号配置与 instance 所在目录；默认 /opt/wxbridge')
     commands = p.add_subparsers(dest='command', required=True)
+    init = commands.add_parser('container-init', help='创建独立容器项目')
+    init.add_argument('--image', required=True)
+    init.add_argument('--port', type=int, default=8730)
     status = commands.add_parser('status', help='查看服务、登录和各实例的安全状态')
     status.add_argument('--json', action='store_true')
     for name in ('start','stop','restart','enable','disable'):
@@ -164,7 +169,7 @@ def validate_start(paths):
             "r=ConfigRepository(sys.argv[1]);\n"
             "try:r.validate_start();print(json.dumps({'ok':True}))\n"
             "except ManagementError as e:print(json.dumps({'error':e.message},ensure_ascii=False));sys.exit(2)")
-    result = as_user(paths,[str(paths.app/'.venv/bin/python'),'-c',code,str(paths.app)],capture=True,timeout=15)
+    result = as_user(paths,[str(paths.code/'.venv/bin/python'),'-c',code,str(paths.app)],capture=True,timeout=15)
     if result.returncode:
         try:
             message = json.loads(result.stdout)['error']
@@ -227,7 +232,7 @@ def instance_action(args, paths):
             "r=ConfigRepository(sys.argv[1]); action=sys.argv[2]; identifier=sys.argv[3]; "
             "result=r.list() if action=='list' else r.request_instance(identifier,action,r.get(identifier)['revision']); "
             "print(json.dumps(result,ensure_ascii=False))")
-    result = as_user(paths, [str(paths.app/'.venv/bin/python'),'-c',code,str(paths.app),args.action,args.id or ''],
+    result = as_user(paths, [str(paths.code/'.venv/bin/python'),'-c',code,str(paths.app),args.action,args.id or ''],
                      capture=True, timeout=15)
     if result.returncode:
         raise ValueError('实例操作失败，请核对实例 ID、模型配置和发送授权清单。')
@@ -343,7 +348,11 @@ def main(argv=None, *, root=None):
         if hasattr(stream,'reconfigure'):
             stream.reconfigure(encoding='utf-8',errors='replace')
     args = parser().parse_args(argv)
-    paths = Paths(app=(args.root or Path(root or '/opt/wxbridge')).resolve())
+    from wxbridge.host.layout import container, config_root
+    if args.backend == 'compose' or args.command == 'container-init':
+        from wxbridge_cli.compose import execute
+        return execute(args, argv if argv is not None else sys.argv[1:])
+    paths = Paths(app=(args.root or (config_root() if container() else Path(root or '/opt/wxbridge'))).resolve())
     try:
         if args.command == 'debug':
             from wxbridge_cli.debug import execute
@@ -365,8 +374,8 @@ def main(argv=None, *, root=None):
             if args.vnc:
                 if args.status:
                     raise ValueError('--vnc 与 --status 不能同时使用。')
-                return as_user(paths,['/usr/bin/bash',str(paths.app/'scripts/login-vnc.sh')]).returncode
-            cmd = [str(paths.app/'.venv/bin/python'),str(paths.app/'scripts/wechat-login.py')]
+                return as_user(paths,['/usr/bin/bash',str(paths.code/'scripts/login-vnc.sh')]).returncode
+            cmd = [str(paths.code/'.venv/bin/python'),str(paths.code/'scripts/wechat-login.py')]
             if args.status:
                 cmd.append('--status')
             return as_user(paths,cmd).returncode
@@ -394,7 +403,7 @@ def main(argv=None, *, root=None):
                 print(('OK   ' if item['ok'] else 'FAIL ')+item['name']+' '+item.get('detail',''))
             return int(any(not item['ok'] for item in result))
         if args.command == 'config':
-            for path in (paths.app/'config.json',paths.app/'src/provider/.env',paths.app/'instance',paths.settings,WEB_CONFIG):
+            for path in (paths.app/'config.json',(Path('/run/secrets/wxbridge/provider.env') if container() else paths.app/'src/provider/.env'),paths.app/'instance',paths.boot_settings,WEB_CONFIG):
                 print(path)
             return 0
     except KeyboardInterrupt:

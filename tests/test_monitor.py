@@ -215,7 +215,12 @@ class MonitorTests(unittest.TestCase):
         master,slave=pty.openpty()
         saved=termios.tcgetattr(slave)
         fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,100,0,0))
-        bootstrap=("import sys; from wxbridge.app.status import snapshot as monitor; monitor.read_services=lambda: ({},'unavailable'); "
+        bootstrap=("import sys; from pathlib import Path; import wxbridge.config as config; "
+                   "account=config.load_account(sys.argv[1]); "
+                   "instance=config.resolve_instance(account,{'enabled':False,'chat':'wxid_synthetic'},"
+                   "path=Path(sys.argv[1]).parent/'instance/synthetic/config.json'); "
+                   "config.load_config=lambda path: instance; "
+                   "from wxbridge.app.status import snapshot as monitor; monitor.read_services=lambda: ({},'unavailable'); "
                    "from wxbridge_cli.debug import main; raise SystemExit(main(['--config',sys.argv[1],'status']))")
         env=dict(os.environ,TERM='xterm-256color',LANG='C.UTF-8')
         child=subprocess.Popen([sys.executable,'-c',bootstrap,str(config)],cwd=Path(__file__).resolve().parents[1],

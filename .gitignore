@@ -63,9 +63,12 @@ Thumbs.db
 
 # Local per-group configuration and prompts.
 /instance/
+/data/
 /src/web/frontend/node_modules/
 /src/web/frontend/dist/
 /src/web/frontend/*.tsbuildinfo
 /src/web/backend/*.egg-info/
 /src/web/backend/build/
 /src/web/backend/dist/
+
+/provider.env

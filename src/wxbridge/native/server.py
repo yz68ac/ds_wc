@@ -10,7 +10,7 @@ import struct
 import time
 
 from wxbridge.native.protocol import MAX_FRAME, NativeError, decode, encode, settings
-from wxbridge.storage.memoryfs import require_memory_directory
+from wxbridge.storage.memoryfs import require_runtime_directory as require_memory_directory
 
 
 class NativeServer:

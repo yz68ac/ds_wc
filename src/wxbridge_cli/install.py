@@ -202,7 +202,7 @@ def fetch_frida(destination, expected, *, proxy=None):
         total = 0
         while chunk := response.read(1024*1024):
             total += len(chunk)
-            if total > 32*1024*1024:
+            if total > 64*1024*1024:
                 raise ValueError('Frida wheel 超过大小上限。')
             stream.write(chunk)
     if sha(destination) != expected:
@@ -272,13 +272,17 @@ def doctor(paths):
         capture_output=True,timeout=10)
     add('系统 GI / AT-SPI / Gdk',gui.returncode == 0)
     try:
-        profile = json.loads((paths.app/'src/wechat_linux/native/profile.json').read_text())
+        profile = json.loads((paths.code/'src/wechat_linux/native/profile.json').read_text())
         add('微信版本校验',sha('/opt/wechat/wechat') == profile['sha256'])
     except OSError:
         add('微信版本校验',False)
     try:
         from wxbridge.storage.memoryfs import is_noswap_tmpfs
-        add('私有内存挂载',is_noswap_tmpfs(paths.runtime.resolve(),Path('/proc/self/mountinfo').read_text()))
+        from wxbridge.host.layout import container, sensitive_root
+        mounts = Path('/proc/self/mountinfo').read_text()
+        add('私有内存挂载',is_noswap_tmpfs(paths.runtime.resolve(),mounts,require_noswap=not container()))
+        if container():
+            add('敏感内存挂载',is_noswap_tmpfs(sensitive_root(),mounts))
     except OSError:
         add('私有内存挂载',False)
     try:
@@ -296,6 +300,21 @@ def doctor(paths):
         add('实例配置',True)
     except (OSError,ValueError,KeyError):
         add('实例配置',False)
+    from wxbridge.host.layout import container
+    if container():
+        from provider import load_config as provider_config
+        from urllib.parse import urlsplit
+        try:
+            connections = provider_config(cfg.account.provider_env)
+            for name, connection in connections.connections.items():
+                if connections.api_key(name):
+                    for endpoint in (connection.base_url, connection.proxy_url):
+                        if endpoint:
+                            reachable = urlsplit(endpoint).hostname not in ('localhost','127.0.0.1','::1')
+                            add('容器连接 '+name, reachable,
+                                '' if reachable else '容器内 loopback 地址不能访问宿主机。')
+        except (OSError, ValueError):
+            add('Provider 配置',False)
     return result
 
 

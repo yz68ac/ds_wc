@@ -5,8 +5,9 @@ import socket
 BOT, SESSION, HELPER, RECOVERY, WEB = 'bot', 'wechat', 'sender', 'recovery', 'web'
 COMPONENTS = (SESSION, HELPER, BOT, WEB, RECOVERY)
 WEB_ACTIONS = frozenset(('web_start', 'web_stop', 'web_restart', 'web_reload'))
-ACTIONS = frozenset(('status', 'start', 'stop', 'apply')) | WEB_ACTIONS
-MAX_FRAME = 8192
+ONBOARDING_ACTIONS = frozenset(('account_login','account_bind'))
+ACTIONS = frozenset(('status', 'start', 'stop', 'apply')) | WEB_ACTIONS | ONBOARDING_ACTIONS
+MAX_FRAME = 65536
 DEFAULT_SOCKET = '/run/wxbridge-control/control.sock'
 
 
@@ -29,7 +30,7 @@ def request(action, path=DEFAULT_SOCKET):
     if action not in ACTIONS:
         raise ValueError('invalid_control_action')
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stream:
-        stream.settimeout(3)
+        stream.settimeout(20 if action in ONBOARDING_ACTIONS else 3)
         stream.connect(str(path))
         stream.sendall(json.dumps({'action': action}).encode() + b'\n')
         result = receive(stream)

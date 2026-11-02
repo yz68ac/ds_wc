@@ -67,6 +67,17 @@ const providerConnections = computed(() =>
   catalog.value.providers.map((provider: any) => provider.id),
 );
 const catalogError = ref("");
+const accountLogin = ref<any>(null), accountBusy = ref(false);
+async function accountAction(action: 'login' | 'bind') {
+  accountBusy.value = true;
+  try {
+    const result = await api(`/account/${action}`, {method: 'POST', body: '{}'});
+    if (action === 'login') accountLogin.value = result;
+    else ElMessage.success(result.message);
+    await refresh();
+  } catch (e) { fail(e); }
+  finally { accountBusy.value = false; }
+}
 const selectedProvider = computed(() =>
   catalog.value.providers?.find(
     (provider: any) => provider.id === editor.value.model_clients?.reply,
@@ -772,6 +783,14 @@ onBeforeUnmount(() => {
         </div>
 
         <template v-if="page === 'overview'">
+          <el-card v-if="snapshot?.capabilities?.login_actions" style="margin-bottom: 20px">
+            <h3>微信账号设置</h3>
+            <p>首次使用：扫码并完成手机确认 → 在“会话实例”中新建实例、填写会话 ID 并选择模型 → 回到这里绑定账号与会话 → 在“服务管理”启动机器人。</p>
+            <el-button :loading="accountBusy" @click="accountAction('login')">查看 / 刷新登录二维码</el-button>
+            <el-button :loading="accountBusy" :disabled="running" @click="accountAction('bind')">绑定账号与实例会话</el-button>
+            <p v-if="accountLogin">登录状态：{{ accountLogin.phase }}。扫码后请在手机确认；登录完成后可再次点击查看状态。</p>
+            <img v-if="accountLogin?.qr" :src="accountLogin.qr" alt="微信登录二维码" style="width: 240px; max-width: 100%" />
+          </el-card>
           <div class="metrics">
             <article class="metric-card">
               <div class="metric-top">

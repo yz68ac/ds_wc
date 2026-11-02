@@ -11,10 +11,14 @@ import sys
 import tempfile
 import time
 
-APP = Path('/opt/wxbridge')
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'src'))
+from wxbridge.host.layout import container, config_root, sensitive_root, environment
+APP = config_root()
+CODE = Path('/opt/wxbridge')
+SENSITIVE = sensitive_root()
 RUN = Path('/run/wxbridge-trial')
 PERSIST = Path('/var/lib/wxbridge/recovery')
-SETTINGS = Path('/etc/wxbridge-boot.json')
+SETTINGS = Path('/etc/wxbridge/boot.json') if container() else Path('/etc/wxbridge-boot.json')
 SCANNER = Path('/usr/local/lib/wxbridge-recovery')
 USER = 'wxbridge'
 
@@ -54,7 +58,7 @@ def validate_runtime():
         raise ValueError('runtime_missing_or_symlink')
     sys.path.insert(0, str(SCANNER))
     from wxbridge.storage.memoryfs import is_noswap_tmpfs
-    if not is_noswap_tmpfs(RUN.resolve(), Path('/proc/self/mountinfo').read_text()):
+    if not is_noswap_tmpfs(RUN.resolve(), Path('/proc/self/mountinfo').read_text(), require_noswap=not container()):
         raise ValueError('runtime_not_private_noswap_tmpfs')
     info = RUN.stat()
     if info.st_uid != account.pw_uid or info.st_mode & 0o077:
@@ -64,7 +68,7 @@ def validate_runtime():
 def runtime():
     validate_runtime()
     account = owner()
-    for path in (RUN/'decrypted', PERSIST):
+    for path in ((SENSITIVE/'decrypted',) if container() else (RUN/'decrypted', PERSIST)):
         if path.is_symlink():
             raise ValueError('recovery_directory_symlink')
         path.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -77,7 +81,7 @@ def runtime():
 
 
 def configured_groups(*, include_disabled=False):
-    sys.path.insert(0, str(APP/'src' if (APP/'src').is_dir() else APP))
+    sys.path.insert(0, str(CODE/'src' if (CODE/'src').is_dir() else CODE))
     from wxbridge.app.status.paths import configured_groups as groups
     return groups(APP, RUN, include_disabled=include_disabled)
 
@@ -85,7 +89,7 @@ def configured_groups(*, include_disabled=False):
 def checkpoint_one(path, output):
     if not path.exists():
         return dict(saved=False, reason='queue_not_created')
-    sys.path.insert(0, str(APP/'src' if (APP/'src').is_dir() else APP))
+    sys.path.insert(0, str(CODE/'src' if (CODE/'src').is_dir() else CODE))
     from wxbridge.storage.inspection import inspect_queue
     snapshot = inspect_queue(path)
     value = dict(schema=1, identity=snapshot.identity, cursor=snapshot.cursor, updated_at=int(time.time()),
@@ -104,6 +108,8 @@ def checkpoint_one(path, output):
 
 
 def checkpoint():
+    if container():
+        return dict(saved=False, reason='container_ephemeral_cursor')
     groups = configured_groups(include_disabled=True)
     results = {}
     for identifier, cfg, reuse in groups:
@@ -126,7 +132,7 @@ def restored_state(checkpoint_value, identity, maximum):
 
 def probe(keys=None, *, verify=False):
     # 只在主监听停止、协调器持有两把锁时运行；整个数据库访问留在此单进程。
-    sys.path.insert(0, str(APP/'src' if (APP/'src').is_dir() else APP))
+    sys.path.insert(0, str(CODE/'src' if (CODE/'src').is_dir() else CODE))
     from wxbridge.config import load_config
     from wxbridge.wechat.store import WeChatStore
     cfg = load_config(APP/'config.json')
@@ -162,7 +168,7 @@ def probe(keys=None, *, verify=False):
     for identifier, active_cfg, reuse, identity, maximum in states:
         cursor_file = PERSIST/'cursor.json' if reuse else PERSIST/'instances'/identifier/'cursor.json'
         queue_file = Path(active_cfg.paths.queue_file)
-        if cursor_file.exists():
+        if not container() and cursor_file.exists():
             state = restored_state(json.loads(cursor_file.read_text()), identity, maximum)
             if not verify and not queue_file.exists():
                 from wxbridge.storage.memoryfs import require_memory_directory
@@ -172,7 +178,7 @@ def probe(keys=None, *, verify=False):
             from wxbridge.storage.inspection import inspect_queue
             if inspect_queue(queue_file).identity != identity:
                 raise ValueError('existing_queue_identity_mismatch')
-        result = dict(ready=True, checkpoint_restored=cursor_file.exists(), latest_local_id=maximum)
+        result = dict(ready=True, checkpoint_restored=not container() and cursor_file.exists(), latest_local_id=maximum)
         if identifier is None:
             return result
         results[identifier] = result
@@ -185,7 +191,7 @@ def as_user(args):
         os.initgroups(account.pw_name, account.pw_gid)
         os.setgid(account.pw_gid)
         os.setuid(account.pw_uid)
-    env = dict(PATH='/usr/local/bin:/usr/bin:/bin', HOME=account.pw_dir, PYTHONPATH=str(APP/'src' if (APP/'src').is_dir() else APP))
+    env = dict(**environment(), PATH='/usr/local/bin:/usr/bin:/bin', HOME=account.pw_dir, PYTHONPATH=str(CODE/'src' if (CODE/'src').is_dir() else CODE))
     allowed = {'DISPLAY','XAUTHORITY','XDG_RUNTIME_DIR','DBUS_SESSION_BUS_ADDRESS','QT_ACCESSIBILITY',
                'QT_LINUX_ACCESSIBILITY_ALWAYS_ON','GTK_MODULES','NO_AT_BRIDGE'}
     for line in (RUN/'env').read_text().splitlines():
@@ -222,7 +228,7 @@ def database_locks():
     import fcntl
     account = owner()
     with contextlib.ExitStack() as stack:
-        for path in sorted({RUN/'queue.sqlite3.lock', RUN/'decrypted/.listener.lock'}):
+        for path in sorted({RUN/'queue.sqlite3.lock', SENSITIVE/'decrypted/.listener.lock'}):
             fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
             stack.callback(os.close,fd)
             os.fchown(fd, account.pw_uid, account.pw_gid)
@@ -238,8 +244,8 @@ def prepare(*, verify=False):
     cached = json.loads(marker.read_text()) if marker.exists() else None
     # The supervisor waits for listener exit before entering preparation.
     with database_locks():
-        if verify or cached != token or not (RUN/'keys.json').exists():
-            scratch = RUN/'root-keyscan'
+        if verify or cached != token or not (SENSITIVE/'keys.json').exists():
+            scratch = SENSITIVE/'root-keyscan'
             if scratch.is_symlink():
                 raise ValueError('keyscan_directory_symlink')
             scratch.mkdir(mode=0o700, exist_ok=True)
@@ -259,13 +265,13 @@ def prepare(*, verify=False):
             account = owner()
             os.chown(output,account.pw_uid,account.pw_gid)
             os.chmod(output,0o600)
-            destination = RUN/('verification-keys.json' if verify else 'keys.json')
+            destination = SENSITIVE/('verification-keys.json' if verify else 'keys.json')
             os.replace(output,destination)
             if not verify:
                 atomic_json(marker,token,owner=owner())
         else:
-            destination = RUN/'keys.json'
-        args = ['/usr/bin/python3',str(APP/'scripts/boot-recovery.py'),'probe','--keys',str(destination)]
+            destination = SENSITIVE/'keys.json'
+        args = ['/usr/bin/python3',str(CODE/'scripts/boot-recovery.py'),'probe','--keys',str(destination)]
         if verify:
             args += ['--verify']
         result = as_user(args)

@@ -40,7 +40,8 @@ class LoginRuntime:
             if separator and key in GUI_ENVIRONMENT:
                 os.environ[key] = value.strip().strip('\'"')
         pid = int(private_file(self.directory / 'wechat.pid', maximum=32).strip())
-        config = json.loads((ROOT / 'config.json').read_text(encoding='utf-8-sig'))
+        from wxbridge.host.layout import container, config_root
+        config = json.loads(((config_root() if container() else ROOT) / 'config.json').read_text(encoding='utf-8-sig'))
         database = config.get('db_dir')
         self.unbound = not bool(database)
         if not database:

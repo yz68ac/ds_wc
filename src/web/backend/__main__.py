@@ -59,6 +59,9 @@ def main(argv=None):
                 password=os.environ.get('WXBRIDGE_WEB_PASSWORD') or getpass.getpass('管理口令（至少12个字符）：')
             services=ServiceManager(allow_control=args.allow_service_control,control_socket=args.control_socket)
         allowed_hosts=['localhost','127.0.0.1','[::1]',args.host]
+        from wxbridge.host.layout import container
+        if container():
+            allowed_hosts += [v for v in os.environ.get('WXBRIDGE_WEB_HOSTS', '').split(',') if v]
         app=create_app(root,password,services=services,demo=args.demo,catalog_file=args.catalog_file,
                        allowed_hosts=allowed_hosts,health_token=os.environ.get('WXBRIDGE_WEB_HEALTH_TOKEN'))
         address='['+args.host+']' if ':' in args.host else args.host

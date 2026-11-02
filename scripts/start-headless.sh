@@ -43,7 +43,12 @@ if [ -f "$RUNTIME/xvfb.pid" ] && kill -0 "$(cat "$RUNTIME/xvfb.pid")" 2>/dev/nul
   log "Xvfb 已在运行：$DISPLAY_NUM"
 else
   log "启动 Xvfb $DISPLAY_NUM ($SCREEN)"
-  Xvfb "$DISPLAY_NUM" -screen 0 "$SCREEN" -nolisten tcp -auth "$XAUTHORITY" >"$RUNTIME/xvfb.log" 2>&1 &
+  X_LISTEN=(-nolisten tcp)
+  if [ "${WXBRIDGE_RUNTIME:-}" = container ]; then
+    # Host networking shares Linux abstract sockets; keep X11 on private /tmp.
+    X_LISTEN+=(-nolisten local)
+  fi
+  Xvfb "$DISPLAY_NUM" -screen 0 "$SCREEN" "${X_LISTEN[@]}" -auth "$XAUTHORITY" >"$RUNTIME/xvfb.log" 2>&1 &
   echo $! > "$RUNTIME/xvfb.pid"
   sleep 1
 fi

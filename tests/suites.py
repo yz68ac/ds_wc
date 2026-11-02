@@ -78,6 +78,7 @@ SUITES = {
     ),
     'management': (
         'test_application_cli',
+        'test_container_runtime',
         'test_boot_recovery',
         'test_host_management',
         'test_instance_operations',

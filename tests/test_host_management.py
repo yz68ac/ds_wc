@@ -11,7 +11,8 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from wxbridge_cli import cli, install, setup
+from wxbridge_cli import cli, install
+from wxbridge.host import binding as setup
 from wxbridge.host.system import Paths, atomic_file, private_json
 
 ROOT = Path(__file__).resolve().parents[1]

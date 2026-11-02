@@ -182,6 +182,10 @@ def create_app(root, password, *, services=None, demo=False, static_dir=None, al
     def get_overview():
         return overview(repository,services,operations,demo=demo)
 
+    @app.post('/api/account/{action}')
+    def account_onboarding(action: str):
+        return services.onboarding(action)
+
     @app.get('/api/events')
     async def events(request: Request):
         async def updates():

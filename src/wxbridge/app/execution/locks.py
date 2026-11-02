@@ -3,7 +3,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from wechat_linux.runtime.locking import file_lock
-from wxbridge.storage.memoryfs import require_memory_directory
+from wxbridge.storage.memoryfs import require_runtime_directory as require_memory_directory
 
 
 @contextmanager

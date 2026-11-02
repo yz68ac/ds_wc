@@ -11,7 +11,7 @@ def _unescape(value: str) -> str:
     return re.sub(r"\\([0-7]{3})", lambda m: chr(int(m[1], 8)), value)
 
 
-def is_noswap_tmpfs(path: Path, mountinfo: str) -> bool:
+def is_noswap_tmpfs(path: Path, mountinfo: str, *, require_noswap=True) -> bool:
     best = None
     for line in mountinfo.splitlines():
         before, separator, after = line.partition(" - ")
@@ -21,7 +21,7 @@ def is_noswap_tmpfs(path: Path, mountinfo: str) -> bool:
         mount = Path(_unescape(fields[4]))
         if path.is_relative_to(mount) and (best is None or len(mount.parts) > best[0]):
             options = set((fields[5] + "," + fs[2]).split(","))
-            best = (len(mount.parts), fs[0] == "tmpfs" and "noswap" in options)
+            best = (len(mount.parts), fs[0] == "tmpfs" and (not require_noswap or "noswap" in options))
     return best is not None and best[1]
 
 
@@ -36,3 +36,17 @@ def require_memory_directory(value: str) -> None:
     info = path.stat()
     if info.st_uid != os.geteuid() or info.st_mode & 0o077:
         raise ValueError("decrypted_dir 必须归当前用户所有，权限为 0700")
+
+
+def require_runtime_directory(value: str) -> None:
+    """Queues stay in private tmpfs; native installs retain their noswap policy."""
+    from wxbridge.host.layout import container
+    if not container():
+        return require_memory_directory(value)
+    from wechat_linux.runtime.paths import require_private_directory
+    path = Path(value).resolve()
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    require_private_directory(path)
+    mounts = Path('/proc/self/mountinfo').read_text()
+    if not is_noswap_tmpfs(path, mounts, require_noswap=False):
+        raise ValueError('runtime_requires_tmpfs')

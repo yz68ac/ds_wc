@@ -1,7 +1,7 @@
 """Bot API facade over the application-owned native server."""
 from wxbridge.native.server import NativeServer
 from wxbridge.native.protocol import settings
-from wxbridge.storage.memoryfs import require_memory_directory
+from wxbridge.storage.memoryfs import require_runtime_directory as require_memory_directory
 from wxbridge.app.delivery.native_gateway import BotNativeService
 
 

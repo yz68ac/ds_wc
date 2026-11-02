@@ -189,7 +189,7 @@ class LoginController:
                         and any(word in name for word in ('qr code', 'qrcode', '二维码'))]
             expired = any(any(word in name for word in ('expired', '已失效', '已过期', '二维码失效'))
                           for name in names)
-            phone = any(any(word in name for word in ('confirm on your phone', 'confirm login on your phone',
+            phone = any(any(word in name for word in ('confirm on phone', 'confirm on your phone', 'confirm login on your phone',
                         'confirm the login on your phone', '请在手机上确认', '请在手机微信上确认')) for name in names)
             if 'open' in buttons:
                 phase, anchor = 'open_ready', buttons['open']

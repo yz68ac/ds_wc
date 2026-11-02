@@ -40,6 +40,15 @@ class ServiceManager:
         except (OSError, ValueError):
             raise ManagementError('supervisor_unavailable', '主控暂时不可用，请检查 wxbridge.service。', 503) from None
 
+    def onboarding(self, action):
+        from wxbridge.host.layout import container
+        if not container() or not self.allow_control or action not in ('login','bind'):
+            raise ManagementError('onboarding_disabled','当前环境未开放账号引导。',403)
+        try:
+            return request('account_'+action,self.control_socket)
+        except (OSError,ValueError):
+            raise ManagementError('onboarding_not_ready','微信尚未就绪，或账号服务仍在运行；请稍后重试，绑定前先停止机器人。',409) from None
+
 
 class Operations:
     def __init__(self, services, repository):

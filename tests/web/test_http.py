@@ -2,6 +2,7 @@
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 from web.backend.app import create_app
@@ -9,6 +10,19 @@ from web.backend.demo import DEMO_PASSWORD,DemoServices,seed
 
 
 class HTTPTests(unittest.TestCase):
+    def test_account_onboarding_requires_session_csrf_and_same_origin(self):
+        services=self.app.state.operations.services
+        with patch.object(services,'onboarding',create=True,return_value={'phase':'qr_required','qr':'synthetic'}) as action:
+            self.assertEqual(self.client.post('/api/account/login').status_code,401)
+            headers=self.login()
+            self.assertEqual(self.client.post('/api/account/login').status_code,403)
+            self.assertEqual(self.client.post('/api/account/login',headers=dict(headers,Origin='https://untrusted.invalid')).status_code,403)
+            action.assert_not_called()
+            response=self.client.post('/api/account/login',headers=headers)
+            self.assertEqual(response.status_code,200)
+            self.assertEqual(response.headers['cache-control'],'no-store')
+            action.assert_called_once_with('login')
+
     def setUp(self):
         parent=Path(__file__).resolve().parents[2]/'.test-tmp';parent.mkdir(exist_ok=True)
         temp=tempfile.TemporaryDirectory(dir=parent);self.addCleanup(temp.cleanup)

@@ -1,0 +1,67 @@
+# Run: docker compose up -d --build
+services:
+  init:
+    image: ${WXBRIDGE_IMAGE:-wxbridge:local}
+    build: .
+    entrypoint: [/opt/wxbridge/.venv/bin/python, -m, wxbridge.host.container, initialize, /project/data, /project]
+    volumes:
+      - ./:/project
+    network_mode: none
+    security_opt: [no-new-privileges:true]
+    restart: "no"
+
+  account:
+    image: ${WXBRIDGE_IMAGE:-wxbridge:local}
+    build: .
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 10m
+    cap_add: [SYS_PTRACE]
+    security_opt: [no-new-privileges:true]
+    environment:
+      WXBRIDGE_RUNTIME: container
+      WXBRIDGE_NETWORK: host
+      WXBRIDGE_WEB_PORT: ${WXBRIDGE_WEB_PORT:-8730}
+    network_mode: host
+    volumes:
+      - ./data/config:/var/lib/wxbridge-config
+      - ./data/home:/var/lib/wxbridge
+      - ./data/settings:/etc/wxbridge
+      - ./data/service:/var/lib/wxbridge-service
+      - ./data/catalog:/var/lib/wxbridge-web
+      - ./:/run/secrets/wxbridge:ro
+      - type: volume
+        source: sensitive
+        target: /run/wxbridge-sensitive
+        volume:
+          nocopy: true
+    tmpfs:
+      - /run/wxbridge-trial:size=512m,mode=0700,uid=10001,gid=10001
+      - /run/wxbridge-control:mode=0750
+      - /run/wechat-linux-images:size=16m,mode=0700
+      - /tmp:size=256m,mode=1777
+    shm_size: 256m
+    mem_limit: 4g
+    memswap_limit: 4g
+    pids_limit: 512
+    ulimits:
+      core: {soft: 0, hard: 0}
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "3"}
+    healthcheck:
+      test: [CMD, /opt/wxbridge/.venv/bin/python, -m, wxbridge.host.container, health]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  sensitive:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: size=1g,mode=0700,uid=10001,gid=10001,noswap

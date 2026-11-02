@@ -1,5 +1,6 @@
 """Bounded read-only projections of existing heartbeat and event files."""
 import time
+from wxbridge.host.layout import container
 from pathlib import Path
 
 from wxbridge.app.status.snapshot import read_json, safe_events
@@ -53,6 +54,7 @@ def overview(repository, services, operations, *, demo=False):
             send_blocked=bool(live.get('send_blocked')), login_phase=login.get('phase','unknown'),
             config_pending=bool(desired and desired!=applied), config_valid=desired is not None),
         instances=entries, events=events, event_error=event_error,
-        capabilities=dict(service_control=services.allow_control, login_actions=False, queue_actions=False,
+        capabilities=dict(service_control=services.allow_control,
+                          login_actions=bool(container() and services.allow_control), queue_actions=False,
                           instance_control=bool(bot['state']!='active' or fresh and live.get('features',{}).get('instance_control'))),
         operations=operations.snapshot())
