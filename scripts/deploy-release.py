@@ -18,6 +18,10 @@ import runpy
 import sys
 
 APP = Path('/opt/wxbridge')
+NATIVE_READINESS_CHECK = (
+    "from wxbridge.config import load_config; from wxbridge.native.sender import readiness; "
+    "c=load_config('config.json'); readiness(c) if c.account.ui.backend=='native_service' else None"
+)
 HELPER = Path('/opt/wxbridge-native-helper')
 RUN = Path('/run/wxbridge-trial')
 PRESERVE = {'prompts/system.md', 'prompts/memory.md', 'prompts/topic_aliases.json'}
@@ -124,7 +128,7 @@ def wait_native_ready():
     while True:
         try:
             return run('runuser', '-u', 'wxbridge', '--', '/usr/bin/env', 'PYTHONPATH='+str(APP/'src'), '/usr/bin/python3', '-c',
-                "from wxbridge.config import load_config; from wxbridge.native.sender import readiness; c=load_config('config.json'); readiness(c) if c['ui']['backend']=='native_service' else None", cwd=APP, env={**os.environ, 'PYTHONPATH': str(APP/'src')})
+                NATIVE_READINESS_CHECK, cwd=APP, env={**os.environ, 'PYTHONPATH': str(APP/'src')})
         except subprocess.CalledProcessError:
             if time.monotonic() >= deadline:
                 raise
@@ -133,13 +137,13 @@ def wait_native_ready():
 
 def configured_groups():
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
-    from wxbridge.app.operations import configured_groups as groups
+    from wxbridge.app.status.paths import configured_groups as groups
     return groups(APP, RUN)
 
 
 def live_status():
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
-    from wxbridge.app.operations import live_status_path
+    from wxbridge.app.status.paths import live_status_path
     return json.loads(live_status_path(APP, RUN).read_text())
 
 
@@ -151,7 +155,7 @@ def queue_one(path):
 
 def queue():
     groups = configured_groups()
-    from wxbridge.app.operations import queue_paths
+    from wxbridge.app.status.paths import queue_paths
     paths = queue_paths(APP, RUN)
     values = {identifier: queue_one(path) for path, identifier in paths.items()}
     if groups[0][0] is None and len(values) == 1:
@@ -282,7 +286,7 @@ def deploy(stage, backup, *, apply=False, update_helper=False, allow_pending_mem
         stop_helper(images_enabled=images_before)
         with ExitStack() as locks:
             lock_paths = {RUN/'queue.sqlite3.lock', RUN/'decrypted/.listener.lock'}
-            lock_paths.update(Path(cfg['queue']['file']+'.lock') for _, cfg, _ in configured_groups())
+            lock_paths.update(Path(cfg.paths.queue_file+'.lock') for _, cfg, _ in configured_groups())
             for path in sorted(lock_paths):
                 fd = os.open(path, os.O_RDWR | os.O_NOFOLLOW);locks.callback(os.close, fd)
                 if os.fstat(fd).st_uid != user.pw_uid:

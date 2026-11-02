@@ -1,10 +1,11 @@
 """Shared synthetic conversation fixtures; contains no executable tests."""
+from tests.support.configuration import replace_config, update_config, snapshot
 import tests.support.pipeline as pipeline
 
 
 class ConversationFixture(pipeline.PipelineFixture):
     def make_bot(self):
-        self.cfg['participation'].update(enabled=True, debounce_seconds=0)
+        self.cfg = update_config(self.cfg, 'participation', enabled=True, debounce_seconds=0, owner=self)
         pipeline.PipelineFixture.make_bot(self)
         def make(kind, payload, **kwargs):
             job = pipeline.FakeJob(kind, payload, **kwargs)

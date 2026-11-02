@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from tests.support.instances import InstanceFixture, CHATS
-from wxbridge.app.operations import configured_groups, live_status_path
+from wxbridge.app.status.paths import configured_groups, live_status_path
 from wxbridge.storage.journal import Journal
 import tests.support.boot as test_boot_recovery
 
@@ -18,6 +18,18 @@ boot = test_boot_recovery.boot
 
 
 class InstanceOperationsTests(InstanceFixture):
+    def test_embedded_release_readiness_uses_typed_account_configuration(self):
+        from dataclasses import replace
+        from wxbridge.config import AppConfig, AccountConfig, UIConfig
+        native=AppConfig(account=AccountConfig(ui=UIConfig(backend='native_service')))
+        with patch('wxbridge.config.load_config',return_value=native),patch('wxbridge.native.sender.readiness') as ready:
+            exec(deploy.NATIVE_READINESS_CHECK,{})
+        ready.assert_called_once_with(native)
+        desktop=replace(native,account=replace(native.account,ui=UIConfig(backend='atspi')))
+        with patch('wxbridge.config.load_config',return_value=desktop),patch('wxbridge.native.sender.readiness') as ready:
+            exec(deploy.NATIVE_READINESS_CHECK,{})
+        ready.assert_not_called()
+
     def setUp(self):
         super().setUp()
         self.runtime = self.root/'runtime'; self.runtime.mkdir(mode=0o700)
@@ -36,9 +48,9 @@ class InstanceOperationsTests(InstanceFixture):
         p.start(); self.addCleanup(p.stop)
 
     def create_queues(self):
-        for i, entry in enumerate(self.cfg['instances']):
-            path = Path(entry['config']['queue']['file']); path.parent.mkdir(parents=True, mode=0o700)
-            journal = Journal(str(path), dict(account='wxid_bot', chat=entry['chat']), i+5)
+        for i, entry in enumerate(self.cfg.instances.values()):
+            path = Path(entry.paths.queue_file); path.parent.mkdir(parents=True, mode=0o700)
+            journal = Journal(str(path), dict(account='wxid_bot', chat=entry.chat), i+5)
             with journal.db:
                 journal.enqueue_memory('activity', f'synthetic:{i}', [dict(local_id=1, time=123)], [0, 123])
             journal.close()
@@ -58,19 +70,19 @@ class InstanceOperationsTests(InstanceFixture):
         with patch.object(boot.os, 'geteuid', return_value=1000, create=True):
             value = boot.checkpoint()
         self.assertTrue(value['saved'])
-        for i, entry in enumerate(self.cfg['instances']):
-            path = self.persist/'instances'/entry['id']/'cursor.json'
+        for i, entry in enumerate(self.cfg.instances.values()):
+            path = self.persist/'instances'/entry.id/'cursor.json'
             result = json.loads(path.read_text())
             self.assertEqual(result['cursor'], i+5)
-            self.assertEqual(result['identity']['chat'], entry['chat'])
+            self.assertEqual(result['identity']['chat'], entry.chat)
             for secret in ('ALPHA_PERSONA', 'api_key', 'triggers', 'PRIVATE_CHAT'):
                 self.assertNotIn(secret, path.read_text())
 
     def test_probe_uses_one_store_and_restores_each_group_cursor(self):
-        for i, entry in enumerate(self.cfg['instances']):
-            path = self.persist/'instances'/entry['id']/'cursor.json'
+        for i, entry in enumerate(self.cfg.instances.values()):
+            path = self.persist/'instances'/entry.id/'cursor.json'
             path.parent.mkdir(parents=True, mode=0o700)
-            path.write_text(json.dumps(dict(schema=1, identity=dict(account='wxid_bot', chat=entry['chat']), cursor=i+5)))
+            path.write_text(json.dumps(dict(schema=1, identity=dict(account='wxid_bot', chat=entry.chat), cursor=i+5)))
         store = Mock()
         store.self_wxid = 'wxid_bot'
         store.resolve_chat.side_effect = lambda chat:(chat, '合成群')
@@ -81,14 +93,14 @@ class InstanceOperationsTests(InstanceFixture):
             result = boot.probe()
         factory.assert_called_once()
         self.assertTrue(result['ready'])
-        for i, entry in enumerate(self.cfg['instances']):
-            state = json.loads(Path(entry['config']['state_file']).read_text())
-            self.assertEqual(state['chats'][entry['chat']]['last_local_id'], i+5)
+        for i, entry in enumerate(self.cfg.instances.values()):
+            state = json.loads(Path(entry.paths.state_file).read_text())
+            self.assertEqual(state['chats'][entry.chat]['last_local_id'], i+5)
 
     def test_instance_events_remain_parseable_and_filter_out_other_groups(self):
         import logging
-        from wxbridge.app.logging_context import InstanceLog
-        from wxbridge.app.monitor import safe_events
+        from wxbridge.app.status.logging_context import InstanceLog
+        from wxbridge.app.status.snapshot import safe_events
         path = self.root/'events.log'
         logger = logging.getLogger('synthetic-instance-events')
         logger.setLevel(logging.INFO)
@@ -119,11 +131,11 @@ class InstanceOperationsTests(InstanceFixture):
         self.assertFalse(deploy.listener_idle(idle, dict(instances={'alpha':dict(participation=dict(running=1))})))
 
     def test_database_check_gets_exclusive_owner_before_creating_reader(self):
-        from wxbridge.app.diagnostics import check
+        from wxbridge_cli.diagnostics import check
         from wechat_linux.errors import OwnerBusyError
-        with patch('wxbridge.app.locks.instance_lock', side_effect=OwnerBusyError('resource_busy')), \
-             patch('wxbridge.app.diagnostics.WeChatStore') as store:
-            with self.assertRaises(OwnerBusyError): check(self.cfg['instances'][0]['config'])
+        with patch('wxbridge.app.execution.locks.instance_lock', side_effect=OwnerBusyError('resource_busy')), \
+             patch('wxbridge_cli.diagnostics.WeChatStore') as store:
+            with self.assertRaises(OwnerBusyError): check(list(self.cfg.instances.values())[0])
             store.assert_not_called()
 
 

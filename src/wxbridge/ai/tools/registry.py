@@ -17,16 +17,16 @@ TOOLS = {
 
 def get_enabled_tools(settings, *, search_backend):
     names = []
-    if settings.get('search', {}).get('enabled', True) and search_backend == 'external':
+    if settings.search.enabled and search_backend == 'external':
         names.extend(('web_search', 'web_fetch'))
-    if settings.get('image_generation', {}).get('enabled', False):
+    if settings.image_generation.enabled:
         names.append('generate_image')
     return [deepcopy(TOOLS[name][0]) for name in names]
 
 
 def apply_tool_instructions(settings, messages, *, tools):
     """Compose enabled tool policies once, including hosted search without a client tool."""
-    if settings.get('search', {}).get('enabled', True):
+    if settings.search.enabled:
         messages = apply_search_instructions(messages)
     if any(tool['function']['name'] == 'generate_image' for tool in tools):
         messages = apply_image_instructions(messages)

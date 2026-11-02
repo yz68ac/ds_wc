@@ -31,13 +31,13 @@ def participant_ids(rows, account):
 
 class ProfileController:
     def __init__(self, session):
-        self.session, self.settings = session, session.cfg['profile']
-        filename = session.cfg.get('_instance_config_file')
+        self.session, self.settings = session, session.cfg.profile
+        filename = session.cfg.metadata.path
         if not filename:
             raise ValueError('profile_requires_instance_config')
         self.document = GroupProfile(Path(filename).parent/'profile.json',
                                      session.journal.get('identity'),
-                                     summary_max_chars=self.settings['summary_max_chars'])
+                                     summary_max_chars=self.settings.summary_max_chars)
         self.job, self.pending = None, None
         self.error, self.next_at, self.aliases_at, self.bootstrap_end = '', 0, 0, 0
         self.observe([])
@@ -96,21 +96,21 @@ class ProfileController:
             return
         self.error = ''
         self.next_at = (0 if self.document.analyzed_through < self.bootstrap_end
-                        else time.time() + self.settings['min_interval_seconds'])
+                        else time.time() + self.settings.min_interval_seconds)
 
     def _rows(self):
         bot = self.session
         if self.document.analyzed_through == 0:
-            cutoff = time.time() - self.settings['initial_history_days'] * 86400
-            rows = [m for m in bot.store.recent_messages(bot.chat_id, self.settings['initial_max_messages'])
+            cutoff = time.time() - self.settings.initial_history_days * 86400
+            rows = [m for m in bot.store.recent_messages(bot.chat_id, self.settings.initial_max_messages)
                     if m.get('time', 0) >= cutoff and m['local_id'] <= bot.last_local_id]
             self.bootstrap_end = max((m['local_id'] for m in rows), default=bot.last_local_id)
         else:
             rows = bot.store.messages_after(bot.chat_id, self.document.analyzed_through,
-                                            limit=self.settings['batch_size'])
+                                            limit=self.settings.batch_size)
             rows = [m for m in rows if m['local_id'] <= bot.last_local_id]
         rows.sort(key=lambda m: m['local_id'])
-        return rows[:self.settings['batch_size']]
+        return rows[:self.settings.batch_size]
 
     def step(self, *, collect_only=False):
         try:
@@ -125,7 +125,7 @@ class ProfileController:
             if not rows:
                 self.next_at = time.time() + 60
                 return
-            if not initial and len(rows) < self.settings['min_new_messages']:
+            if not initial and len(rows) < self.settings.min_new_messages:
                 self.next_at = time.time() + 60
                 return
             self.observe(rows)
@@ -141,7 +141,7 @@ class ProfileController:
                     profile = self.document.snapshot(members=participant_ids(rows, self.session.store.self_wxid))
                     size = len(json.dumps(dict(chat=self.session.chat_title, bot=self.session.store.self_wxid,
                                                **profile, messages=candidate), ensure_ascii=False))
-                    if size > self.settings['analysis_max_chars']:
+                    if size > self.settings.analysis_max_chars:
                         if messages:
                             break  # Keep this whole message for the next batch.
                         # An oversized individual message is not truncated into false evidence.
@@ -158,7 +158,7 @@ class ProfileController:
             payload = dict(chat=self.session.chat_title, bot=self.session.store.self_wxid,
                            **pending['profile'], messages=messages)
             self.job = self.session.job_factory('group_profile', (self.session.cfg, payload),
-                timeout=model_settings(self.session.cfg, 'group_profile')['timeout_seconds'] + 2)
+                timeout=model_settings(self.session.cfg, 'group_profile').options.timeout_seconds + 2)
             self.pending = pending
             self.error = ''
         except Exception as error:

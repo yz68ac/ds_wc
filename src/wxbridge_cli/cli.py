@@ -1,4 +1,5 @@
 """Unified host CLI; component commands never depend on the Web server."""
+from dataclasses import replace
 import argparse
 import json
 import os
@@ -9,7 +10,7 @@ import time
 
 from wxbridge.host.system import Paths, UNIT, as_user, need_root, private_json
 from wxbridge.control import request as control_request
-from wxbridge.host.settings import WEB_CONFIG, WEB_PASSWORD, read_web, write_web
+from wxbridge.host.settings import WEB_CONFIG, WEB_PASSWORD, read_web, write_web, web_document
 from wxbridge.management.locking import FileLock
 
 
@@ -67,7 +68,7 @@ def parser():
     setup.add_argument('--instance', default='default')
     commands.add_parser('doctor', help='只读检查安装、依赖、微信版本与运行环境')
     commands.add_parser('config', help='显示需要填写的配置文件位置')
-    from wxbridge.debug_cli import build_parser
+    from wxbridge_cli.debug import build_parser
     build_parser(commands.add_parser('debug', help='配置诊断、队列检查和显式前台调试'), command_dest='debug_command')
     return p
 
@@ -242,15 +243,21 @@ def instance_action(args, paths):
 
 
 def web_status():
-    saved = read_web(WEB_CONFIG)
+    settings_error = ''
+    try:
+        saved = read_web(WEB_CONFIG)
+    except (OSError, ValueError):
+        saved, settings_error = None, 'web_settings_invalid'
     try:
         value = control_request('status')
-        return dict(value['web'], saved=saved)
+        web = value['web']
+        return dict(web, saved=web_document(saved), error=settings_error or web.get('error',''),
+                    pending=bool(settings_error) or web.get('pending',False))
     except PermissionError:
         raise ValueError('没有主控权限，请使用 sudo wxbridge web status。') from None
     except (OSError, ValueError):
-        return dict(enabled=None, state='unavailable', pid=0, saved=saved, effective=None,
-                    pending=True, error='supervisor_unavailable')
+        return dict(enabled=None, state='unavailable', pid=0, saved=web_document(saved), effective=None,
+                    pending=True, error=settings_error or 'supervisor_unavailable')
 
 
 def wait_web(action, timeout, previous_pid=0, generation=None):
@@ -305,8 +312,8 @@ def web_action(args, paths):
                 if args.host is None and args.port is None:
                     raise ValueError('请至少指定 --host 或 --port。')
                 value = read_web(WEB_CONFIG)
-                if args.host is not None:value['host'] = args.host
-                if args.port is not None:value['port'] = args.port
+                if args.host is not None:value = replace(value, host=args.host)
+                if args.port is not None:value = replace(value, port=args.port)
                 write_web(value, WEB_CONFIG)
             else:
                 from .install import password_input
@@ -339,7 +346,7 @@ def main(argv=None, *, root=None):
     paths = Paths(app=(args.root or Path(root or '/opt/wxbridge')).resolve())
     try:
         if args.command == 'debug':
-            from wxbridge.debug_cli import execute
+            from wxbridge_cli.debug import execute
             args.command = args.debug_command
             args.config = args.config or str(paths.app/'config.json')
             return execute(args)

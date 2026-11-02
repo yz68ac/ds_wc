@@ -1,4 +1,5 @@
 """One chat schema for both stages, with immutable sources and whole-message budgets."""
+from tests.support.configuration import replace_config, update_config, snapshot
 from copy import deepcopy
 import json
 import unittest
@@ -62,7 +63,7 @@ class ChatPayloadTests(unittest.TestCase):
         payload=chat_payload([older,self.new,second],'合成群',[3,4],account=self.account)
         self.assertEqual(fit_payload(payload,len(encode_payload(expected))),expected)
         for change in (dict(context_max_chars=100),dict(context_max_chars=len(encode_payload(base))-1)):
-            self.cfg['target'].update(change)
+            self.cfg = update_config(self.cfg, 'target', values=change, owner=self)
             with self.assertRaises(ContextError):
                 build_prompt(self.cfg,[],second,'合成群',triggers=[self.new,second],account=self.account)
 
@@ -77,7 +78,7 @@ class ChatPayloadTests(unittest.TestCase):
     def test_disabled_memory_is_absent_and_profile_empty_alias_is_authoritative(self):
         profile=dict(summary='背景提到wxid_b',members={'wxid_a':dict(alias='',memory=[dict(summary='PRIVATE')]),
                                                     'wxid_b':dict(alias='乙')})
-        self.cfg['memory']['enabled']=False
+        self.cfg = replace_config(self.cfg, 'memory.enabled', False, owner=self)
         prompt=build_prompt(self.cfg,[],self.new,'合成群',account=self.account,profile=profile,memory=dict(text='PRIVATE'))
         data=json.loads(prompt[1]['content'])
         self.assertEqual(data['members']['wxid_a'],dict(alias=''));self.assertNotIn('memory',data)

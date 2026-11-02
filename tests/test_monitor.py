@@ -1,4 +1,5 @@
 """合成状态与终端：只读、过期提示、脱敏、导航和Linux真实PTY退出恢复。"""
+from tests.support.configuration import replace_config, update_config, snapshot
 from tests.support.model_support import default_config
 from contextlib import nullcontext
 import copy
@@ -14,9 +15,10 @@ import types
 import unittest
 from unittest.mock import Mock, patch
 
-from wxbridge.app import monitor, terminal
-from wxbridge.debug_cli import main
-from wxbridge.config import DEFAULTS
+from wxbridge.app.status import snapshot as monitor
+from wxbridge_cli import terminal, presentation
+from wxbridge_cli.debug import main
+from wxbridge.config import default_document
 
 NOW = 1700000600
 
@@ -52,7 +54,7 @@ class MonitorTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.cfg = default_config()
-        self.cfg.update(state_file=str(self.root/'state.json'), log_file=str(self.root/'bot.log'))
+        self.cfg = update_config(self.cfg, '', state_file=str(self.root/'state.json'), log_file=str(self.root/'bot.log'), owner=self)
         self.path = self.root/'live-status.json'
         self.path.write_text(json.dumps(live()), encoding='utf-8')
         (self.root/'bot.log').write_text('10-22 01:02:03 INFO 开始生成 task=1 version=1\n', encoding='utf-8')
@@ -60,7 +62,7 @@ class MonitorTests(unittest.TestCase):
     def test_cli_once_reads_only_snapshots_and_never_starts_model_store_or_queue(self):
         before = {p.name:(p.read_bytes(),p.stat().st_mtime_ns) for p in self.root.iterdir()}
         with patch('wxbridge.config.load_config', return_value=self.cfg), patch.object(monitor,'read_services',return_value=({},'')), \
-                patch('wxbridge.app.bot.WeChatStore') as store, patch('wxbridge.ai.client.client_for') as client, \
+                patch('wxbridge.app.sessions.group.WeChatStore') as store, patch('wxbridge.ai.client.client_for') as client, \
                 patch('sqlite3.connect',side_effect=AssertionError('must not query databases')), \
                 patch('sys.stdout',new_callable=io.StringIO) as output:
             self.assertEqual(main(['status','--once']),0)
@@ -72,9 +74,9 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(before,{p.name:(p.read_bytes(),p.stat().st_mtime_ns) for p in self.root.iterdir()})
 
     def test_pages_show_generation_usage_memory_and_decisions_without_unselected_data(self):
-        view = monitor.pages(snapshot(),self.cfg)
+        view = presentation.pages(snapshot(),self.cfg)
         text='\n'.join(line for page in view for line in page)
-        configured = monitor.number(monitor.model_settings(self.cfg,'memory')['max_tokens'])
+        configured = monitor.number(presentation.model_settings(self.cfg,'memory').options.max_tokens)
         for expected in ('心跳正常','生成回复','123','待判断：3','判断中：1','获准：4','沉默：2',
                          '过期：1','失败：1','取消：1','记忆待整理：2','100','关闭思考',configured):
             self.assertIn(expected,text)
@@ -84,15 +86,15 @@ class MonitorTests(unittest.TestCase):
 
     def test_health_distinguishes_stale_stopped_future_and_replaced_process(self):
         view=snapshot()
-        self.assertIn('过期',monitor.health(view,NOW+11))
-        self.assertIn('时钟',monitor.health(view,NOW-6))
+        self.assertIn('过期',presentation.health(view,NOW+11))
+        self.assertIn('时钟',presentation.health(view,NOW-6))
         view['live']['phase']='stopped'
-        self.assertIn('已停止',monitor.health(view,NOW))
+        self.assertIn('已停止',presentation.health(view,NOW))
         view['live']['phase']='listening'
         view['services'][monitor.UNITS[0]]['MainPID']='456'
-        self.assertIn('进程已变化',monitor.health(view,NOW))
+        self.assertIn('进程已变化',presentation.health(view,NOW))
         view['services'][monitor.UNITS[0]]['ActiveState']='inactive'
-        self.assertIn('服务未运行',monitor.health(view,NOW))
+        self.assertIn('服务未运行',presentation.health(view,NOW))
 
     def test_missing_invalid_large_or_non_object_status_remains_readable(self):
         self.path.unlink()
@@ -105,7 +107,7 @@ class MonitorTests(unittest.TestCase):
         self.path.write_bytes(b' '* (2*1024*1024+1))
         self.assertEqual(monitor.read_json(self.path)[1],'large')
         view=snapshot();view.update(live={},file_error='denied',services={})
-        self.assertIn('权限不足','\n'.join(monitor.pages(view,self.cfg)[0]))
+        self.assertIn('权限不足','\n'.join(presentation.pages(view,self.cfg)[0]))
 
     @unittest.skipIf(os.name=='nt','Linux FIFO和符号链接读取保护')
     def test_non_regular_or_symlink_snapshot_cannot_block_or_follow_target(self):
@@ -144,7 +146,7 @@ class MonitorTests(unittest.TestCase):
               'Traceback PRIVATE_CHAT\n'
               '10-22 01:02:05 WARNING 记忆延后 category='+secret+'\n'
               '10-22 01:02:06 INFO 发送操作 task=1 part=0 metadata={"error":"no_outbound_record","body":"PRIVATE_CHAT"}\n')
-        path=Path(self.cfg['log_file']);path.write_text(body,encoding='utf-8')
+        path=Path(self.cfg.account.log_file);path.write_text(body,encoding='utf-8')
         events,failure=monitor.safe_events(path)
         text='\n'.join(events)
         self.assertFalse(failure)
@@ -158,7 +160,7 @@ class MonitorTests(unittest.TestCase):
         view=snapshot()
         view['live'].update(queue_length={'secret':'PRIVATE_CHAT'},blocked_reason='私人聊天正文',pid=True)
         view['live']['memory']['members']=float('nan')
-        text='\n'.join(monitor.pages(view,self.cfg)[0])
+        text='\n'.join(presentation.pages(view,self.cfg)[0])
         self.assertNotIn('PRIVATE_CHAT',text)
         self.assertNotIn('私人聊天正文',text)
         self.assertNotIn('nan',text)
@@ -209,12 +211,12 @@ class MonitorTests(unittest.TestCase):
         import struct
         import termios
         config=self.root/'config.json'
-        config.write_text(json.dumps(dict(state_file=self.cfg['state_file'],log_file=self.cfg['log_file'])),encoding='utf-8')
+        config.write_text(json.dumps(dict(state_file=self.cfg.paths.state_file,log_file=self.cfg.account.log_file)),encoding='utf-8')
         master,slave=pty.openpty()
         saved=termios.tcgetattr(slave)
         fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,100,0,0))
-        bootstrap=("import sys; from wxbridge.app import monitor; monitor.read_services=lambda: ({},'unavailable'); "
-                   "from wxbridge.debug_cli import main; raise SystemExit(main(['--config',sys.argv[1],'status']))")
+        bootstrap=("import sys; from wxbridge.app.status import snapshot as monitor; monitor.read_services=lambda: ({},'unavailable'); "
+                   "from wxbridge_cli.debug import main; raise SystemExit(main(['--config',sys.argv[1],'status']))")
         env=dict(os.environ,TERM='xterm-256color',LANG='C.UTF-8')
         child=subprocess.Popen([sys.executable,'-c',bootstrap,str(config)],cwd=Path(__file__).resolve().parents[1],
                                stdin=slave,stdout=slave,stderr=slave,env=env)

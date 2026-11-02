@@ -1,4 +1,5 @@
 """Stopped-listener metadata probe: image XML schema, cache match and resource columns."""
+import argparse
 from contextlib import ExitStack
 import hashlib
 import json
@@ -8,17 +9,24 @@ import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'src'))
-from wxbridge.app.bot import GroupSession
+from wxbridge.app.sessions.group import GroupSession
 from wxbridge.config import load_config
-from wxbridge.app.runtime import instance_lock
+from wxbridge.instances import select_instance
+from wxbridge.app.execution.locks import instance_lock
 
 
-def main():
-    cfg = load_config(ROOT/"config.json")
+def main(argv=None):
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--instance')
+    args=parser.parse_args(argv)
+    app=load_config(ROOT/'config.json')
+    identifier=args.instance or (next(iter(app.instances)) if len(app.instances)==1 else None)
+    if identifier is None:parser.error('--instance is required when there is not exactly one configured instance')
+    cfg=select_instance(app,identifier)
     with ExitStack() as stack:
-        for name in sorted({cfg["queue"]["file"]+".lock", str(Path(cfg["decrypted_dir"])/".listener.lock")}):
+        for name in sorted({cfg.paths.queue_file+".lock", str(Path(cfg.account.decrypted_dir)/".listener.lock")}):
             stack.enter_context(instance_lock(name))
-        bot = GroupSession(cfg)
+        bot = GroupSession(cfg, instance_id=cfg.id or None)
         try:
             rel, table = bot.store.message_table(bot.chat_id)
             conn = bot.store._connect(rel)

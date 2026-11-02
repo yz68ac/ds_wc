@@ -1,4 +1,5 @@
 """Named policy composition and media quote slots use detached synthetic input."""
+from tests.support.configuration import replace_config, update_config, snapshot
 from copy import deepcopy
 import json
 import pickle
@@ -89,12 +90,12 @@ class PromptContractTests(unittest.TestCase):
         generation = self.generation()
         base_length = len(self.base(generation)[1]['content'])
         generation['memory'] = dict(text='第一条弱背景'+('甲'*120)+'\n第二条弱背景'+('乙'*120))
-        self.cfg['target']['context_max_chars'] = base_length+390
+        self.cfg = replace_config(self.cfg, 'target.context_max_chars', base_length+390, owner=self)
         base = self.base(generation)
         self.assertIn('第二条弱背景', base[1]['content'])
         prompt, _ = prepare_multimodal(self.cfg, base, generation)
         text = prompt[1]['content'][0]['text']
-        self.assertLessEqual(len(text), self.cfg['target']['context_max_chars'])
+        self.assertLessEqual(len(text), self.cfg.target.context_max_chars)
         self.assertIn('普通历史', text)
         self.assertEqual(json.loads(text)['source_ids'], [generation['triggers'][0]['local_id']])
         self.assertNotIn('第二条弱背景', text)
@@ -106,11 +107,11 @@ class PromptContractTests(unittest.TestCase):
         generation['context'] = [msg(7, NOW-3, '很早的历史'+('甲'*220)),
                                  msg(8, NOW-2, '较近的历史'+('乙'*220))]
         length = len(self.base(generation)[1]['content'])
-        self.cfg['target'].update(context_budget_strategy='recent', context_max_chars=length+1)
+        self.cfg = update_config(self.cfg, 'target', context_budget_strategy='recent', context_max_chars=length+1, owner=self)
         base = self.base(generation)
         prompt, _ = prepare_multimodal(self.cfg, base, generation)
         text = prompt[1]['content'][0]['text']
-        self.assertLessEqual(len(text), self.cfg['target']['context_max_chars'])
+        self.assertLessEqual(len(text), self.cfg.target.context_max_chars)
         self.assertNotIn('很早的历史', text)
         self.assertIn('较近的历史', text)
         self.assertEqual(json.loads(text)['history_omitted'], 1)

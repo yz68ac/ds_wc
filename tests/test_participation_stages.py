@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from tests.support.model_support import default_config
 from wxbridge.ai.background.participation import ParticipationError, parse_decision
-from wxbridge.app.model_runtime import GroupModels
+from wxbridge.app.execution.model_runtime import GroupModels
 import tests.support.conversation as conversation
 
 
@@ -82,7 +82,7 @@ class StagePipelineTests(unittest.TestCase):
     def test_expired_judgment_cannot_start_generation_or_send(self):
         row = self.ordinary('想听听你的看法')
         job = self.bot.participation.job
-        self.now += self.cfg['target']['max_message_age_seconds']+1
+        self.now += self.cfg.target.max_message_age_seconds+1
         job.result = dict(ok=True, decision=dict(reply_to=[row['local_id']]))
         self.bot.tick()
         self.assertFalse(self.sends())

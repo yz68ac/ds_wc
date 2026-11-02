@@ -1,11 +1,11 @@
 """群实例拥有模型线程通道；主循环独占数据库，UI 作业使用隔离进程。"""
 from __future__ import annotations
+from wxbridge.config import InstanceConfig
 
 import json
 import logging
 import os
 from contextlib import ExitStack
-from logging.handlers import RotatingFileHandler
 from pathlib import Path
 import time
 
@@ -13,40 +13,21 @@ from wxbridge.ai.context.selection import message_time
 from wxbridge.storage.journal import Journal
 from wxbridge.wechat.store import StoreError, WeChatStore
 from wechat_linux.messages.pats import is_pat
-from wxbridge.app.workers import ProcessJob
-from wxbridge.app.session_phases import SessionPhases
-from wxbridge.app.participation_controller import ParticipationController
-from wxbridge.app.delivery import DeliveryController
-from wxbridge.app.reply import ReplyController
-from wxbridge.app.memory_controller import MemoryController
+from wxbridge.app.execution.workers import ProcessJob
+from wxbridge.app.sessions.phases import SessionPhases
+from wxbridge.app.tasks.participation import ParticipationController
+from wxbridge.app.delivery.controller import DeliveryController
+from wxbridge.app.tasks.reply import ReplyController
+from wxbridge.app.tasks.memory import MemoryController
 from wxbridge.wechat.messages import chunk_text
-from wxbridge.app.metrics import Metrics
-from wxbridge.app.build_info import runtime_identity
+from wxbridge.app.status.metrics import Metrics
+from wxbridge.app.status.build_info import runtime_identity
 
 log = logging.getLogger("wxbridge")
 
 
-def setup_logging(cfg, verbose=True):
-    log.setLevel(logging.DEBUG if verbose else logging.INFO)
-    for handler in log.handlers[:]:
-        handler.close()
-        log.removeHandler(handler)
-    fmt = logging.Formatter("%(asctime)s %(levelname)s %(message)s", "%m-%d %H:%M:%S")
-    stream = logging.StreamHandler()
-    stream.setFormatter(fmt)
-    log.addHandler(stream)
-    try:
-        Path(cfg["log_file"]).parent.mkdir(parents=True, exist_ok=True)
-        fh = RotatingFileHandler(cfg["log_file"], maxBytes=2 * 1024 * 1024,
-                                 backupCount=3, encoding="utf-8")
-        fh.setFormatter(fmt)
-        log.addHandler(fh)
-    except OSError:
-        pass
-
-
 class GroupSession(SessionPhases):
-    def __init__(self, cfg, echo=False, *, store=None, account=None, instance_id=None, start_gateway=True):
+    def __init__(self, cfg: InstanceConfig, echo=False, *, store=None, account=None, instance_id=None, start_gateway=True):
         from wxbridge.instances import CHAT_ID, INSTANCE_ID
         if instance_id is not None and (not isinstance(instance_id, str) or not INSTANCE_ID.fullmatch(instance_id)):
             raise ValueError('invalid_instance_id')
@@ -55,24 +36,24 @@ class GroupSession(SessionPhases):
         self.cfg, self.echo = cfg, echo
         self.account, self.instance_id = account, instance_id
         self.quiescing = False
-        from wxbridge.app.logging_context import InstanceLog
+        from wxbridge.app.status.logging_context import InstanceLog
         self.log = InstanceLog(log, dict(instance=instance_id)) if instance_id else log
-        self.store = store if store is not None else WeChatStore(cfg["db_dir"], cfg["keys_file"], cfg["decrypted_dir"])
-        self.chat_id, self.chat_title = self.store.resolve_chat(cfg["target"]["chat"])
+        self.store = store if store is not None else WeChatStore(cfg.account.db_dir, cfg.account.keys_file, cfg.account.decrypted_dir)
+        self.chat_id, self.chat_title = self.store.resolve_chat(cfg.chat)
         if not CHAT_ID.fullmatch(self.chat_id) or not self.store.self_wxid:
             raise StoreError("必须确认当前微信账号及目标群聊或用户私聊")
-        if cfg['ui'].get('backend')=='native_service' and (not native_options['enabled'] or self.chat_id not in native_options['allowed_chat_ids']):
+        if cfg.account.ui.backend=='native_service' and (not native_options.enabled or self.chat_id not in native_options.allowed_chat_ids):
             raise ValueError('native_service requires enabled native_api and an allowed target chat')
         baseline = None
-        if not cfg["ui"].get("dry_run"):
+        if not cfg.account.ui.dry_run:
             try:
-                state = json.loads(Path(cfg["state_file"]).read_text(encoding="utf-8"))
+                state = json.loads(Path(cfg.paths.state_file).read_text(encoding="utf-8"))
                 baseline = state["chats"][self.chat_id]["last_local_id"]
             except (OSError, ValueError, KeyError, TypeError):
                 pass
         if baseline is None:
             baseline = self.store.last_local_id(self.chat_id)
-        self.journal = Journal(cfg["queue"]["file"],
+        self.journal = Journal(cfg.paths.queue_file,
                                {"account": self.store.self_wxid, "chat": self.chat_id}, int(baseline))
         if instance_id is not None:
             saved = self.journal.get('instance_id')
@@ -87,12 +68,12 @@ class GroupSession(SessionPhases):
         self.ui_job = None
         self.memory = MemoryController(self)
         self.started_at = time.time()
-        from wxbridge.app.model_runtime import GroupModels
+        from wxbridge.app.execution.model_runtime import GroupModels
         self.models = GroupModels(cfg)
-        from wxbridge.app.image_generation_controller import ImageGenerationController
+        from wxbridge.app.tasks.image_generation import ImageGenerationController
         self.image_generation = ImageGenerationController(self)
         self.job_factory = self._new_job
-        self.status_path = Path(cfg["state_file"]).parent / "live-status.json"
+        self.status_path = Path(cfg.paths.state_file).parent / "live-status.json"
         try:
             self.participation = ParticipationController(self)
         except BaseException:
@@ -105,8 +86,8 @@ class GroupSession(SessionPhases):
         self.status_write_error = ''
         self.next_poll_at = 0
         self.profile = None
-        if cfg['profile']['enabled'] and not cfg['ui'].get('dry_run') and not echo:
-            from wxbridge.app.group_profile_controller import ProfileController
+        if cfg.profile.enabled and not cfg.account.ui.dry_run and not echo:
+            from wxbridge.app.tasks.group_profile import ProfileController
             try:
                 self.profile = ProfileController(self)
             except Exception:
@@ -114,9 +95,9 @@ class GroupSession(SessionPhases):
                 self.journal.close()
                 raise
         self.native_api = None
-        if start_gateway and native_options['enabled'] and not cfg['ui'].get('dry_run'):
+        if start_gateway and native_options.enabled and not cfg.account.ui.dry_run:
             from wxbridge.native.server import NativeServer
-            from wxbridge.app.native_gateway import BotNativeService
+            from wxbridge.app.delivery.native_gateway import BotNativeService
             self.native_api = NativeServer(native_options, BotNativeService(self, native_options))
 
     _chunk = staticmethod(chunk_text)
@@ -130,14 +111,14 @@ class GroupSession(SessionPhases):
 
     def _admission_reason(self, msg, now):
         sent = message_time(msg)
-        max_age = float(self.cfg["target"].get("max_message_age_seconds", 90))
+        max_age = float(self.cfg.target.max_message_age_seconds)
         if not msg.get("sender"):
             return "unknown_sender"
         if msg["sender"] == self.store.self_wxid:
             return "own_message"
         if not self.chat_id.endswith('@chatroom') and msg['sender'] != self.chat_id:
             return 'private_sender_mismatch'
-        if not self.cfg['participation']['enabled']:
+        if not self.cfg.participation.enabled:
             return 'participation_disabled'
         if msg.get("type") != 1 and not is_pat(msg):
             return "unsupported_type"
@@ -152,7 +133,7 @@ class GroupSession(SessionPhases):
         if max_age > 0 and now - sent > max_age and not previously_seen:
             return "stale_at_intake"
         if is_pat(msg):
-            if not self.cfg['participation']['pat_enabled']:
+            if not self.cfg.participation.pat_enabled:
                 return 'pat_disabled'
             if msg['pat']['chat'] != self.chat_id or msg['pat']['target'] != self.store.self_wxid:
                 return 'pat_not_for_bot'
@@ -169,13 +150,13 @@ class GroupSession(SessionPhases):
                     reference_chars=len(reference.get("text") or ""))
 
     def _poll_once(self):
-        for _ in range(int(self.cfg['queue'].get('intake_max_pages', 4))):
+        for _ in range(int(self.cfg.queue.intake_max_pages)):
             rows = self.store.messages_after(self.chat_id, self.last_local_id, limit=100)
             if self.profile:
                 self.profile.observe(rows)
             now, old_cursor = time.time(), self.last_local_id
             events = self.journal.intake_participation(rows, lambda m: self._accept(m, now), now,
-                ttl_seconds=float(self.cfg['target']['max_message_age_seconds']), limits=self.cfg['queue'],
+                ttl_seconds=float(self.cfg.target.max_message_age_seconds), limits=self.cfg.queue,
                 describe=lambda m: self._intake_metadata(m, now))
             for event in events:
                 if event["real_mention"] or event["text_has_at"] or event["kind"] == "pat":
@@ -203,7 +184,7 @@ class GroupSession(SessionPhases):
             return False
         with self.metrics.measure('pre_send_intake' if force else 'intake'):
             self._poll_once()
-        self.next_poll_at = time.monotonic() + float(self.cfg.get('poll_interval_seconds', 2))
+        self.next_poll_at = time.monotonic() + float(self.cfg.account.poll_interval_seconds)
         return True
 
     def _refresh_before_send(self):
@@ -247,7 +228,7 @@ class GroupSession(SessionPhases):
         if time.time()-self.maintenance_at >= 60:
             protected = [*self.replies.jobs, *([self.ui_job[0]] if self.ui_job else [])]
             protected.extend(t['parent_task_id'] for t in self.journal.image_tasks())
-            self.journal.prune_completed(self.cfg['queue']['completed_retention'], protected)
+            self.journal.prune_completed(self.cfg.queue.completed_retention, protected)
             self.maintenance_at = time.time()
         self.save_status()
 
@@ -262,28 +243,28 @@ class GroupSession(SessionPhases):
                 status['phase'] = 'generation_retry_wait'
             elif head["generation"] != "ready":
                 status["phase"] = "generating"
-            elif time.time() - status["last_success"] < float(self.cfg["target"].get("cooldown_seconds", 8)):
+            elif time.time() - status["last_success"] < float(self.cfg.target.cooldown_seconds):
                 status["phase"] = "cooldown"
             else:
                 status["phase"] = "ready"
         status.update(pid=os.getpid(), updated_at=time.time(), started_at=self.started_at,
-                      dry_run=bool(self.cfg["ui"].get("dry_run")), echo=self.echo,
+                      dry_run=bool(self.cfg.account.ui.dry_run), echo=self.echo,
                       model_channels=self.models.status(), generation_workers=len(self.replies.jobs),
-                      context_policy={key:self.cfg['target'][key] for key in ('context_recent_messages',
+                      context_policy={key:getattr(self.cfg.target, key) for key in ('context_recent_messages',
                           'context_max_age_seconds','context_bot_messages','context_max_chars','context_budget_strategy')},
                       context=self.journal.get('context', {}),
-                      pat_enabled=self.cfg['participation']['pat_enabled'])
+                      pat_enabled=self.cfg.participation.pat_enabled)
         status.update(build=self.build, metrics=self.metrics.snapshot())
-        status['configured_backend'] = self.cfg['ui']['backend']
+        status['configured_backend'] = self.cfg.account.ui.backend
         status['alerts'] = [name for name, present in (
             ('send_blocked', bool(status.get('blocked_reason'))),
             ('queue_backpressure', bool(status.get('backpressure'))),
             ('memory_quarantined', bool(status.get('memory_quarantined')))) if present]
         status['memory'] = self.memory.status()
         status['profile'] = self.profile.status() if self.profile else dict(enabled=False)
-        status['image_generation'] = dict(enabled=self.cfg['image_generation']['enabled'],
+        status['image_generation'] = dict(enabled=self.cfg.image_generation.enabled,
             running=len(self.image_generation.jobs), last=status.get('last_image_generation'))
-        status['reply_style'] = {key:self.cfg.get('reply_style', {}).get(key, default)
+        status['reply_style'] = {key:getattr(self.cfg.reply_style, key)
             for key, default in (('wechat_emoticons_enabled', False), ('omit_trailing_period', True))}
         if self.instance_id is not None:
             status['instance_id'] = self.instance_id
@@ -351,6 +332,6 @@ class GroupSession(SessionPhases):
                 if once:
                     return
                 # 队列、工作进程与发送确认每秒调度；消息查询另由 next_poll_at 限流。
-                time.sleep(min(float(self.cfg.get("poll_interval_seconds", 2)), 1.0))
+                time.sleep(min(float(self.cfg.account.poll_interval_seconds), 1.0))
         except KeyboardInterrupt:
             self.log.info("停止监听，未完成任务保留在内存队列")

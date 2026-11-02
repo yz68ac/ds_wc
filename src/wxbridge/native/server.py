@@ -15,10 +15,10 @@ from wxbridge.storage.memoryfs import require_memory_directory
 
 class NativeServer:
     def __init__(self, config, service, *, directory_validator=None):
-        self.cfg, self.service = settings({'native_api':config}), service
-        if not self.cfg['enabled']:raise NativeError('native_api_disabled')
+        self.cfg, self.service = config, service
+        if not self.cfg.enabled:raise NativeError('native_api_disabled')
         self.clients, self.selector, self.listener, self.inode = {}, None, None, None
-        self.path = Path(self.cfg['socket'])
+        self.path = Path(self.cfg.socket)
         (directory_validator or require_memory_directory)(str(self.path.parent))
         if self.path.is_symlink():
             raise NativeError('unsafe_native_socket')

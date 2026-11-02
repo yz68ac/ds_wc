@@ -128,7 +128,7 @@ class ReleaseTests(unittest.TestCase):
 
     def test_installed_module_mismatch_does_not_claim_the_manifest_revision(self):
         from wxbridge.release_integrity import installed_mismatches
-        from wxbridge.app import build_info
+        from wxbridge.app.status import build_info
         package=self.root/'installed';package.mkdir()
         module=package/'control.py';module.write_bytes(b'new')
         manifest=dict(commit='a'*40,files={'src/wxbridge/control.py':dict(sha256=hashlib.sha256(b'new').hexdigest())})

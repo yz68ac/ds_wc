@@ -2,7 +2,7 @@
 from wxbridge.native.server import NativeServer
 from wxbridge.native.protocol import settings
 from wxbridge.storage.memoryfs import require_memory_directory
-from wxbridge.app.native_gateway import BotNativeService
+from wxbridge.app.delivery.native_gateway import BotNativeService
 
 
 class NativeAPI(NativeServer):

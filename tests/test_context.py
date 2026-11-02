@@ -1,10 +1,12 @@
 """使用合成数据的离线测试，不联网、不发送微信消息。"""
 from __future__ import annotations
+from tests.support.configuration import replace_config, update_config, snapshot
 from tests.support.model_support import default_config
 from contextlib import nullcontext
 
 import unittest
-from wxbridge.config import DEFAULTS, _deep_merge
+from wxbridge.config import default_document
+from tests.support.configuration import merge_config as _deep_merge
 from wxbridge.ai.context.selection import ContextError, message_time, select_context
 from wxbridge.ai.reply.prompt import build_prompt
 from tests.support.synthetic import NOW, msg
@@ -23,7 +25,7 @@ class ContextTests(unittest.TestCase):
         self.assertEqual([m["text"] for m in selected], ["边界", "同秒群友"])
 
     def test_explicit_larger_window_is_respected(self):
-        self.cfg["target"]["context_max_age_seconds"] = 600
+        self.cfg = replace_config(self.cfg, 'target.context_max_age_seconds', 600, owner=self)
         rows = [msg(1, NOW-600, "边界"), msg(2, NOW-601, "过期")]
         self.assertEqual([m["local_id"] for m in select_context(self.cfg, rows, self.trigger)], [1])
 
@@ -49,7 +51,7 @@ class ContextTests(unittest.TestCase):
         self.assertEqual(prompt.count(self.trigger["text"]), 1)
 
     def test_budget_exceeded_cancels_instead_of_partial_history(self):
-        self.cfg["target"]["context_max_chars"] = 100
+        self.cfg = replace_config(self.cfg, 'target.context_max_chars', 100, owner=self)
         with self.assertRaises(ContextError):
             build_prompt(self.cfg, [msg(1, NOW - 1, "x" * 300)], self.trigger, "合成群")
 

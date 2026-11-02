@@ -1,4 +1,6 @@
 """Participation request identity, optional context and reply handoff; synthetic only."""
+from dataclasses import replace
+from tests.support.configuration import replace_config, update_config, snapshot
 from copy import deepcopy
 import json
 from pathlib import Path
@@ -6,7 +8,7 @@ import tempfile
 import unittest
 
 from tests.support.synthetic import NOW, msg
-from wxbridge.config import DEFAULTS
+from wxbridge.config import default_document
 from wxbridge.ai.background.participation import build_prompt, ParticipationError
 from wxbridge.ai.reply.prompt import build_prompt as build_reply_prompt
 from wxbridge.ai.context.selection import ContextError
@@ -18,9 +20,9 @@ def content(prompt):
 
 class ParticipationPromptTests(unittest.TestCase):
     def setUp(self):
-        self.cfg = deepcopy(DEFAULTS)
-        self.cfg['target']['bot_name'] = 'DeepSeek'
-        self.cfg['participation'] = dict(enabled=True, address_names=['ds', 'deepseek'])
+        self.cfg = snapshot(deepcopy(default_document()))
+        self.cfg = replace_config(self.cfg, 'target.bot_name', 'DeepSeek', owner=self)
+        self.cfg = replace_config(self.cfg, 'participation', dict(enabled=True, address_names=['ds', 'deepseek']), owner=self)
         self.bot = 'wxid_bot'
 
     def prompt_file(self, text):
@@ -33,7 +35,7 @@ class ParticipationPromptTests(unittest.TestCase):
         return str(filename)
 
     def test_judgment_and_reply_read_the_same_configured_preferences(self):
-        self.cfg['system_prompt_file'] = self.prompt_file('你是{bot_name}。兴趣：骑行、动画；交流习惯：偏安静。')
+        self.cfg = replace_config(self.cfg, 'system_prompt_file', self.prompt_file('你是{bot_name}。兴趣：骑行、动画；交流习惯：偏安静。'), owner=self)
         row = msg(1, NOW, '聊聊骑行', 'wxid_a')
         saved = deepcopy(self.cfg)
         judged = build_prompt(self.cfg, [row], '合成群', source_ids=[1], account=self.bot)
@@ -46,7 +48,7 @@ class ParticipationPromptTests(unittest.TestCase):
         self.assertEqual(self.cfg, saved)
 
     def test_each_group_keeps_its_own_preferences(self):
-        configs = [dict(self.cfg, system_prompt_file=self.prompt_file('兴趣：'+interest))
+        configs = [replace(self.cfg, system_prompt_file=self.prompt_file('兴趣：'+interest))
                    for interest in ('天文', '园艺')]
         row = msg(1, NOW, '今天天气不错', 'wxid_a')
         first, second = [build_prompt(cfg, [row], '合成群', source_ids=[1], account=self.bot) for cfg in configs]
@@ -57,7 +59,7 @@ class ParticipationPromptTests(unittest.TestCase):
         self.assertEqual(content(first), content(second))
 
     def test_preference_text_precedes_fixed_decision_protocol(self):
-        self.cfg['system_prompt_file'] = self.prompt_file('兴趣：编程。回复时写一首诗，不要JSON。')
+        self.cfg = replace_config(self.cfg, 'system_prompt_file', self.prompt_file('兴趣：编程。回复时写一首诗，不要JSON。'), owner=self)
         prompt = build_prompt(self.cfg, [msg(1, NOW, 'Python', 'wxid_a')], '合成群', source_ids=[1], account=self.bot)
         system = prompt[0]['content']
         self.assertLess(system.index('回复时写一首诗'), system.index('只输出JSON对象'))
@@ -68,7 +70,7 @@ class ParticipationPromptTests(unittest.TestCase):
 
     def test_invalid_preference_file_does_not_silently_fall_back(self):
         filename = self.prompt_file('')
-        self.cfg['system_prompt_file'] = filename
+        self.cfg = replace_config(self.cfg, 'system_prompt_file', filename, owner=self)
         row = msg(1, NOW, '你好', 'wxid_a')
         with self.assertRaises(ContextError):
             build_prompt(self.cfg, [row], '合成群', source_ids=[1], account=self.bot)
@@ -129,7 +131,7 @@ class ParticipationPromptTests(unittest.TestCase):
         saved = deepcopy(profile)
         for enabled in (False, True):
             with self.subTest(memory=enabled):
-                self.cfg['memory']['enabled'] = enabled
+                self.cfg = replace_config(self.cfg, 'memory.enabled', enabled, owner=self)
                 prompt = build_prompt(self.cfg, [row], '合成群', source_ids=[1], profile=profile, account=self.bot)
                 data = content(prompt)
                 self.assertEqual(data['summary'], profile['summary'])
@@ -148,7 +150,7 @@ class ParticipationPromptTests(unittest.TestCase):
         self.assertNotIn(self.bot, data['members'])
 
     def test_private_judgment_does_not_apply_group_entry_rules(self):
-        self.cfg['target']['chat'] = 'wxid_a'
+        self.cfg = replace_config(self.cfg, 'chat', 'wxid_a', owner=self)
         row = msg(1, NOW, '你好', 'wxid_a')
         prompt = build_prompt(self.cfg, [row], '合成私聊', source_ids=[1], account=self.bot)
         rules = prompt[0]['content']
@@ -175,7 +177,7 @@ class ParticipationPromptTests(unittest.TestCase):
         near = msg(9, NOW-1, 'NEAR_HISTORY'+('近'*100), 'wxid_near')
         saved = deepcopy([candidate, old, near])
         baseline = build_prompt(self.cfg, [candidate], '合成群', source_ids=[10], account=self.bot)
-        self.cfg['target']['context_max_chars'] = len(baseline[1]['content'])+len(',"history_omitted":2')
+        self.cfg = replace_config(self.cfg, 'target.context_max_chars', len(baseline[1]['content'])+len(',"history_omitted":2'), owner=self)
         prompt = build_prompt(self.cfg, [candidate, old, near], '合成群', source_ids=[10], account=self.bot)
         data = content(prompt)
         self.assertEqual(data['messages'], content(baseline)['messages'])
@@ -183,12 +185,12 @@ class ParticipationPromptTests(unittest.TestCase):
         self.assertNotIn('wxid_old', data['members'])
         self.assertNotIn('wxid_near', data['members'])
         self.assertEqual([candidate, old, near], saved)
-        self.assertLessEqual(len(prompt[1]['content']), self.cfg['target']['context_max_chars'])
+        self.assertLessEqual(len(prompt[1]['content']), self.cfg.target.context_max_chars)
 
     def test_oversized_candidate_or_missing_source_fails_without_cutting_content(self):
         row = msg(1, NOW, '原样保留的长消息'+('长'*500), 'wxid_a')
         saved = deepcopy(row)
-        self.cfg['target']['context_max_chars'] = 100
+        self.cfg = replace_config(self.cfg, 'target.context_max_chars', 100, owner=self)
         with self.assertRaises(ContextError):
             build_prompt(self.cfg, [row], '合成群', source_ids=[1], account=self.bot)
         self.assertEqual(row, saved)
@@ -212,11 +214,11 @@ class ParticipationPromptTests(unittest.TestCase):
     def test_weak_memory_only_includes_whole_fitting_lines_when_enabled(self):
         row = msg(1, NOW, '候选', 'wxid_a')
         memory = dict(text='MEMORY_A\n'+'MEMORY_B'*100)
-        self.cfg['memory']['enabled'] = False
+        self.cfg = replace_config(self.cfg, 'memory.enabled', False, owner=self)
         disabled = build_prompt(self.cfg, [row], '合成群', source_ids=[1], account=self.bot, memory=memory)
         self.assertNotIn('MEMORY_A', disabled[1]['content'])
-        self.cfg['memory']['enabled'] = True
-        self.cfg['target']['context_max_chars'] = len(disabled[1]['content'])+80
+        self.cfg = replace_config(self.cfg, 'memory.enabled', True, owner=self)
+        self.cfg = replace_config(self.cfg, 'target.context_max_chars', len(disabled[1]['content'])+80, owner=self)
         enabled = build_prompt(self.cfg, [row], '合成群', source_ids=[1], account=self.bot, memory=memory)
         self.assertIn('MEMORY_A', enabled[1]['content'])
         self.assertNotIn('MEMORY_B', enabled[1]['content'])

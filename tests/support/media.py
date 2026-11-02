@@ -1,5 +1,6 @@
 """Shared synthetic media fixtures; contains no executable tests."""
 from __future__ import annotations
+from tests.support.configuration import replace_config, update_config, snapshot
 from tests.support.model_support import default_config
 from contextlib import closing
 import hashlib
@@ -49,9 +50,9 @@ class LocalImageFixture(unittest.TestCase):
         self.binding = dict(account="wxid_synthetic", account_root=str(self.root), home=str(self.home),
                             candidates=[dict(relative=str(self.path.relative_to(self.root)), quality="original")])
         self.cfg = default_config()
-        self.cfg["vision"]["cache_wait_seconds"] = 0
+        self.cfg = replace_config(self.cfg, 'vision.cache_wait_seconds', 0, owner=self)
 
-        self.cfg['system_prompt_file'] = str(ROOT/'prompts/system.md')
+        self.cfg = replace_config(self.cfg, 'system_prompt_file', str(ROOT/'prompts/system.md'), owner=self)
 
     def generation(self, refs=None):
         trigger = msg(10, NOW, "@ds 这怎么看")

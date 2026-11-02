@@ -1,4 +1,5 @@
 """Private chats batch directly into full replies; no real models or WeChat."""
+from tests.support.configuration import replace_config, update_config, snapshot
 from copy import deepcopy
 import json
 import unittest
@@ -6,7 +7,7 @@ from unittest.mock import patch
 
 from tests.support.model_support import default_config
 import tests.support.pipeline as pipeline
-from wxbridge.ai.roles import validate_models
+from tests.support.configuration import validate_models
 from tests.support.private import PrivateReplyFixture
 
 
@@ -15,7 +16,7 @@ class PrivateReplyTests(PrivateReplyFixture):
 
     def test_private_message_starts_full_reply_without_decision_or_mention(self):
         self.add(1, text='你好，聊聊今天的事吧', mention=False)
-        with patch('wxbridge.app.participation_controller.build_prompt', side_effect=AssertionError('no judgment')):
+        with patch('wxbridge.app.tasks.participation.build_prompt', side_effect=AssertionError('no judgment')):
             self.bot.tick()
         self.assertEqual([job.kind for job in self.jobs], ['generate'])
         self.assertFalse(self.decision_jobs)
@@ -28,7 +29,7 @@ class PrivateReplyTests(PrivateReplyFixture):
         self.assertIsNone(self.bot.models.lanes['background'].client)
 
     def test_private_burst_is_merged_once_before_generating(self):
-        self.cfg['participation']['debounce_seconds'] = 2
+        self.cfg = replace_config(self.cfg, 'participation.debounce_seconds', 2, owner=self)
         self.add(1, text='我今天遇到一个问题', mention=False)
         self.bot.tick()
         self.assertFalse(self.jobs)
@@ -67,7 +68,7 @@ class PrivateReplyTests(PrivateReplyFixture):
         self.assertEqual(len(self.sends()), 1)
 
     def test_restart_preserves_pending_burst_and_original_expiry(self):
-        self.cfg['participation']['debounce_seconds'] = 2
+        self.cfg = replace_config(self.cfg, 'participation.debounce_seconds', 2, owner=self)
         self.add(1, text='尚未完成合并', mention=False)
         self.bot.tick()
         expiry = self.bot.journal.participation_status()['recent'][0]['expires_at']
@@ -94,7 +95,7 @@ class PrivateReplyTests(PrivateReplyFixture):
         self.bot.tick()
         self.assertFalse(self.jobs)
         self.assertEqual(self.bot.journal.status()['recent_intake'][-1]['reason'], 'private_sender_mismatch')
-        self.cfg['participation']['enabled'] = False
+        self.cfg = replace_config(self.cfg, 'participation.enabled', False, owner=self)
         self.add(2, text='已关闭自动回复', mention=False)
         self.bot.tick()
         self.assertFalse(self.jobs)
@@ -104,16 +105,16 @@ class PrivateReplyTests(PrivateReplyFixture):
 class PrivateModelSettingsTests(unittest.TestCase):
     def test_private_chat_does_not_require_participation_model_id(self):
         cfg = default_config()
-        cfg['target']['chat'] = 'wxid_friend'
-        cfg['models']['participation']['model'] = ''
+        cfg = replace_config(cfg, 'chat', 'wxid_friend')
+        cfg = replace_config(cfg, 'models.participation.model', '')
         before = deepcopy(cfg)
         validate_models(cfg)
         self.assertEqual(cfg, before)
 
     def test_groups_still_require_participation_model_even_with_wxid_prefix(self):
         cfg = default_config()
-        cfg['models']['participation']['model'] = ''
+        cfg = replace_config(cfg, 'models.participation.model', '')
         for chat in ('synthetic@chatroom', 'wxid_synthetic@chatroom'):
-            cfg['target']['chat'] = chat
+            cfg = replace_config(cfg, 'chat', chat)
             with self.subTest(chat=chat), self.assertRaisesRegex(ValueError, 'missing_model:participation'):
                 validate_models(cfg)

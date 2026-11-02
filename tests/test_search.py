@@ -1,4 +1,6 @@
 """联网工具与反馈：全为合成响应，不调用 API。"""
+from wxbridge.ai.roles import provider_settings
+from tests.support.configuration import replace_config, update_config, snapshot
 from tests.support.model_support import default_config
 from contextlib import nullcontext
 import copy
@@ -11,7 +13,8 @@ import urllib.error
 from tests.support.model_support import ClientFixture, ModelError
 from wxbridge.ai.tools.web import SearchClient, SearchError, is_public_url_candidate
 from tests.support.tool_support import run_answer, model_result
-from wxbridge.config import DEFAULTS, _deep_merge
+from wxbridge.config import default_document
+from tests.support.configuration import merge_config as _deep_merge
 
 
 _call_ids = itertools.count()
@@ -65,7 +68,7 @@ class SearchTests(unittest.TestCase):
                     self.answer()
 
     def test_feedback_off_discards_tool_waiting_draft_and_preserves_search_metadata(self):
-        self.assertFalse(self.cfg['search']['feedback_enabled'])
+        self.assertFalse(self.cfg.search.feedback_enabled)
         self.client.request.side_effect = [model_result(dict(content='我去看看，等我一下', tool_calls=[call(query='合成更新')])),
                                            model_result(dict(content='这次主要改了速度'))]
         text, meta = self.answer()
@@ -156,7 +159,7 @@ class SearchTests(unittest.TestCase):
             self.assertEqual(meta["results"], 0)
 
     def test_call_budget_is_bounded_and_feedback_only_once(self):
-        self.cfg["search"]["max_requests"] = 1
+        self.cfg = replace_config(self.cfg, 'search.max_requests', 1, owner=self)
         self.client.request.side_effect = [model_result(dict(tool_calls=[call(query="first"), call(query="second")])), model_result(dict(content="完成"))]
         _, meta = self.answer()
         self.backend.search.assert_called_once()
@@ -188,7 +191,7 @@ class SearchTests(unittest.TestCase):
         from provider.adapters import get_protocol_adapter
         client.adapter = get_protocol_adapter('deepseek')
         from wxbridge.ai.roles import model_settings
-        client.cfg = model_settings(self.cfg)
+        client.cfg = provider_settings(model_settings(self.cfg))
         client._post = Mock(return_value={"choices": [{"message": {"content": "最终回答", "tool_calls": [call(query="x")]}}]})
         self.assertTrue(client.complete([], tools=[{}])["tool_calls"])
         self.assertEqual(client.chat([]), "最终回答")
@@ -198,7 +201,7 @@ class SearchTests(unittest.TestCase):
         from provider.adapters import get_protocol_adapter
         client.adapter = get_protocol_adapter('deepseek')
         from wxbridge.ai.roles import model_settings
-        client.cfg = dict(model_settings(self.cfg), thinking='enabled', reasoning_effort='high')
+        client.cfg = dict(provider_settings(model_settings(self.cfg)), thinking='enabled', reasoning_effort='high')
         client._post = Mock(return_value={'choices':[{'message':{'content':'简短回答','reasoning_content':'PRIVATE_REASONING'}}]})
         self.assertEqual(client.chat([]),'简短回答')
         payload = client._post.call_args.args[0]

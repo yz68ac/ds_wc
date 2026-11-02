@@ -1,5 +1,6 @@
 """独立提示词文件：路径、长文本、字面花括号、编辑生效与旧配置兼容。"""
 from __future__ import annotations
+from tests.support.configuration import replace_config, update_config, snapshot
 from tests.support.model_support import default_config
 from contextlib import nullcontext
 
@@ -10,7 +11,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from wxbridge.config import resolve_config, DEFAULTS
+from wxbridge.config import default_document
+from tests.support.configuration import resolve_fixture as resolve_config
 from wxbridge.ai.context.selection import ContextError
 from wxbridge.ai.reply.prompt import build_prompt
 from tests.support.synthetic import NOW, msg
@@ -34,8 +36,8 @@ class PromptFileTests(unittest.TestCase):
 
     def config(self, settings):
         cfg = default_config()
-        cfg['target']['bot_name'] = '小灰'
-        cfg.update(settings)
+        cfg = replace_config(cfg, 'target.bot_name', '小灰')
+        cfg = update_config(cfg, '', values=settings)
         return resolve_config(cfg, self.config_file, environment=False)
 
     def render(self, cfg):
@@ -44,7 +46,7 @@ class PromptFileTests(unittest.TestCase):
     def test_relative_path_uses_config_directory_and_accepts_utf8_bom(self):
         self.prompt_file.write_text("你叫 {bot_name}。\n保持自然。", encoding="utf-8-sig")
         cfg = self.config({"system_prompt_file": self.prompt_file.name})
-        self.assertEqual(Path(cfg['system_prompt_file']), self.prompt_file)
+        self.assertEqual(Path(cfg.system_prompt_file), self.prompt_file)
         self.assertEqual(self.render(cfg), "你叫 小灰。\n保持自然。")
 
     def test_long_persona_and_literal_braces_survive_without_truncation(self):
@@ -52,7 +54,7 @@ class PromptFileTests(unittest.TestCase):
         self.prompt_file.write_text(text, encoding="utf-8")
         cfg = self.config({"system_prompt_file": self.prompt_file.name})
         self.assertEqual(self.render(cfg), text.replace("{bot_name}", "小灰"))
-        self.assertGreater(len(self.render(cfg)), cfg["target"]["context_max_chars"])
+        self.assertGreater(len(self.render(cfg)), cfg.target.context_max_chars)
 
     def test_removed_legacy_model_config_is_rejected(self):
         with self.assertRaisesRegex(ValueError, 'obsolete_model_configuration'):
@@ -79,8 +81,8 @@ class ConversationPromptTests(unittest.TestCase):
     def setUp(self):
         self.cfg = default_config()
 
-        self.cfg['system_prompt_file'] = str(Path(__file__).resolve().parents[1]/'prompts/system.md')
-        self.cfg['target']['bot_name'] = '同名'
+        self.cfg = replace_config(self.cfg, 'system_prompt_file', str(Path(__file__).resolve().parents[1]/'prompts/system.md'), owner=self)
+        self.cfg = replace_config(self.cfg, 'target.bot_name', '同名', owner=self)
         self.account = 'wxid_synthetic_bot_account'
         self.trigger = msg(50, NOW, '@同名 谢谢', 'friend')
         self.trigger['sender_name'] = '同名'
@@ -149,14 +151,14 @@ class ConversationPromptTests(unittest.TestCase):
         self.assertNotIn('旧备注', text)
 
     def test_identity_legend_counts_toward_budget_without_truncating_history(self):
-        self.cfg['target']['context_budget_strategy'] = 'strict'
+        self.cfg = replace_config(self.cfg, 'target.context_budget_strategy', 'strict', owner=self)
         rows = [msg(1, NOW-1, '完整历史', self.account)]
         plain = self.render(rows, account=self.account)
-        self.cfg['target']['context_max_chars'] = len(plain)
+        self.cfg = replace_config(self.cfg, 'target.context_max_chars', len(plain), owner=self)
         text = self.render(rows, account=self.account,
                            memory=dict(labels={}, text='这一整行记忆没有预算放下'))
         self.assertEqual(text, plain)
-        self.cfg['target']['context_max_chars'] -= 1
+        self.cfg=replace_config(self.cfg,'target.context_max_chars',self.cfg.target.context_max_chars-1,owner=self)
         with self.assertRaises(ContextError):
             self.render(rows, account=self.account)
 

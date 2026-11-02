@@ -1,4 +1,6 @@
 """Synthetic regressions for review R3-R10; no network or production data."""
+from wxbridge.config import QueueConfig
+from tests.support.configuration import replace_config, update_config, snapshot
 from tests.support.model_support import default_config
 from contextlib import nullcontext
 import copy
@@ -11,7 +13,8 @@ import unittest
 from unittest.mock import Mock, patch
 
 from wxbridge.ai.reply.images import read_local_image
-from wxbridge.config import DEFAULTS, load_config
+from wxbridge.config import load_config
+from wxbridge.config import default_document
 from wxbridge.ai.background.participation import evaluate
 from wxbridge.storage.journal import Journal
 import tests.support.memory as memories
@@ -49,20 +52,20 @@ class ReviewBoundaryTests(unittest.TestCase):
         rows=[dict(local_id=n,sender='other',type=1,text='synthetic') for n in range(3,1003)]
         case.store.messages_after.side_effect=lambda chat,cursor,limit:[m for m in rows if m['local_id']>cursor][:limit]
         deadline=case.journal.task(identifier)['intent']['deadline']
-        with patch('wxbridge.app.delivery.time.time',return_value=deadline+1):
+        with patch('wxbridge.app.delivery.controller.time.time',return_value=deadline+1):
             case.delivery.confirm();self.assertEqual(case.store.messages_after.call_count,2)
             case.delivery.confirm();self.assertEqual(case.store.messages_after.call_count,2)
         intent=case.journal.task(identifier)['intent']
         self.assertEqual(intent['scan_cursor'],202)
         # A late fill of an older row is found by the audit, without resubmitting.
         rows[0].update(sender='synthetic',text='合成回复')
-        with patch('wxbridge.app.delivery.time.time',return_value=deadline+17):case.delivery.confirm()
+        with patch('wxbridge.app.delivery.controller.time.time',return_value=deadline+17):case.delivery.confirm()
         self.assertEqual(case.journal.task(identifier)['phase'],'done')
 
     def test_capacity_preserves_cursor_and_defers_instead_of_dropping(self):
         case=self.fixture(native.JournalFixture)
         records=[msg(n,NOW,'synthetic') for n in range(89,93)]
-        limits=dict(max_pending=2,max_pending_per_sender=2)
+        limits=QueueConfig(max_pending=2,max_pending_per_sender=2)
         case.journal.intake_participation(records,lambda _:True,NOW,ttl_seconds=90,limits=limits)
         self.assertEqual(case.journal.participation_status()['pending'],2)
         self.assertFalse(case.journal.tasks())
@@ -77,7 +80,7 @@ class ReviewBoundaryTests(unittest.TestCase):
 
     def test_deferred_source_is_recorded_as_expired_without_resetting_original_age(self):
         case=self.fixture(pipeline.PipelineFixture)
-        case.cfg['queue'].update(max_pending=1,max_pending_per_sender=1)
+        case.cfg = update_config(case.cfg, 'queue', max_pending=1, max_pending_per_sender=1, owner=case)
         case.add(1);case.add(2);case.bot.tick()
         self.assertEqual(case.bot.last_local_id,1)
         case.now+=100
@@ -102,7 +105,7 @@ class ReviewBoundaryTests(unittest.TestCase):
             with self.subTest(unavailable=unavailable):
                 if unavailable:case.store._connect=Mock(side_effect=sqlite3.DatabaseError())
                 binding=case.store.image_binding(case.chat,ref)
-                data,info=read_local_image(binding, max_bytes=DEFAULTS['vision']['max_image_bytes'])
+                data,info=read_local_image(binding, max_bytes=default_document()['vision']['max_image_bytes'])
                 self.assertEqual(data,media.png())
                 self.assertEqual(info['binding_source'],'verified_message_cache')
 
@@ -118,7 +121,7 @@ class ReviewBoundaryTests(unittest.TestCase):
     def test_approved_question_becomes_full_reply_without_rewinding_newer_intake(self):
         case=self.fixture(native.JournalFixture)
         source=msg(89,NOW,'看看这张图');source['reference']=dict(kind='image',available=False,text='')
-        limits=dict(max_pending=32,max_pending_per_sender=8)
+        limits=QueueConfig()
         case.journal.intake_participation([source],lambda _:True,NOW,ttl_seconds=90,limits=limits)
         batch=case.journal.reserve_participation(NOW,debounce_seconds=0,max_wait_seconds=5,max_batch_messages=8)
         case.journal.intake_participation([msg(90,NOW,'另一个问题')],lambda _:True,NOW,ttl_seconds=90,limits=limits)

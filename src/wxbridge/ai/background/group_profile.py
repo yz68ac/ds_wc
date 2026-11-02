@@ -25,7 +25,7 @@ sources只能逐项原样选择messages.id，保持字符串或整数类型；�
 
 
 def _limit(cfg, key, default):
-    value = cfg.get('profile', {}).get(key, default)
+    value = getattr(cfg.profile, key)
     if type(value) is not int or not 1 <= value <= 1_000_000:
         raise ProfileAnalysisError('profile_invalid_limit')
     return value

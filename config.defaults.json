@@ -1,4 +1,46 @@
 {
+  "db_dir": "",
+  "keys_file": "/run/wxbridge-trial/keys.json",
+  "decrypted_dir": "/run/wxbridge-trial/decrypted",
+  "state_file": "/run/wxbridge-trial/state.json",
+  "log_file": "/run/wxbridge-trial/bot.log",
+  "wechat_process": "wechat",
+  "source": "db",
+  "poll_interval_seconds": 2,
+  "provider_env": null,
+  "ui": {
+    "backend": "auto",
+    "app_names": [
+      "wechat",
+      "WeChat",
+      "微信"
+    ],
+    "chat_list_names": [
+      "Chats",
+      "聊天",
+      "会话"
+    ],
+    "messages_list_names": [
+      "Messages",
+      "消息"
+    ],
+    "window_class": "wechat",
+    "native_executable": "/opt/wechat/wechat",
+    "window_names": [
+      "微信",
+      "WeChat"
+    ],
+    "search_shortcut": "ctrl+f",
+    "paste_shortcut": "ctrl+v",
+    "select_all_shortcut": "ctrl+a",
+    "send_key": "Return",
+    "input_method": "auto",
+    "verify_chat_selected": true,
+    "post_send_wait": 0.8,
+    "send_confirm_timeout_seconds": 10,
+    "chat_open_wait": 1,
+    "dry_run": true
+  },
   "native_api": {
     "enabled": false,
     "socket": "/run/wxbridge-trial/native-api.sock",
@@ -10,21 +52,8 @@
     "max_pending": 16,
     "max_requests": 1024
   },
-  "db_dir": "",
-  "keys_file": "/run/wxbridge-trial/keys.json",
-  "decrypted_dir": "/run/wxbridge-trial/decrypted",
-  "state_file": "/run/wxbridge-trial/state.json",
-  "log_file": "/run/wxbridge-trial/bot.log",
-  "wechat_process": "wechat",
-  "source": "db",
   "account": {
     "send_interval_seconds": 1
-  },
-  "poll_interval_seconds": 2,
-  "reply_to_backlog": false,
-  "reply_style": {
-    "wechat_emoticons_enabled": false,
-    "omit_trailing_period": false
   },
   "queue": {
     "max_pending": 32,
@@ -36,16 +65,29 @@
     "completed_retention": 200,
     "file": "/run/wxbridge-trial/queue.sqlite3"
   },
-  "participation": {
-    "enabled": false,
-    "debounce_seconds": 2,
-    "max_wait_seconds": 5,
-    "max_batch_messages": 8,
-    "address_names": [],
-    "pat_enabled": true
+  "memory": {
+    "enabled": true,
+    "context_window_seconds": 300,
+    "system_prompt_file": "prompts/memory.md",
+    "learning": {
+      "enabled": true,
+      "passive_enabled": true,
+      "window_seconds": 300,
+      "min_new_messages": 10,
+      "min_senders": 2,
+      "min_interval_seconds": 300
+    },
+    "min_interval_seconds": 60,
+    "prompt_max_chars": 1200,
+    "avatar": {
+      "enabled": true,
+      "max_per_batch": 2,
+      "max_bytes": 524288,
+      "retry_interval_seconds": 3600
+    },
+    "directory": "memory"
   },
   "target": {
-    "chat": "",
     "bot_name": "小c",
     "cooldown_seconds": 8,
     "max_message_age_seconds": 90,
@@ -54,12 +96,20 @@
     "context_bot_messages": 3,
     "context_max_chars": 15000,
     "context_budget_strategy": "recent",
-    "max_reply_chars": 1800
+    "max_reply_chars": 1800,
+    "chat": ""
+  },
+  "model_clients": {
+    "reply": "deepseek",
+    "image": "openai",
+    "background": "deepseek"
   },
   "models": {
     "image": {
       "model": "",
-      "options": {"timeout_seconds": 180}
+      "options": {
+        "timeout_seconds": 180
+      }
     },
     "reply": {
       "model": "",
@@ -102,6 +152,28 @@
       }
     }
   },
+  "profile": {
+    "enabled": false,
+    "initial_history_days": 7,
+    "initial_max_messages": 300,
+    "batch_size": 60,
+    "min_new_messages": 50,
+    "min_interval_seconds": 1800,
+    "summary_max_chars": 1200,
+    "analysis_max_chars": 24000
+  },
+  "reply_style": {
+    "wechat_emoticons_enabled": false,
+    "omit_trailing_period": false
+  },
+  "participation": {
+    "enabled": false,
+    "debounce_seconds": 2,
+    "max_wait_seconds": 5,
+    "max_batch_messages": 8,
+    "address_names": [],
+    "pat_enabled": true
+  },
   "search": {
     "enabled": true,
     "backend": "external",
@@ -127,77 +199,9 @@
     "download_backend": "desktop",
     "download_timeout_seconds": 20
   },
-  "memory": {
-    "enabled": true,
-    "context_window_seconds": 300,
-    "directory": "memory",
-    "system_prompt_file": "prompts/memory.md",
-    "learning": {
-      "enabled": true,
-      "passive_enabled": true,
-      "window_seconds": 300,
-      "min_new_messages": 10,
-      "min_senders": 2,
-      "min_interval_seconds": 300
-    },
-    "min_interval_seconds": 60,
-    "prompt_max_chars": 1200,
-    "avatar": {
-      "enabled": true,
-      "max_per_batch": 2,
-      "max_bytes": 524288,
-      "retry_interval_seconds": 3600
-    }
+  "image_generation": {
+    "enabled": false
   },
-  "ui": {
-    "backend": "auto",
-    "app_names": [
-      "wechat",
-      "WeChat",
-      "微信"
-    ],
-    "chat_list_names": [
-      "Chats",
-      "聊天",
-      "会话"
-    ],
-    "messages_list_names": [
-      "Messages",
-      "消息"
-    ],
-    "window_class": "wechat",
-    "native_executable": "/opt/wechat/wechat",
-    "window_names": [
-      "微信",
-      "WeChat"
-    ],
-    "search_shortcut": "ctrl+f",
-    "paste_shortcut": "ctrl+v",
-    "select_all_shortcut": "ctrl+a",
-    "send_key": "Return",
-    "input_method": "auto",
-    "verify_chat_selected": true,
-    "post_send_wait": 0.8,
-    "send_confirm_timeout_seconds": 10,
-    "chat_open_wait": 1,
-    "dry_run": true
-  },
-  "model_clients": {
-    "reply": "deepseek",
-    "image": "openai",
-    "background": "deepseek"
-  },
-  "image_generation": {"enabled": false},
   "system_prompt_file": "prompts/system.md",
-  "provider_env": null,
-  "profile": {
-    "enabled": false,
-    "initial_history_days": 7,
-    "initial_max_messages": 300,
-    "batch_size": 60,
-    "min_new_messages": 50,
-    "min_interval_seconds": 1800,
-    "summary_max_chars": 1200,
-    "analysis_max_chars": 24000
-  }
+  "reply_to_backlog": false
 }

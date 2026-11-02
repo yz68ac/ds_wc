@@ -22,7 +22,6 @@
     "send_interval_seconds": 1
   },
   "poll_interval_seconds": 2,
-  "reply_to_backlog": false,
   "ui": {
     "backend": "auto",
     "app_names": [

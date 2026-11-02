@@ -8,8 +8,8 @@ from wxbridge.ai.context.identity import member_labels
 from wxbridge.ai.reply.output import format_reply
 from wxbridge.ai.reply.prompt import build_prompt
 from wxbridge.ai.roles import model_settings
-from wxbridge.app.task_policy import GenerationFailure
-from wxbridge.app.workers import WorkerLease, WorkerCleanupError
+from wxbridge.app.tasks.policy import GenerationFailure
+from wxbridge.app.execution.workers import WorkerLease, WorkerCleanupError
 from wxbridge.storage.memory_selection import memory_dialogue
 from wxbridge.wechat.messages import reply_chunks
 
@@ -36,9 +36,9 @@ class ReplyController:
                 with self.bot.journal.db:
                     self.bot.journal.set('context', {**self.bot.journal.get('context', {}), 'reply':result['context_stats']})
             if result.get("event") == "search_started":
-                settings = self.bot.cfg.get("search", {})
-                if settings.get("feedback_enabled", False):
-                    phrases = settings.get("feedback_phrases") or ["我上网搜搜，核实一下。"]
+                settings = self.bot.cfg.search
+                if settings.feedback_enabled:
+                    phrases = settings.feedback_phrases or ["我上网搜搜，核实一下。"]
                     notice = format_reply(phrases[(task_id-1) % len(phrases)], self.bot.cfg)
                     if self.bot.journal.request_notice(task_id, version, notice):
                         self.bot.log.info("搜索提示待发送 task=%s version=%s", task_id, version)
@@ -47,7 +47,7 @@ class ReplyController:
             del self.jobs[task_id]
             reply = result.get("reply") or ""
             error = "generation:" + GenerationFailure.from_result(result).code if not result["ok"] else ""
-            chunks = reply_chunks(reply, int(self.bot.cfg["target"].get("max_reply_chars", 1800))) if not error else []
+            chunks = reply_chunks(reply, int(self.bot.cfg.target.max_reply_chars)) if not error else []
             if error:
                 self._failed(task_id, version, result)
             else:
@@ -57,7 +57,7 @@ class ReplyController:
                     self._failed(task_id, version, dict(error=getattr(exc, 'code', 'invalid_image_tool'), retryable=False))
                     continue
                 if proposal is not None:
-                    chunks.extend(reply_chunks('在画了，稍后发给你', int(self.bot.cfg['target'].get('max_reply_chars', 1800))))
+                    chunks.extend(reply_chunks('在画了，稍后发给你', int(self.bot.cfg.target.max_reply_chars)))
                 accepted = self.bot.journal.generated(task_id, version, chunks, vision=result.get('vision'),
                     search=result.get('search'), image_request=proposal, now=time.time())
                 if not accepted:
@@ -67,7 +67,7 @@ class ReplyController:
 
     def start(self, *, max_new=None):
         started = 0
-        candidates = self.bot.journal.generation_candidates(self.bot.cfg['queue'].get('generation_lookahead', 4))
+        candidates = self.bot.journal.generation_candidates(self.bot.cfg.queue.generation_lookahead)
         for task in candidates:
             if task.get('trigger_kind') == 'participation' and self.bot.participation.expire_reply(task, time.time()):
                 continue
@@ -78,7 +78,7 @@ class ReplyController:
                 continue
             if (max_new is not None and started >= max_new):
                 break
-            if task.get('generation_attempts', 0) > self.bot.cfg['queue']['generation_retries']:
+            if task.get('generation_attempts', 0) > self.bot.cfg.queue.generation_retries:
                 self._failed(task['id'], task['version'], dict(error='WorkerExited', retryable=False))
                 continue
             task_id, version = task["id"], task["version"]
@@ -93,11 +93,11 @@ class ReplyController:
                         memory_view = self.bot.memory.store.view()
                         labels = member_labels(context, task["triggers"], self.bot.store.self_wxid)
                         memory = dict(labels=labels, text=memory_view.prompt(labels, trigger["sender"], time.time(),
-                                      int(self.bot.cfg["memory"]["prompt_max_chars"]),
-                                      use_avatar=self.bot.cfg["memory"].get("avatar", {}).get("enabled", False),
+                                      int(self.bot.cfg.memory.prompt_max_chars),
+                                      use_avatar=self.bot.cfg.memory.avatar.enabled,
                                       dialogue=memory_dialogue(context, task['triggers'], self.bot.store.self_wxid),
                                       question=trigger.get('text', ''),
-                                      use_learning=self.bot.cfg['memory']['learning']['enabled']),
+                                      use_learning=self.bot.cfg.memory.learning.enabled),
                                       relationship=memory_view.reply_relationship(trigger['sender'], time.time()),
                                       relationship_for=trigger['sender'])
                     except Exception as exc:
@@ -109,12 +109,11 @@ class ReplyController:
                 with self.bot.journal.db:
                     self.bot.journal.set('context', {**self.bot.journal.get('context', {}), 'reply':prompt.context_stats})
                 echo = "[echo] " + "\n".join(m["text"] for m in task["triggers"]) if self.bot.echo else None
-                timeout = float(model_settings(self.bot.cfg)['timeout_seconds']) + 15
-                if (self.bot.cfg.get("search", {}).get("enabled", True)
-                        or self.bot.cfg.get('image_generation', {}).get('enabled', False)) and not self.bot.echo:
-                    timeout = float(self.bot.cfg.get("search", {}).get("total_timeout_seconds", 120)) + 15
+                timeout = float(model_settings(self.bot.cfg).options.timeout_seconds) + 15
+                if self.bot.cfg.search.enabled and not self.bot.echo:
+                    timeout = float(self.bot.cfg.search.total_timeout_seconds) + 15
                 images = []
-                if self.bot.cfg.get("vision", {}).get("enabled", True) and not self.bot.echo:
+                if self.bot.cfg.vision.enabled and not self.bot.echo:
                     for index, question in enumerate(task["triggers"]):
                         reference, depth = question.get("reference"), 0
                         while isinstance(reference, dict):
@@ -126,11 +125,11 @@ class ReplyController:
                             reference, depth = reference.get("reference"), depth+1
                 payload = (self.bot.cfg, prompt, echo)
                 if images:
-                    if self.bot.cfg['vision'].get('download_enabled', False):
-                        timeout += self.bot.cfg['vision'].get('download_timeout_seconds', 20)
-                        if self.bot.cfg['vision'].get('download_backend', 'desktop') == 'native':
+                    if self.bot.cfg.vision.download_enabled:
+                        timeout += self.bot.cfg.vision.download_timeout_seconds
+                        if self.bot.cfg.vision.download_backend == 'native':
                             task = self.bot.journal.reserve_native_images(task_id, version,
-                                images[:self.bot.cfg['vision']['max_images']])
+                                images[:self.bot.cfg.vision.max_images])
                     payload += (dict(context=context, triggers=task["triggers"], chat_title=self.bot.chat_title, images=images,
                                      memory=memory, account=self.bot.store.self_wxid,
                                      profile=profile),)
@@ -156,13 +155,13 @@ class ReplyController:
 
     def _failed(self, task_id, version, result):
         failure = GenerationFailure.from_result(result)
-        settings = self.bot.cfg['queue']
+        settings = self.bot.cfg.queue
         if failure.code == 'context_required_too_large':
             with self.bot.journal.db:
                 self.bot.journal.set('context', {**self.bot.journal.get('context', {}), 'reply':dict(error=failure.code)})
         self.bot.journal.generation_failure(task_id, version, failure.code, time.time(),
-            retryable=failure.retryable, retries=settings['generation_retries'],
-            delay=settings['generation_retry_delay_seconds'],
+            retryable=failure.retryable, retries=settings.generation_retries,
+            delay=settings.generation_retry_delay_seconds,
             fallback=format_reply('消息或引用内容过长，请分开发送。' if failure.code == 'context_required_too_large'
                                   else '刚才没接上，等会儿再问我一下。', self.bot.cfg))
         self.bot.log.warning('生成失败 task=%s version=%s category=%s retryable=%s',

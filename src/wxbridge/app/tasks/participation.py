@@ -7,17 +7,17 @@ import time
 from wxbridge.ai.context.selection import ContextError, read_context
 from wxbridge.ai.background.participation import build_prompt, parse_decision
 from wxbridge.ai.roles import model_settings
-from wxbridge.app.task_policy import participation_failure_code
-from wxbridge.app.workers import WorkerLease, WorkerCleanupError
+from wxbridge.app.tasks.policy import participation_failure_code
+from wxbridge.app.execution.workers import WorkerLease, WorkerCleanupError
 
 
 class ParticipationController:
     def __init__(self, session):
-        self.bot, self.cfg = session, session.cfg['participation']
+        self.bot, self.cfg = session, session.cfg.participation
         self.private = not session.chat_id.endswith('@chatroom')
         self.job, self.pending, self.started = None, None, None
-        self.bot.journal.migrate_participation(time.time(), self.bot.cfg['target']['max_message_age_seconds'])
-        self.update(enabled=self.cfg['enabled'], decision_required=not self.private, outcome='waiting', error='')
+        self.bot.journal.migrate_participation(time.time(), self.bot.cfg.target.max_message_age_seconds)
+        self.update(enabled=self.cfg.enabled, decision_required=not self.private, outcome='waiting', error='')
         self.priority(time.time())
 
     def update(self, **fields):
@@ -38,7 +38,7 @@ class ParticipationController:
     def priority(self, now):
         for task in self.bot.journal.tasks():
             self.expire_reply(task, now)
-        if not self.cfg['enabled']:
+        if not self.cfg.enabled:
             self.cancel('disabled')
             self.bot.journal.cancel_participation(now, code='disabled')
             with self.bot.journal.db:
@@ -50,12 +50,12 @@ class ParticipationController:
 
     def _reply_deadline(self, now):
         cfg = self.bot.cfg
-        timeout = model_settings(cfg, 'reply')['timeout_seconds']
-        if cfg['search']['enabled']:
-            timeout = max(timeout, cfg['search']['total_timeout_seconds'])
-        if cfg['vision']['enabled'] and cfg['vision'].get('download_enabled', False):
-            timeout += cfg['vision']['download_timeout_seconds']
-        return now+timeout+30+cfg['ui']['send_confirm_timeout_seconds']
+        timeout = model_settings(cfg, 'reply').options.timeout_seconds
+        if cfg.search.enabled:
+            timeout = max(timeout, cfg.search.total_timeout_seconds)
+        if cfg.vision.enabled and cfg.vision.download_enabled:
+            timeout += cfg.vision.download_timeout_seconds
+        return now+timeout+30+cfg.account.ui.send_confirm_timeout_seconds
 
     def cancel(self, reason='stopped'):
         if self.job:
@@ -92,7 +92,7 @@ class ParticipationController:
             self.update(outcome='error', error=code, last_duration_ms=duration)
             return
         approved = [identifier for task in tasks for identifier in task['trigger_ids']]
-        expired = all(now >= m['time']+self.bot.cfg['target']['max_message_age_seconds']
+        expired = all(now >= m['time']+self.bot.cfg.target.max_message_age_seconds
                       for m in snapshot['messages'])
         self.update(outcome='approved' if tasks else 'expired' if expired else 'silent', error='', last_duration_ms=duration,
             last_decision=dict(at=now, source_ids=snapshot['source_ids'], reply_to=approved,
@@ -107,7 +107,7 @@ class ParticipationController:
 
     def step(self, now, *, collect_only=False):
         self.priority(now)
-        if not self.cfg['enabled']:
+        if not self.cfg.enabled:
             return
         self._collect(now)
         if collect_only or self.job is not None:
@@ -117,10 +117,10 @@ class ParticipationController:
             if channel['running'] or channel['queued']:
                 self.update(outcome='waiting_background')
                 return
-        limit = self.cfg['max_batch_messages']
+        limit = self.cfg.max_batch_messages
         while limit:
             snapshot = self.bot.journal.reserve_participation(now,
-                debounce_seconds=self.cfg['debounce_seconds'], max_wait_seconds=self.cfg['max_wait_seconds'],
+                debounce_seconds=self.cfg.debounce_seconds, max_wait_seconds=self.cfg.max_wait_seconds,
                 max_batch_messages=limit)
             if snapshot is None:
                 return
@@ -154,7 +154,7 @@ class ParticipationController:
                 self.bot.journal.fail_participation(snapshot, now, code)
                 self.update(outcome='error', error=code)
                 return
-            timeout = model_settings(self.bot.cfg, 'participation')['timeout_seconds']
+            timeout = model_settings(self.bot.cfg, 'participation').options.timeout_seconds
             try:
                 with WorkerLease(self.bot.job_factory('participation', (self.bot.cfg, prompt,
                     dict(source_ids=snapshot['source_ids'])), timeout=timeout)) as lease:

@@ -2,6 +2,7 @@
 from contextvars import ContextVar
 from provider import ModelError, ModelRequest, capture_metrics
 from wxbridge.ai.roles import model_settings
+from wxbridge.config import json_value
 _scope = ContextVar('group_model_scope')
 
 def client_for(role):
@@ -21,9 +22,9 @@ class RoleRequest:
     def request(self, messages, *, tools=None, tool_choice=None, native_search=None, deadline=None, require_complete=False):
         self.job.check()
         before = len(self.metrics)
-        options = {k: v for k, v in self.cfg.items() if k in {'max_tokens', 'temperature', 'timeout_seconds', 'thinking', 'reasoning_effort', 'thinking_mode', 'thinking_budget_tokens'}}
+        options = json_value(self.cfg.options)
         try:
-            result = self.lane.get_client().generate(ModelRequest(messages, tools, tool_choice, native_search, model=self.cfg['model'], options=options), deadline=min(deadline, self.job.deadline) if deadline else self.job.deadline, require_complete=require_complete)
+            result = self.lane.get_client().generate(ModelRequest(messages, tools, tool_choice, native_search, model=self.cfg.model, options=options), deadline=min(deadline, self.job.deadline) if deadline else self.job.deadline, require_complete=require_complete)
             self.job.check()
             return result
         finally:

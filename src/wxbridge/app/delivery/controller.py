@@ -1,20 +1,21 @@
 """微信提交与数据库确认；只依赖发送所需的配置、存储和工作进程工厂。"""
 from __future__ import annotations
+from wxbridge.config import InstanceConfig
 
 import json
 import logging
 import time
 import uuid
-from wxbridge.app.confirmation import scan_confirmation
+from wxbridge.app.delivery.confirmation import scan_confirmation
 from wechat_linux.native.protocol import NativeError, text_parts
-from wxbridge.app.task_policy import submission_failure
+from wxbridge.app.tasks.policy import submission_failure
 from wxbridge.wechat.transport import native as native_transport
 
 log = logging.getLogger('wxbridge')
 
 
 class DeliveryController:
-    def __init__(self, cfg, journal, store, chat_id, chat_title, *, logger=None):
+    def __init__(self, cfg: InstanceConfig, journal, store, chat_id, chat_title, *, logger=None):
         self.cfg, self.journal, self.store = cfg, journal, store
         self.chat_id, self.chat_title, self.job = chat_id, chat_title, None
         self.log = logger if logger is not None else log
@@ -71,7 +72,7 @@ class DeliveryController:
             self.log.warning('发送明确失败 task=%s part=%s error=%s', task_id, part, failure['error'])
             return
         with self.journal.db:
-            task["intent"]["deadline"] = time.time() + float(self.cfg["ui"]["send_confirm_timeout_seconds"])
+            task["intent"]["deadline"] = time.time() + float(self.cfg.account.ui.send_confirm_timeout_seconds)
             task["intent"]["ui"] = metadata
             self.journal.put(task)
 
@@ -107,7 +108,7 @@ class DeliveryController:
         if not task or task["phase"] not in ("queued", "external") or task["intent"] or task["blocked_reason"]:
             return
         notice = (task.get("notice") or {}).get("state") == "pending"
-        if notice and not self.cfg.get('search', {}).get('feedback_enabled', False):
+        if notice and not self.cfg.search.feedback_enabled:
             # 关闭提示后不补发旧的未提交提示；已有意图在上面的分支等待数据库确认。
             with self.journal.db:
                 task.pop('notice', None)
@@ -117,7 +118,7 @@ class DeliveryController:
             return
         if now < task.get("retry_at", 0):
             return
-        if now - self.journal.get("last_success", 0) < float(self.cfg["target"].get("cooldown_seconds", 8)):
+        if now - self.journal.get("last_success", 0) < float(self.cfg.target.cooldown_seconds):
             return
         return task, notice
 
@@ -140,7 +141,7 @@ class DeliveryController:
         now = time.time()
         if validate and not validate(task, now):
             return
-        if self.cfg["ui"].get("dry_run"):
+        if self.cfg.account.ui.dry_run:
             with self.journal.db:
                 if notice:
                     task["notice"].update(state="confirmed", text="")
@@ -161,7 +162,7 @@ class DeliveryController:
             with self.journal.db:
                 start=task['next_chunk']
                 try:
-                    parts=[part for chunk in task['chunks'][start:] for part in text_parts(chunk,self.cfg['native_api']['max_text_bytes'])]
+                    parts=[part for chunk in task['chunks'][start:] for part in text_parts(chunk,self.cfg.account.native_api.max_text_bytes)]
                 except (NativeError,UnicodeError) as exc:
                     task['blocked_reason']='native_text_limit:'+getattr(exc,'code','invalid_text')
                     self.journal.put(task)
@@ -170,7 +171,7 @@ class DeliveryController:
                     task['chunks']=task['chunks'][:start]+parts
                     self.journal.put(task)
         baseline = self.store.last_local_id(task.get('delivery_chat_id',self.chat_id))
-        timeout = float(self.cfg["ui"]["send_confirm_timeout_seconds"])
+        timeout = float(self.cfg.account.ui.send_confirm_timeout_seconds)
         options = dict(transport='native_service', request_id=task.get('external_request_id') or 'bot:'+uuid.uuid4().hex) if native else {}
         self.journal.intend(task["id"], baseline, now, timeout, kind="notice" if notice else "reply", **options)
         try:

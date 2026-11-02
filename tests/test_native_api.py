@@ -1,5 +1,6 @@
 """Synthetic native API tests. No live config, Frida attachment, models or WeChat sends."""
 from __future__ import annotations
+from tests.support.configuration import replace_config, update_config, snapshot
 from tests.support.model_support import default_config
 from contextlib import nullcontext
 
@@ -17,8 +18,8 @@ import sys
 import unittest
 from unittest.mock import Mock, patch
 
-from wxbridge.app.delivery import DeliveryController
-from wxbridge.config import DEFAULTS
+from wxbridge.app.delivery.controller import DeliveryController
+from wxbridge.config import default_document
 from wechat_linux.native import helper
 from wxbridge.native.api import NativeAPI
 from wxbridge.native.client import NativeClient
@@ -74,12 +75,13 @@ class ProtocolTests(unittest.TestCase):
         with self.assertRaisesRegex(NativeError,'connection_closed'):receive(Stream(b'\0'))
 
     def test_config_validation_and_default_off(self):
-        self.assertFalse(settings(DEFAULTS)['enabled'])
+        self.assertFalse(settings(default_config()).enabled)
         for key,value in [('enabled',1),('max_text_bytes',4097),('max_pending',0),
                           ('allowed_chat_ids',['nickname']),('socket','/tmp/'+'x'*110)]:
-            cfg=default_config();cfg['native_api'][key]=value
-            with self.subTest(key=key),self.assertRaises(NativeError):settings(cfg)
-        cfg=default_config();cfg['native_api']['helper_socket']=cfg['native_api']['socket']
+            with self.subTest(key=key),self.assertRaises((NativeError,ValueError)):
+                cfg=default_config();cfg=replace_config(cfg,'.'.join(('account','native_api',key)),value)
+                settings(cfg)
+        cfg=default_config();cfg = replace_config(cfg, 'account.native_api.helper_socket', cfg.account.native_api.socket)
         with self.assertRaises(NativeError):settings(cfg)
 
     def test_privileged_helper_revalidates_input_and_allowlist(self):
@@ -135,8 +137,8 @@ class JournalTests(JournalFixture):
         self.assertEqual(self.journal.external_status(payload()['request_id'])['state'],'confirming')
 
     def test_external_ready_task_never_calls_model_generation(self):
-        from wxbridge.app.bot import GroupSession
-        from wxbridge.app.reply import ReplyController
+        from wxbridge.app.sessions.group import GroupSession
+        from wxbridge.app.tasks.reply import ReplyController
         self.enqueue();bot=GroupSession.__new__(GroupSession)
         bot.cfg=self.cfg;bot.journal=self.journal;bot.replies=ReplyController(bot);bot.job_factory=Mock()
         bot.replies.collect();bot.replies.start();bot.job_factory.assert_not_called()
@@ -193,18 +195,18 @@ class JournalTests(JournalFixture):
         accepted=self.enqueue();self.journal.intend(accepted['task_id'],2,100,10)
         job=Mock();job.poll.return_value=dict(ok=False,ui={'error':'native_helper_timeout','operation':{'submitted':None}})
         self.delivery.job=(accepted['task_id'],0,job)
-        with patch('wxbridge.app.delivery.time.time',return_value=110):self.delivery.poll_result()
+        with patch('wxbridge.app.delivery.controller.time.time',return_value=110):self.delivery.poll_result()
         self.journal.close();self.journal=self.open();self.journal.recover(120)
         delivery=DeliveryController(self.cfg,self.journal,self.store,'synthetic@chatroom','合成群')
         self.store.messages_after.return_value=[]
-        with patch('wxbridge.app.delivery.time.time',return_value=131):delivery.confirm()
+        with patch('wxbridge.app.delivery.controller.time.time',return_value=131):delivery.confirm()
         factory=Mock();delivery.send(factory);factory.assert_not_called()
         self.assertEqual(self.journal.external_status(payload()['request_id'])['state'],'blocked')
         self.assertTrue(self.enqueue()['duplicate'])
 
     def test_main_api_dedupes_before_reading_chat_database(self):
         self.enqueue();api=NativeAPI.__new__(NativeAPI)
-        api.bot=Mock(journal=self.journal,store=Mock());api.cfg=copy.deepcopy(DEFAULTS['native_api'])
+        api.bot=Mock(journal=self.journal,store=Mock());api.cfg=self.cfg.account.native_api
         self.assertTrue(api.handle(payload())['duplicate']);api.bot.store.last_local_id.assert_not_called()
         with self.assertRaisesRegex(NativeError,'chat_not_allowed'):api.handle(payload(chat='other@chatroom'))
 
@@ -247,7 +249,7 @@ class JournalTests(JournalFixture):
         job.poll.return_value=dict(ok=False,ui={'error':'native_helper_timeout','operation':{'submitted':None}})
         factory=Mock(return_value=job);self.delivery.send(factory);self.delivery.poll_result()
         self.store.messages_after.return_value=[]
-        with patch('wxbridge.app.delivery.time.time',return_value=time.time()+60):self.delivery.confirm()
+        with patch('wxbridge.app.delivery.controller.time.time',return_value=time.time()+60):self.delivery.confirm()
         self.delivery.send(factory);self.assertEqual(factory.call_count,1)
         self.assertTrue(self.journal.task(identifier)['blocked_reason'])
 
@@ -259,7 +261,7 @@ class JournalTests(JournalFixture):
         self.assertEqual(factory.call_args.args[0],'native_send')
 
     def test_native_dry_run_finishes_without_any_send_worker(self):
-        identifier=self.normal_task();self.cfg['ui']['dry_run']=True;factory=Mock()
+        identifier=self.normal_task();self.cfg = replace_config(self.cfg, 'account.ui.dry_run', True, owner=self);factory=Mock()
         self.delivery.send(factory);factory.assert_not_called()
         self.assertEqual(self.journal.task(identifier)['phase'],'done')
 
@@ -273,7 +275,7 @@ class JournalTests(JournalFixture):
         self.assertEqual(factory.call_args.args[1][2],chunks[0])
 
     def test_unrepresentable_fragment_is_blocked_before_any_submission(self):
-        identifier=self.normal_task(['😀']);self.cfg['native_api']['max_text_bytes']=1
+        identifier=self.normal_task(['😀']);self.cfg = replace_config(self.cfg, 'account.native_api.max_text_bytes', 1, owner=self)
         factory=Mock();self.delivery.send(factory);factory.assert_not_called()
         task=self.journal.task(identifier)
         self.assertIsNone(task['intent']);self.assertTrue(task['blocked_reason'].startswith('native_text_limit:'))
@@ -284,7 +286,7 @@ class SocketTests(unittest.TestCase):
     def test_real_partial_frames_roundtrip_and_socket_permissions(self):
         parent=Path(__file__).resolve().parents[1]/'.test-tmp';parent.mkdir(exist_ok=True)
         with tempfile.TemporaryDirectory(dir=parent) as directory:
-            cfg=default_config();cfg['native_api'].update(enabled=True,socket=str(Path(directory)/'api.sock'))
+            cfg=default_config();cfg = update_config(cfg, 'account.native_api', enabled=True, socket=str(Path(directory)/'api.sock'))
             bot=Mock(cfg=cfg);bot.journal.external_duplicate.return_value={'state':'queued','duplicate':True}
             with patch('wxbridge.native.api.require_memory_directory'):api=NativeAPI(bot)
             try:
@@ -296,12 +298,12 @@ class SocketTests(unittest.TestCase):
                     client.sendall(frame[2:]);api.tick();api.tick()
                     self.assertEqual(receive(client)['result']['state'],'queued')
             finally:api.close()
-            self.assertFalse(Path(cfg['native_api']['socket']).exists())
+            self.assertFalse(Path(cfg.account.native_api.socket).exists())
 
 
 class SenderTests(unittest.TestCase):
     def setUp(self):
-        self.cfg=default_config();self.cfg['native_api']['enabled']=True;self.cfg['ui']['dry_run']=False
+        self.cfg=default_config();self.cfg = replace_config(self.cfg, 'account.native_api.enabled', True, owner=self);self.cfg = replace_config(self.cfg, 'account.ui.dry_run', False, owner=self)
 
     def test_service_submit_never_constructs_desktop_sender_even_with_a_draft(self):
         from wxbridge.native.sender import submit
@@ -322,11 +324,11 @@ class SenderTests(unittest.TestCase):
     def test_disabled_dry_run_or_wrong_target_cannot_reach_helper(self):
         from wxbridge.native.sender import submit
         for change,target in [({'enabled':False},'filehelper'),({},'unlisted@chatroom')]:
-            cfg=copy.deepcopy(self.cfg);cfg['native_api'].update(change)
+            cfg=copy.deepcopy(self.cfg);cfg = update_config(cfg, 'account.native_api', values=change)
             with patch('wechat_linux.native.sender.request') as ipc:
                 with self.assertRaises(Exception):submit(cfg, target, '合成', 'test')
                 ipc.assert_not_called()
-        cfg=copy.deepcopy(self.cfg);cfg['ui']['dry_run']=True
+        cfg=copy.deepcopy(self.cfg);cfg = replace_config(cfg, 'account.ui.dry_run', True)
         with patch('wechat_linux.native.sender.request') as ipc:
             with self.assertRaises(Exception):submit(cfg, 'filehelper', '合成', 'test')
             ipc.assert_not_called()

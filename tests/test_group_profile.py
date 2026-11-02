@@ -1,4 +1,5 @@
 """Synthetic group profiles: persistence, evidence binding and owner-loop lifecycle."""
+from tests.support.configuration import replace_config, update_config, snapshot
 from copy import deepcopy
 import json
 from pathlib import Path
@@ -10,7 +11,7 @@ from unittest.mock import Mock, patch
 from tests.support.model_support import default_config
 from tests.support.synthetic import NOW, msg
 from wxbridge.ai.background import group_profile as analysis
-from wxbridge.app.group_profile_controller import ProfileController, participant_ids
+from wxbridge.app.tasks.group_profile import ProfileController, participant_ids
 from wxbridge.storage.group_profile import GroupProfile
 
 
@@ -170,8 +171,8 @@ class ProfileControllerTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory(dir=root)
         self.addCleanup(temporary.cleanup)
         cfg = default_config()
-        cfg['_instance_config_file'] = str(Path(temporary.name)/'config.json')
-        cfg['profile'].update(enabled=True, batch_size=2, min_new_messages=2)
+        cfg = replace_config(cfg, 'metadata.path', str(Path(temporary.name)/'config.json'))
+        cfg = update_config(cfg, 'profile', enabled=True, batch_size=2, min_new_messages=2)
         store = Mock(self_wxid='wxid_bot')
         store.contacts.return_value = {'wxid_bot': dict(nick_name='机器人'),
             'wxid_a': dict(nick_name='昵称甲', remark='备注甲', alias='微信号甲'),
@@ -183,7 +184,7 @@ class ProfileControllerTests(unittest.TestCase):
             chat_title='合成群', journal={'identity': IDENTITY}, memory=SimpleNamespace(store=None), last_local_id=10,
             models=Mock(), metrics=Mock(), has_foreground_tasks=Mock(return_value=False), job_factory=Mock())
         self.session.models.status.return_value = {'background': dict(running=False, queued=0)}
-        self.clock = patch('wxbridge.app.group_profile_controller.time.time', return_value=NOW)
+        self.clock = patch('wxbridge.app.tasks.group_profile.time.time', return_value=NOW)
         self.clock.start()
         self.addCleanup(self.clock.stop)
         self.controller = ProfileController(self.session)

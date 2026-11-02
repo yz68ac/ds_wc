@@ -6,8 +6,10 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from wxbridge.config import DEFAULTS, migrate_instance_data, resolve_config
-from wxbridge.ai.roles import validate_models
+from wxbridge.config import migrate_instance_data
+from wxbridge.config import default_document
+from wxbridge.config.validation import validate_document as resolve_config
+from tests.support.configuration import validate_models
 
 
 class ParticipationConfigTests(unittest.TestCase):
@@ -31,7 +33,7 @@ class ParticipationConfigTests(unittest.TestCase):
             cfg = self.resolve(data)
         self.assertEqual(data, before)
         self.assertEqual(cfg['participation']['debounce_seconds'], 0)
-        self.assertEqual(cfg['models'], DEFAULTS['models'])
+        self.assertEqual(cfg['models'], default_document()['models'])
         self.assertEqual(cfg['target']['max_message_age_seconds'], 45)
 
     def test_legacy_keys_are_rejected_instead_of_runtime_fallback(self):
@@ -86,7 +88,7 @@ class ParticipationConfigTests(unittest.TestCase):
         self.assertEqual(new['participation']['debounce_seconds'], 0)
 
     def test_model_id_is_required_when_participation_is_enabled(self):
-        cfg = deepcopy(DEFAULTS)
+        cfg = deepcopy(default_document())
         cfg['models']['reply']['model'] = 'synthetic-reply'
         cfg['memory']['enabled'] = False
         names = ('openai', 'anthropic', 'deepseek')
@@ -102,7 +104,7 @@ class ParticipationConfigTests(unittest.TestCase):
         filename = Path(__file__).resolve().parents[1]/'examples/instance/config.example.jsonc'
         value = json.loads('\n'.join(line for line in filename.read_text(encoding='utf-8').splitlines()
                                      if not line.lstrip().startswith('//')))
-        self.assertEqual(set(value['participation']), set(DEFAULTS['participation']))
+        self.assertEqual(set(value['participation']), set(default_document()['participation']))
         self.assertNotIn('proactive', value)
         self.assertNotIn('trigger', value['target'])
 

@@ -1,5 +1,6 @@
 """Source-bound participation decisions; no reply generation, database or WeChat I/O."""
 from __future__ import annotations
+from wxbridge.config import InstanceConfig
 
 import json
 import time
@@ -26,12 +27,12 @@ def _source_ids(values):
 
 
 def address_names(cfg):
-    values = [cfg['target'].get('bot_name', ''), *cfg['participation'].get('address_names', [])]
+    values = [cfg.target.bot_name, *cfg.participation.address_names]
     return list(dict.fromkeys(value.strip() for value in values
                              if isinstance(value, str) and value.strip()))
 
 
-def build_prompt(cfg, rows, title, memory=None, *, source_ids, account='', profile=None):
+def build_prompt(cfg: InstanceConfig, rows, title, memory=None, *, source_ids, account='', profile=None):
     sources = _source_ids(source_ids)
     originals = {}
     for row in rows:
@@ -51,7 +52,7 @@ def build_prompt(cfg, rows, title, memory=None, *, source_ids, account='', profi
     chat = chat.fit(cfg)
     user = chat.text
 
-    private = cfg['target']['chat'].startswith('wxid_')
+    private = cfg.chat.startswith('wxid_')
     rules = ('\n\n'+CHAT_DATA_RULES
              +'机器人的有效称呼是'+json.dumps(address_names(cfg), ensure_ascii=False)+'。')
     if private:
@@ -102,13 +103,13 @@ def parse_decision(content, source_ids):
     return dict(reply_to=[identifier for identifier in sources if identifier in chosen])
 
 
-def evaluate(cfg, prompt, *, source_ids, timeout_seconds=None):
+def evaluate(cfg: InstanceConfig, prompt, *, source_ids, timeout_seconds=None):
     sources = _source_ids(source_ids)
     if not sources:
         return dict(reply_to=[])
     from wxbridge.ai.client import client_for
     from wxbridge.ai.roles import model_settings
-    timeout = model_settings(cfg, 'participation')['timeout_seconds']
+    timeout = model_settings(cfg, 'participation').options.timeout_seconds
     if timeout_seconds is not None:
         timeout = min(timeout, timeout_seconds)
     if timeout <= 0:

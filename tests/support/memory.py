@@ -1,4 +1,5 @@
 """Shared synthetic memory fixtures; contains no executable tests."""
+from tests.support.configuration import replace_config, update_config, snapshot
 from tests.support.model_support import default_config
 from pathlib import Path
 import tempfile
@@ -28,7 +29,7 @@ class MemoryFixture(unittest.TestCase):
         self.memory = MemoryStore(self.temp.name, IDENTITY)
         self.cfg = default_config()
 
-        self.cfg['system_prompt_file'] = str(ROOT/'prompts/system.md')
+        self.cfg = replace_config(self.cfg, 'system_prompt_file', str(ROOT/'prompts/system.md'), owner=self)
 
     def snap(self, identifier=1, sender="wxid_a", name="同名", when=NOW, context=None):
         m = msg(identifier, when, "我喜欢简洁直接的回复", sender)
@@ -39,8 +40,8 @@ class MemoryFixture(unittest.TestCase):
 class MemoryPipelineFixture(PipelineFixture):
     def enable(self):
         self.bot.close()
-        self.cfg["memory"].update(enabled=True, directory=str(Path(self.temp.name)/"memory"))
-        self.cfg["queue"]["debounce_seconds"] = 0
+        self.cfg = update_config(self.cfg, 'memory', enabled=True, directory=str(Path(self.temp.name)/"memory"), owner=self)
+        self.cfg = replace_config(self.cfg, 'queue.debounce_seconds', 0, owner=self)
         self.make_bot()
 
     def confirmed(self):

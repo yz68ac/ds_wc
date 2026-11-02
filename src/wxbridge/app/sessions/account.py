@@ -1,5 +1,6 @@
-"""One account owns the reader, model budget and ordered submission gate."""
+"""One account owns the shared reader and ordered submission gate."""
 from __future__ import annotations
+from wxbridge.config import AppConfig
 
 import time
 from pathlib import Path
@@ -10,14 +11,14 @@ from wxbridge.instances import queue_candidates
 
 
 class AccountRuntime:
-    def __init__(self, cfg, *, store=None):
+    def __init__(self, cfg: AppConfig, *, store=None):
         self.cfg = cfg
-        self.store = store if store is not None else WeChatStore(cfg['db_dir'], cfg['keys_file'], cfg['decrypted_dir'])
+        self.store = store if store is not None else WeChatStore(cfg.account.db_dir, cfg.account.keys_file, cfg.account.decrypted_dir)
         self.sessions = []
         self.inactive = []
-        self.send_gap = cfg.get('account', {}).get('send_interval_seconds', 1)
-        active = {Path(e['config']['queue']['file']) for e in cfg.get('instances', []) if e['enabled']}
-        root = Path(cfg['queue']['file'])
+        self.send_gap = cfg.account.send_interval_seconds
+        active = {Path(e.paths.queue_file) for e in cfg.instances.values() if e.enabled}
+        root = Path(cfg.paths.queue_file)
         from wxbridge.storage.journal import open_readonly
         try:
             for path in sorted(set(queue_candidates(cfg))-active):

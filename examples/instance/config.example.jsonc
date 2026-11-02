@@ -1,7 +1,7 @@
 // 实例配置示例：一个 instance/<id>/config.json 对应一个群聊或私聊。
 // <id> 是本地实例目录名，不是微信群 ID；例如 instance/my-group/。
 // 本文件含 // 注释；实际 config.json 使用标准 JSON，复制时先移除注释。
-// 未填写的选项按 config.defaults.json 补齐；修改后需重启机器人服务生效。
+// 未填写的选项按配置类默认值补齐；config.defaults.json 是自动生成的参考快照。修改后需 apply 实例或重启机器人。
 //
 // 启用前填写 chat、models.reply.model，并在实例目录中准备 system.md。
 // 本例 profile.enabled=true，因此还必须填写 models.group_profile.model。

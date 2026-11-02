@@ -11,7 +11,7 @@ import unittest
 from unittest.mock import patch
 
 from wxbridge.storage.journal import Journal, checked_path, read_status
-from wxbridge.app.runtime import instance_lock
+from wxbridge.app.execution.locks import instance_lock
 
 
 class JournalSafetyTests(unittest.TestCase):
@@ -160,7 +160,7 @@ class JournalSafetyTests(unittest.TestCase):
 
     @unittest.skipUnless(sys.platform == "linux", "实际 fcntl 锁在 Linux 验证")
     def test_single_instance_lock_excludes_second_listener(self):
-        with patch("wxbridge.app.locks.require_memory_directory"):
+        with patch("wxbridge.app.execution.locks.require_memory_directory"):
             with instance_lock(str(self.path)):
                 with self.assertRaisesRegex(ValueError, "resource_busy"):
                     with instance_lock(str(self.path)):

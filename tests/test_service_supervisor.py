@@ -1,5 +1,7 @@
 """Lifecycle tests with fake child processes; no live services or accounts."""
+from wxbridge.host.settings import WebConfig
 import json
+from http.client import BadStatusLine, IncompleteRead
 import os
 from pathlib import Path
 import signal
@@ -87,7 +89,7 @@ class SupervisorTests(unittest.TestCase):
         s.web_config=self.directory/'web.json'
         s.web_config.write_text(json.dumps(dict(host='127.0.0.1',port=8730)))
         s.web_config.chmod(0o600)
-        s.web_saved=dict(host='127.0.0.1',port=8730)
+        s.web_saved=WebConfig()
         s.web_effective=None
         s.web_enabled=True
         s.web_ready=False
@@ -95,7 +97,7 @@ class SupervisorTests(unittest.TestCase):
         s.web_error=''
         s.web_health_token='synthetic-start-token'
         s.probe_web=Mock()
-        self.web_reader=patch('wxbridge.host.supervisor.read_web',return_value=dict(s.web_saved))
+        self.web_reader=patch('wxbridge.host.supervisor.read_web',return_value=s.web_saved)
         self.web_reader.start();self.addCleanup(self.web_reader.stop)
         s.run_dir=self.directory
         s.enabled,s.stopping,s.ready,s.checkpoint_needed=True,False,False,False
@@ -235,7 +237,7 @@ class SupervisorTests(unittest.TestCase):
 
     def test_health_probe_uses_no_proxy_and_only_marks_running_generation(self):
         s=self.supervisor;self.desktop()
-        s.web_next_probe=0;s.web_launch_settings=dict(s.web_saved)
+        s.web_next_probe=0;s.web_launch_settings=s.web_saved
         response=Mock();response.status=200;response.read.return_value=b'{"status":"ok"}'
         response.headers={'X-WXBridge-Health':s.web_health_token}
         response.__enter__=Mock(return_value=response);response.__exit__=Mock(return_value=False)
@@ -253,7 +255,7 @@ class SupervisorTests(unittest.TestCase):
 
     def test_other_process_health_response_cannot_confirm_this_web_process(self):
         s=self.supervisor;self.desktop()
-        s.web_next_probe=0;s.web_launch_settings=dict(s.web_saved)
+        s.web_next_probe=0;s.web_launch_settings=s.web_saved
         response=Mock();response.status=200;response.read.return_value=b'{"status":"ok"}'
         response.headers={'X-WXBridge-Health':'another-process'}
         response.__enter__=Mock(return_value=response);response.__exit__=Mock(return_value=False)
@@ -264,10 +266,21 @@ class SupervisorTests(unittest.TestCase):
 
     def test_failed_health_probe_does_not_report_ready(self):
         s=self.supervisor;self.desktop()
-        s.web_next_probe=0;s.web_launch_settings=dict(s.web_saved)
+        s.web_next_probe=0;s.web_launch_settings=s.web_saved
         with patch('wxbridge.host.supervisor.urllib.request.build_opener',side_effect=OSError()):
             Supervisor.probe_web(s)
         self.assertFalse(s.web_ready);self.assertIsNone(s.web_effective)
+
+    def test_invalid_http_health_response_does_not_crash_the_supervisor(self):
+        s=self.supervisor;self.desktop();s.web_launch_settings=s.web_saved
+        for error in (BadStatusLine('invalid HTTP'),IncompleteRead(b'{')):
+            with self.subTest(error=type(error).__name__):
+                s.web_next_probe=0;s.web_ready=True
+                with patch('wxbridge.host.supervisor.urllib.request.build_opener',side_effect=error):
+                    Supervisor.probe_web(s)
+                self.assertFalse(s.web_ready)
+                self.assertEqual(s.web_error,'web_health_check_failed')
+                self.assertFalse(s.children[SESSION].stopping)
 
     def test_process_credentials_are_dropped_at_spawn(self):
         child=Child(BOT,['python','fixed-script.py'],uid=995,gid=984,groups=[984],cwd='/trusted')

@@ -1,4 +1,5 @@
 """Mixed tools, request isolation and hosted-search replay; no network or UI."""
+from tests.support.configuration import replace_config, update_config, snapshot
 from concurrent.futures import CancelledError
 from copy import deepcopy
 import json
@@ -22,7 +23,7 @@ def call(identifier, name, **arguments):
 class ToolLoopTests(unittest.TestCase):
     def setUp(self):
         self.cfg = default_config()
-        self.cfg['image_generation']['enabled'] = True
+        self.cfg = replace_config(self.cfg, 'image_generation.enabled', True, owner=self)
         self.messages = [dict(role='user', content='PRIVATE_CHAT')]
         self.client = Mock()
         self.client.check_complete.side_effect = Client.check_complete
@@ -40,24 +41,48 @@ class ToolLoopTests(unittest.TestCase):
         for search_enabled,image_enabled in ((False,False),(True,False),(False,True),(True,True)):
             with self.subTest(search=search_enabled,image=image_enabled):
                 cfg=deepcopy(self.cfg)
-                cfg['search']['enabled']=search_enabled
-                cfg['image_generation']['enabled']=image_enabled
+                cfg = replace_config(cfg, 'search.enabled', search_enabled)
+                cfg = replace_config(cfg, 'image_generation.enabled', image_enabled)
                 tools=get_enabled_tools(cfg,search_backend='external')
                 once=apply_tool_instructions(cfg,original,tools=tools)
                 twice=apply_tool_instructions(cfg,once,tools=tools)
                 text=twice[0]['content']
-                self.assertEqual(text.count('【联网工具规则】'),int(search_enabled))
-                self.assertEqual(text.count('【图片生成工具】'),int(image_enabled))
+                expected=set()
+                if search_enabled:expected.add('search')
+                if image_enabled:expected.add('image_generation')
+                parts=getattr(twice,'system_parts',{})
+                self.assertEqual(set(parts),expected)
+                for policy in parts.values():
+                    self.assertTrue(policy.strip())
+                    self.assertEqual(text.count(policy),1)
                 self.assertEqual(once,twice)
                 self.assertEqual(original,saved)
 
     def test_native_search_policy_is_included_without_a_client_search_tool(self):
-        cfg=deepcopy(self.cfg);cfg['image_generation']['enabled']=False
+        cfg=deepcopy(self.cfg);cfg = replace_config(cfg, 'image_generation.enabled', False)
         tools=get_enabled_tools(cfg,search_backend='native')
         self.assertEqual(tools,[])
         messages=apply_tool_instructions(cfg,self.messages,tools=tools)
-        self.assertIn('【联网工具规则】',messages[0]['content'])
-        self.assertNotIn('【图片生成工具】',messages[0]['content'])
+        self.assertEqual(set(messages.system_parts),{'search'})
+
+    def test_disabled_search_uses_reply_timeout_even_with_image_tool_enabled(self):
+        self.cfg = update_config(self.cfg, 'search', enabled=False, total_timeout_seconds=1, owner=self)
+        self.cfg = replace_config(self.cfg, 'models.reply.options.timeout_seconds', 240, owner=self)
+        self.client.request.return_value=model_result(dict(content='普通回复'))
+        with patch('wxbridge.ai.reply.runner.time.monotonic',return_value=100):
+            self.run_reply()
+        self.assertEqual(self.client.request.call_args.kwargs['deadline'],340)
+        with patch('wxbridge.ai.reply.runner.time.monotonic',return_value=100):
+            self.run_reply(deadline=180)
+        self.assertEqual(self.client.request.call_args.kwargs['deadline'],180)
+
+    def test_enabled_search_keeps_its_total_timeout(self):
+        self.cfg = update_config(self.cfg, 'search', enabled=True, total_timeout_seconds=90, owner=self)
+        self.cfg = replace_config(self.cfg, 'models.reply.options.timeout_seconds', 240, owner=self)
+        self.client.request.return_value=model_result(dict(content='普通回复'))
+        with patch('wxbridge.ai.reply.runner.time.monotonic',return_value=100):
+            self.run_reply()
+        self.assertEqual(self.client.request.call_args.kwargs['deadline'],190)
 
     def test_mixed_image_and_web_calls_all_return_results_in_original_order(self):
         calls = [call('image', 'generate_image', prompt='PRIVATE_DRAWING'),
@@ -76,7 +101,7 @@ class ToolLoopTests(unittest.TestCase):
         self.assertNotIn('PRIVATE', repr(reply))
 
     def test_search_budget_does_not_disable_images(self):
-        self.cfg['search']['max_requests'] = 1
+        self.cfg = replace_config(self.cfg, 'search.max_requests', 1, owner=self)
         self.client.request.side_effect = [model_result(dict(tool_calls=[call('s', 'web_search', query='synthetic')])),
             model_result(dict(tool_calls=[call('i', 'generate_image', prompt='cat')])), model_result(dict(content=''))]
         reply = self.run_reply()
@@ -102,7 +127,7 @@ class ToolLoopTests(unittest.TestCase):
         self.backend.search.assert_called_once()
 
     def test_disabled_unknown_and_bad_arguments_get_correlated_errors(self):
-        self.cfg['image_generation']['enabled'] = False
+        self.cfg = replace_config(self.cfg, 'image_generation.enabled', False, owner=self)
         bad = call('bad-json', 'web_search')
         bad['function']['arguments'] = 'PRIVATE_INVALID_JSON'
         self.client.request.side_effect = [model_result(dict(tool_calls=[bad,
@@ -159,7 +184,7 @@ class ToolLoopTests(unittest.TestCase):
             self.run_reply(check=check)
 
     def test_round_limit_does_not_execute_extra_tools(self):
-        self.cfg['search']['max_tool_rounds'] = 0
+        self.cfg = replace_config(self.cfg, 'search.max_tool_rounds', 0, owner=self)
         self.client.request.return_value = model_result(dict(tool_calls=[call('s', 'web_search', query='synthetic')]))
         reply = self.run_reply()
         self.assertIn('tool_limit', reply.search['errors'])
@@ -187,12 +212,22 @@ class ToolLoopTests(unittest.TestCase):
 
 
 class HostedToolCombinationTests(unittest.TestCase):
+    def test_auto_respects_standalone_provider_capability_override(self):
+        from dataclasses import replace
+        from wxbridge.ai.tools.native_search import resolve_search_backend
+        cfg=default_config()
+        cfg=replace(cfg,search=replace(cfg.search,backend='auto'))
+        client=Mock(spec=Client)
+        client.adapter=Mock(native_search_supported=True)
+        client.cfg={'native_search_supported':False}
+        self.assertEqual(resolve_search_backend(cfg,client),'external')
+
     def test_hosted_search_and_custom_image_tool_replay_through_real_adapters(self):
         for protocol in ('openai_responses', 'anthropic'):
             with self.subTest(protocol=protocol):
                 cfg = default_config()
-                cfg['search']['backend'] = 'native'
-                cfg['image_generation']['enabled'] = True
+                cfg = replace_config(cfg, 'search.backend', 'native')
+                cfg = replace_config(cfg, 'image_generation.enabled', True)
                 if protocol == 'openai_responses':
                     wire = dict(status='completed', output=[dict(type='function_call', call_id='i',
                         name='generate_image', arguments='{"prompt":"cat"}')])

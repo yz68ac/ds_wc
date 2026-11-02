@@ -1,4 +1,6 @@
 """Synthetic multi-group isolation and account scheduling; no live credentials."""
+from tests.support.configuration import replace_config, update_config, snapshot
+from tests.support.configuration import replace_config, update_config, snapshot
 from tests.support.model_support import default_config
 from contextlib import nullcontext
 from copy import deepcopy
@@ -13,8 +15,8 @@ from unittest.mock import Mock, patch
 from tests.support.synthetic import NOW, msg
 from tests.support.pipeline import FakeJob
 from wxbridge.ai.roles import model_settings
-from wxbridge.app.coordinator import Coordinator
-from wxbridge.app.native_gateway import AccountNativeService
+from wxbridge.app.sessions.coordinator import Coordinator
+from wxbridge.app.delivery.native_gateway import AccountNativeService
 from wxbridge.config import load_config
 from wxbridge.instances import enabled_instances, runtime_locks
 from wechat_linux.errors import NativeError
@@ -27,18 +29,18 @@ class InstanceConfigTests(InstanceFixture):
         self.instance_data[1]['models']['reply']['model']='beta-model'
         cfg=self.load()
         a,b=[c for _,c in enabled_instances(cfg)]
-        self.assertEqual(model_settings(a)['model'],'alpha-model')
-        self.assertEqual(model_settings(b)['model'],'beta-model')
-        self.assertNotEqual(a['queue']['file'],b['queue']['file'])
-        self.assertEqual(a['system_prompt_file'],str((self.root/'instance/alpha/system.md').resolve()))
-        a['models']['reply']['model']='changed'
-        self.assertEqual(cfg['instances'][0]['config']['models']['reply']['model'],'alpha-model')
+        self.assertEqual(model_settings(a).model,'alpha-model')
+        self.assertEqual(model_settings(b).model,'beta-model')
+        self.assertNotEqual(a.paths.queue_file,b.paths.queue_file)
+        self.assertEqual(a.system_prompt_file,str((self.root/'instance/alpha/system.md').resolve()))
+        a = replace_config(a, 'models.reply.model', 'changed')
+        self.assertEqual(list(cfg.instances.values())[0].models.reply.model,'alpha-model')
 
     def test_disabled_unconfigured_instance_is_allowed(self):
         self.instance_data[0].update(enabled=False,chat='')
         self.instance_data[0]['models']['reply']['model']=''
         cfg=self.load()
-        self.assertFalse(cfg['instances'][0]['enabled'])
+        self.assertFalse(list(cfg.instances.values())[0].enabled)
         self.assertEqual([name for name,_ in enabled_instances(cfg)],['beta'])
 
     def test_root_group_configuration_is_rejected(self):
@@ -147,7 +149,7 @@ class MultiGroupTests(MultiGroupFixture):
         self.assertEqual(self.active('generate')[0].owner, 'beta')
 
     def test_external_request_ids_are_account_wide_and_routed_by_chat(self):
-        service = AccountNativeService(self.coordinator, self.cfg['native_api'])
+        service = AccountNativeService(self.coordinator, self.cfg.account.native_api)
         value = dict(op='send_text', request_id='sample:one', chat_id=CHATS[1], text='合成外部请求')
         accepted = service.handle(value)
         self.assertEqual(self.coordinator.sessions[0].journal.tasks(), [])
@@ -161,8 +163,7 @@ class MultiGroupTests(MultiGroupFixture):
         self.add(0, 1); self.tick()
         self.coordinator.close()
         changed = deepcopy(self.cfg)
-        changed['instances'][0]['chat'] = CHATS[1]
-        changed['instances'][0]['config']['target']['chat'] = CHATS[1]
+        changed=replace_config(changed,'instances.alpha.chat',CHATS[1])
         with self.assertRaisesRegex(ValueError, '队列的微信账号或目标群不匹配'):
             Coordinator(changed, store=self.store)
         self.coordinator = self.make()
@@ -177,7 +178,7 @@ class MultiGroupTests(MultiGroupFixture):
 
     def test_account_status_keeps_each_instances_context_metrics_and_policy(self):
         first, second = self.coordinator.sessions
-        first.cfg['target'].update(context_max_chars=7500,context_recent_messages=12)
+        first.cfg = update_config(first.cfg, 'target', context_max_chars=7500, context_recent_messages=12, owner=first)
         reply=dict(chars=1234,selected=30,retained=10,omitted=20,scanned=200,scan_limit_hit=False)
         participation=dict(chars=567,selected=5,retained=5,omitted=0,scanned=1000,scan_limit_hit=True)
         with first.journal.db:first.journal.set('context',dict(reply=reply))
@@ -203,32 +204,32 @@ class MultiGroupTests(MultiGroupFixture):
 
 
     def test_cli_selection_and_multi_run_share_one_owner(self):
-        from wxbridge.debug_cli import main
+        from wxbridge_cli.debug import main
         from wxbridge.app.runtime import run_bot
         from contextlib import nullcontext
         cfg = deepcopy(self.cfg)
-        with patch('wxbridge.config.load_config', return_value=cfg), patch('wxbridge.debug_cli.memory_command', return_value=0) as memory:
+        with patch('wxbridge.config.load_config', return_value=cfg), patch('wxbridge_cli.debug.memory_command', return_value=0) as memory:
             self.assertEqual(main(['--instance', 'beta', 'memory', 'status']), 0)
-        self.assertEqual(memory.call_args.args[0]['target']['chat'], CHATS[1])
+        self.assertEqual(memory.call_args.args[0].chat, CHATS[1])
         with patch('wxbridge.app.runtime.instance_lock', side_effect=lambda v:nullcontext()) as locking, \
              patch('wxbridge.app.runtime.setup_logging'), \
-             patch('wxbridge.app.coordinator.Coordinator') as make:
+             patch('wxbridge.app.sessions.coordinator.Coordinator') as make:
             run_bot(cfg, once=True)
             self.assertEqual(make.call_count, 1)
             self.assertEqual(len({c.args[0] for c in locking.call_args_list}), 4)
             make.return_value.close.assert_called_once()
 
     def test_disabled_instance_keeps_unknown_send_gate_and_request_history(self):
-        service = AccountNativeService(self.coordinator, self.cfg['native_api'])
+        service = AccountNativeService(self.coordinator, self.cfg.account.native_api)
         value = dict(op='send_text', request_id='disabled:one', chat_id=CHATS[0], text='合成外部请求')
         service.handle(value)
         self.tick()
         self.assertEqual(len(self.active('native_send')), 1)
         self.coordinator.close()
-        self.cfg['instances'][0]['enabled'] = False
+        self.cfg = replace_config(self.cfg, '.'.join(map(str, ('instances', 0, 'enabled',))), False, owner=self)
         self.coordinator = self.make()
         self.assertTrue(self.coordinator.account.status()['send_blocked'])
-        service = AccountNativeService(self.coordinator, self.cfg['native_api'])
+        service = AccountNativeService(self.coordinator, self.cfg.account.native_api)
         self.assertTrue(service.handle(value)['duplicate'])
         self.add(1, 1); self.tick(); self.finish('beta')
         self.assertFalse(self.active('native_send'))

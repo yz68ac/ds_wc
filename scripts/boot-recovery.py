@@ -78,7 +78,7 @@ def runtime():
 
 def configured_groups(*, include_disabled=False):
     sys.path.insert(0, str(APP/'src' if (APP/'src').is_dir() else APP))
-    from wxbridge.app.operations import configured_groups as groups
+    from wxbridge.app.status.paths import configured_groups as groups
     return groups(APP, RUN, include_disabled=include_disabled)
 
 
@@ -108,7 +108,7 @@ def checkpoint():
     results = {}
     for identifier, cfg, reuse in groups:
         output = PERSIST/'cursor.json' if reuse else PERSIST/'instances'/identifier/'cursor.json'
-        result = checkpoint_one(Path(cfg['queue']['file']), output)
+        result = checkpoint_one(Path(cfg.paths.queue_file), output)
         if identifier is None:
             return result
         results[identifier] = result
@@ -131,42 +131,43 @@ def probe(keys=None, *, verify=False):
     from wxbridge.wechat.store import WeChatStore
     cfg = load_config(APP/'config.json')
     if keys:
-        cfg['keys_file'] = str(keys)
+        from wxbridge.config import prepare_runtime
+        cfg = prepare_runtime(cfg, keys_file=keys)
     with open(os.devnull, 'w') as sink, contextlib.redirect_stdout(sink):
-        store = WeChatStore(cfg['db_dir'], cfg['keys_file'], cfg['decrypted_dir'])
-        groups = [(e['id'], e['config'], False) for e in cfg['instances'] if e['enabled']]
+        store = WeChatStore(cfg.account.db_dir, cfg.account.keys_file, cfg.account.decrypted_dir)
+        groups = [(e.id, e, False) for e in cfg.instances.values() if e.enabled]
         if not groups:
             raise ValueError('no_enabled_instances')
         states = []
         for identifier, active_cfg, reuse in groups:
-            chat, title = store.resolve_chat(active_cfg['target']['chat'])
+            chat, title = store.resolve_chat(active_cfg.chat)
             identity = dict(account=store.self_wxid, chat=chat)
             from wxbridge.instances import CHAT_ID
             if not identity['account'] or not CHAT_ID.fullmatch(chat):
                 raise ValueError('wechat_account_not_ready')
-            if identifier is not None and chat != active_cfg['target']['chat']:
+            if identifier is not None and chat != active_cfg.chat:
                 raise ValueError('instance_chat_identity_mismatch')
             maximum = store.last_local_id(chat)
             states.append((identifier, active_cfg, reuse, identity, maximum))
-        if cfg['ui']['backend']=='native_service':
+        if cfg.account.ui.backend=='native_service':
             from wxbridge.native.sender import readiness
             readiness(cfg)
         else:
             # Desktop backends still require a discoverable target chat.
             from wxbridge.wechat.ui import A11y
-            ui = A11y(cfg['ui'])
+            ui = A11y(cfg.account.ui)
             if ui.chat_is_selected(title) is not True and ui.find_chat_item(title) is None:
                 raise ValueError('wechat_login_or_target_chat_not_visible')
     results = {}
     for identifier, active_cfg, reuse, identity, maximum in states:
         cursor_file = PERSIST/'cursor.json' if reuse else PERSIST/'instances'/identifier/'cursor.json'
-        queue_file = Path(active_cfg['queue']['file'])
+        queue_file = Path(active_cfg.paths.queue_file)
         if cursor_file.exists():
             state = restored_state(json.loads(cursor_file.read_text()), identity, maximum)
             if not verify and not queue_file.exists():
                 from wxbridge.storage.memoryfs import require_memory_directory
-                require_memory_directory(str(Path(active_cfg['state_file']).parent))
-                atomic_json(Path(active_cfg['state_file']), state)
+                require_memory_directory(str(Path(active_cfg.paths.state_file).parent))
+                atomic_json(Path(active_cfg.paths.state_file), state)
         if queue_file.exists():
             from wxbridge.storage.inspection import inspect_queue
             if inspect_queue(queue_file).identity != identity:

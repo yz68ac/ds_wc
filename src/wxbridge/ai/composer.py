@@ -1,5 +1,6 @@
 """Shared system instructions, prompt composition and source-bound reference slots."""
 from __future__ import annotations
+from wxbridge.config import InstanceConfig
 
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -10,17 +11,17 @@ from wxbridge.ai.context.selection import ContextError
 from wxbridge.ai.context.payload import compact_reference, encode_payload, fit_payload
 
 
-def system_prompt(cfg):
-    filename = cfg.get('system_prompt_file')
+def system_prompt(cfg: InstanceConfig):
+    filename = cfg.system_prompt_file
     if filename:
         path = Path(filename)
         if not path.is_absolute():path = config.PROJECT_ROOT/path
-        try:text = path.read_text(encoding='utf-8-sig')
+        try: text = path.read_text(encoding='utf-8-sig')
         except (OSError,UnicodeError) as exc:
             raise ContextError(f'无法读取系统提示词文件：{path}（{type(exc).__name__}），取消回复') from exc
         if not text.strip():raise ContextError(f'系统提示词文件为空：{path}，取消回复')
-    else:text = '你是群聊助手，请结合上下文回答当前请求。'
-    return text.replace('{bot_name}',cfg['target'].get('bot_name') or '助手')
+    else: text = '你是群聊助手，请结合上下文回答当前请求。'
+    return text.replace('{bot_name}',cfg.target.bot_name or '助手')
 
 
 @dataclass(frozen=True)
@@ -47,14 +48,29 @@ def reference_source(reference):
 
 @dataclass(frozen=True)
 class PromptLayout:
+    """引用媒体绑定前的提示词布局快照，供本地定位、校验和重新裁剪上下文。
+
+    frozen 只禁止字段重新赋值，内部字典仍可修改；绑定时复制后再处理。
+    repr=False 的字段不参与对象打印，避免展开账号、聊天正文等内部数据。
+    """
+
+    # 机器人账号的 wxid，绑定引用时核对账号归属。
     account: str = field(repr=False)
+    # 与 payload 对应的紧凑聊天 JSON 文本，用于定位用户消息中的原始数据区段。
     user_text: str = field(repr=False)
+    # 结构化聊天数据快照；绑定引用时复制它，再更新对应消息的 reference。
     payload: dict = field(repr=False)
+    # 本轮源消息的引用槽：记录源消息索引、消息 ID、原始引用和来源指纹。
     references: tuple[ReferenceSlot, ...] = field(repr=False)
+    # 按顺序保存本轮源消息的 (local_id, sender)，防止引用绑定到其他请求。
     trigger_keys: tuple = field(repr=False)
+    # 聊天上下文的字符预算，引用内容更新后仍须满足该上限。
     max_chars: int
+    # 超限处理策略（recent / strict），引用更新后的预算检查沿用此策略。
     budget_strategy: str
+    # wxid 到成员资料的快照，用其中的 alias 补全引用里的成员称呼。
     aliases: dict | None = field(default=None, repr=False)
+    # 历史选择结果及分组、优先级和扫描统计，供预算裁剪和 context_stats 更新使用。
     selection: object = field(default=None, repr=False)
 
 

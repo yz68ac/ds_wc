@@ -5,8 +5,8 @@ import time
 from wxbridge.ai.context.selection import memory_bounds
 from wxbridge.ai.background.memory import snapshot
 from wxbridge.ai.roles import model_settings
-from wxbridge.app.learning import enqueue_if_active, eligible_messages
-from wxbridge.app.workers import WorkerLease, WorkerCleanupError
+from wxbridge.app.tasks.learning import enqueue_if_active, eligible_messages
+from wxbridge.app.execution.workers import WorkerLease, WorkerCleanupError
 from wxbridge.config import PROJECT_ROOT
 from wxbridge.storage.person_memory import MemoryStore
 
@@ -16,15 +16,15 @@ class MemoryController:
         self.bot = session
         self.store, self.job, self.error, self.pruned_at = None, None, '', 0
         cfg = session.cfg
-        if cfg.get('memory', {}).get('enabled') and not cfg['ui'].get('dry_run') and not session.echo:
+        if cfg.memory.enabled and not cfg.account.ui.dry_run and not session.echo:
             try:
-                directory = Path(cfg['memory']['directory'])
+                directory = Path(cfg.paths.memory_directory)
                 if not directory.is_absolute():
                     directory = PROJECT_ROOT/directory
                 self.store = MemoryStore(directory, session.journal.get('identity'))
-                self.store.enable_learning(session.last_local_id, time.time(), cfg['memory']['learning']['enabled'])
-                settings = cfg['memory']['learning']
-                enabled = settings['enabled'] and settings['passive_enabled']
+                self.store.enable_learning(session.last_local_id, time.time(), cfg.memory.learning.enabled)
+                settings = cfg.memory.learning
+                enabled = settings.enabled and settings.passive_enabled
                 state = session.journal.get('passive_learning')
                 with session.journal.db:
                     if state is None or (enabled and not state.get('enabled', False)):
@@ -64,7 +64,7 @@ class MemoryController:
                 self.job = None
                 self.bot.metrics.record_models(result.get('model_metrics'))
                 if not result.get("ok"):
-                    from wxbridge.app.task_policy import memory_failure_code
+                    from wxbridge.app.tasks.policy import memory_failure_code
                     raise ValueError(memory_failure_code(result))
                 self.store.apply(result["proposal"], value, now)
                 self.bot.journal.finish_memory(record["id"], now)
@@ -97,7 +97,7 @@ class MemoryController:
                     self.bot.journal.put_memory(record)
                     self.bot.journal.set('memory_recovery', dict(task_id=record['id'], section='expression_learning',
                         reason=previous_error, stage='pending'))
-            if now < record["retry_at"] or now-self.bot.journal.get("memory_last_update", 0) < self.bot.cfg["memory"]["min_interval_seconds"]:
+            if now < record["retry_at"] or now-self.bot.journal.get("memory_last_update", 0) < self.bot.cfg.memory.min_interval_seconds:
                 return
             if any(t["generation"] == "pending" for t in self.bot.journal.tasks()):
                 return
@@ -111,13 +111,13 @@ class MemoryController:
             value = snapshot(self.bot.cfg, context, triggers, self.bot.journal.get("identity"), self.store, now,
                              window=record.get('window'), profile=self.bot.profile_snapshot([*context, *triggers]))
             if record.get('origin') == 'activity':
-                settings = self.bot.cfg['memory']['learning']
+                settings = self.bot.cfg.memory.learning
                 fresh = eligible_messages([m for m in context if m['local_id'] <= max(ids)], self.bot.store.self_wxid, end, settings,
                     max(self.store.data['watermark'], self.store.data['learning']['started_after_id'],
                         self.bot.journal.get('passive_learning', {}).get('started_after_id', 0)),
                     self.store.data.get('processed_ids', []))
-                if (not settings['enabled'] or not settings['passive_enabled'] or len(fresh) < settings['min_new_messages']
-                        or len({m['sender'] for m in fresh}) < settings['min_senders']):
+                if (not settings.enabled or not settings.passive_enabled or len(fresh) < settings.min_new_messages
+                        or len({m['sender'] for m in fresh}) < settings.min_senders):
                     self.bot.journal.finish_memory(record['id'], self.bot.journal.get('memory_last_update', 0))
                     return
             if not value["messages"] and not value.get("interactions"):
@@ -129,8 +129,8 @@ class MemoryController:
                              recovery=dict(section='expression_learning', reason=record['recovery_reason']))
                 if record['recovery_reason'] in source_errors:
                     value['dialogue'] = []  # 本批只用新本人发言；不从旧对白提取证据。
-            avatars = self.bot.cfg["memory"].get("avatar", {})
-            if avatars.get("enabled"):
+            avatars = self.bot.cfg.memory.avatar
+            if avatars.enabled:
                 value["avatars"] = {}
                 new_labels = {m["member"] for m in [*value["messages"], *value.get("interactions", [])]}
                 for uid in sorted(value["members"]):
@@ -139,19 +139,19 @@ class MemoryController:
                     initial = self.store.data["members"].get(uid, {}).get("initial_impression", {})
                     if initial.get("state") in ("ready", "forgotten", "expired"):
                         continue
-                    if now-initial.get("checked_at", 0) < avatars["retry_interval_seconds"]:
+                    if now-initial.get("checked_at", 0) < avatars.retry_interval_seconds:
                         continue
                     try:
-                        item = self.bot.store.avatar(uid, max_bytes=avatars["max_bytes"])
+                        item = self.bot.store.avatar(uid, max_bytes=avatars.max_bytes)
                         if not isinstance(item, dict):
                             raise ValueError("avatar_invalid_binding")
                     except Exception:
                         item = dict(available=False, error="avatar_unavailable")
                     value["avatars"][uid] = item
-                    if len(value["avatars"]) >= avatars["max_per_batch"]:
+                    if len(value["avatars"]) >= avatars.max_per_batch:
                         break
             with WorkerLease(self.bot.job_factory("memory", (self.bot.cfg, value),
-                                              timeout=model_settings(self.bot.cfg, 'memory')['timeout_seconds']+2)) as lease:
+                                              timeout=model_settings(self.bot.cfg, 'memory').options.timeout_seconds+2)) as lease:
                 with self.bot.journal.db:
                     record["state"] = "running"
                     self.bot.journal.put_memory(record)
@@ -172,7 +172,7 @@ class MemoryController:
                 code = str(exc) if re.fullmatch(r"memory_[a-z0-9_]{1,64}", str(exc)) else type(exc).__name__
                 if record:
                     record.update(state="pending", attempts=record["attempts"]+1, last_error=code,
-                                  retry_at=now+max(self.bot.cfg['memory']['learning']['min_interval_seconds'] if record.get('origin') == 'activity' else 0,
+                                  retry_at=now+max(self.bot.cfg.memory.learning.min_interval_seconds if record.get('origin') == 'activity' else 0,
                                                    min(300, 60*(record["attempts"]+1))))
                     terminal = code in ('memory_missing_api_key', 'memory_http_401', 'memory_http_403')
                     maximum = 8 if record.get('learning_suppressed') else 5

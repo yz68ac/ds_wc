@@ -3,7 +3,7 @@ BACKENDS = ('auto', 'atspi', 'xdotool', 'native_service')
 
 
 def backend(cfg):
-    value = cfg.get('ui', {}).get('backend', 'auto')
+    value = cfg.account.ui.backend
     if value not in BACKENDS:
         raise ValueError('ui.backend must be auto/atspi/xdotool/native_service')
     return value

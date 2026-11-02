@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 import time
 
 from provider import ModelError
+from wxbridge.config import InstanceConfig
 
 
 class ToolError(RuntimeError):
@@ -24,7 +25,7 @@ class ToolReply:
 
 @dataclass
 class ToolContext:
-    settings: dict = field(repr=False)
+    settings: InstanceConfig = field(repr=False)
     backend: str
     deadline: float
     allowed_tools: frozenset[str]
@@ -48,7 +49,7 @@ class ToolContext:
 
     @property
     def remaining_search_calls(self):
-        return max(0, int(self.settings.get('search', {}).get('max_requests', 3))
+        return max(0, int(self.settings.search.max_requests)
                    - (self.actions if self.backend == 'native' else self.calls))
 
     def search_started(self):

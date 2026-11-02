@@ -1,11 +1,12 @@
 """Shared synthetic pipeline fixtures; contains no executable tests."""
 from __future__ import annotations
+from tests.support.configuration import replace_config, update_config, snapshot
 from tests.support.model_support import default_config
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
-from wxbridge.app.bot import GroupSession
+from wxbridge.app.sessions.group import GroupSession
 from tests.support.synthetic import NOW, msg, history_page
 from tests.support.paths import ROOT
 
@@ -29,15 +30,15 @@ class PipelineFixture(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.cfg = default_config()
         # 旧链路用例每次 tick 显式模拟接收；实际轮询节流在 test_polling 单独验证。
-        self.cfg['poll_interval_seconds'] = 0
-        self.cfg["memory"]["enabled"] = False
-        self.cfg["target"].update(chat="合成群", cooldown_seconds=0)
-        self.cfg["ui"]["dry_run"] = False
-        self.cfg["queue"]["file"] = str(Path(self.temp.name) / "queue.sqlite3")
-        self.cfg["participation"]["debounce_seconds"] = 0
-        self.cfg["state_file"] = str(Path(self.temp.name) / "state.json")
+        self.cfg = replace_config(self.cfg, 'account.poll_interval_seconds', 0, owner=self)
+        self.cfg = replace_config(self.cfg, 'memory.enabled', False, owner=self)
+        self.cfg = update_config(self.cfg, 'target', chat="合成群", cooldown_seconds=0, owner=self)
+        self.cfg = replace_config(self.cfg, 'account.ui.dry_run', False, owner=self)
+        self.cfg = replace_config(self.cfg, 'paths.queue_file', str(Path(self.temp.name) / "queue.sqlite3"), owner=self)
+        self.cfg = replace_config(self.cfg, 'participation.debounce_seconds', 0, owner=self)
+        self.cfg = replace_config(self.cfg, 'paths.state_file', str(Path(self.temp.name) / "state.json"), owner=self)
 
-        self.cfg['system_prompt_file'] = str(ROOT/'prompts/system.md')
+        self.cfg = replace_config(self.cfg, 'system_prompt_file', str(ROOT/'prompts/system.md'), owner=self)
         self.now, self.rows, self.jobs, self.decision_jobs = float(NOW), [], [], []
         self.store = Mock()
         self.store.self_wxid = "wxid_self"
@@ -46,12 +47,12 @@ class PipelineFixture(unittest.TestCase):
         self.store.messages_after.side_effect = lambda chat, cursor, limit: [m for m in self.rows if m["local_id"] > cursor][:limit]
         self.store.messages_in_window.side_effect = lambda chat, start, end: list(self.rows)
         self.store.messages_before.side_effect = lambda chat, **kw: history_page(self.rows, **kw)
-        for target, value in [("wxbridge.app.bot.WeChatStore", self.store),
+        for target, value in [("wxbridge.app.sessions.group.WeChatStore", self.store),
                               ("wxbridge.storage.journal.checked_path", lambda value, **kw: Path(value))]:
             p = patch(target, return_value=value) if target.endswith("WeChatStore") else patch(target, side_effect=value)
             p.start()
             self.addCleanup(p.stop)
-        p = patch("wxbridge.app.bot.time.time", side_effect=lambda: self.now)
+        p = patch("wxbridge.app.sessions.group.time.time", side_effect=lambda: self.now)
         p.start()
         self.addCleanup(p.stop)
         self.make_bot()

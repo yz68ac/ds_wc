@@ -1,4 +1,5 @@
 """Shared synthetic instances fixtures; contains no executable tests."""
+from tests.support.configuration import replace_config, update_config, snapshot
 from tests.support.model_support import default_config
 from copy import deepcopy
 import json
@@ -9,8 +10,8 @@ import unittest
 from unittest.mock import Mock, patch
 from tests.support.synthetic import NOW, msg
 from tests.support.pipeline import FakeJob
-from wxbridge.app.coordinator import Coordinator
-from wxbridge.config import load_config
+from wxbridge.app.sessions.coordinator import Coordinator
+from wxbridge.config import json_value, load_config
 from tests.support.paths import ROOT
 
 
@@ -28,7 +29,7 @@ class InstanceFixture(unittest.TestCase):
         self.data = dict(queue=dict(file=str(self.root/'queue.sqlite3')),
                          state_file=str(self.root/'state.json'), memory=dict(directory=str(self.root/'memory')),
                          provider_env=str(self.root/'provider.env'))
-        models = default_config()['models']
+        models = json_value(default_config().models)
         self.instance_data = [dict(id=name, chat=chat, enabled=True,
             system_prompt_file='system.md', models=deepcopy(models),
             target=dict(bot_name=name), search=dict(enabled=False),
@@ -64,10 +65,9 @@ class MultiGroupFixture(InstanceFixture):
                          queue=dict(file=str(self.root/'queue.sqlite3')),
                          account=dict(send_interval_seconds=0))
         self.cfg = self.load()
-        self.cfg['poll_interval_seconds'] = 0
-        for e in self.cfg['instances']:
-            e['config']['poll_interval_seconds'] = 0
-            Path(e['config']['queue']['file']).parent.mkdir(parents=True, mode=0o700)
+        self.cfg = replace_config(self.cfg, 'account.poll_interval_seconds', 0, owner=self)
+        for e in self.cfg.instances.values():
+            Path(e.paths.queue_file).parent.mkdir(parents=True, mode=0o700)
         self.rows, self.now, self.jobs, self.decision_jobs = {chat: [] for chat in CHATS}, float(NOW), [], []
         self.store = Mock()
         self.store.self_wxid = 'wxid_bot'
@@ -78,7 +78,7 @@ class MultiGroupFixture(InstanceFixture):
         from tests.support.synthetic import history_page
         self.store.messages_before.side_effect = lambda chat, **kw: history_page(self.rows[chat], **kw)
         for target, opts in [('wxbridge.storage.journal.checked_path', dict(side_effect=lambda v, **kw: Path(v))),
-                             ('wxbridge.app.bot.time.time', dict(side_effect=lambda: self.now)),
+                             ('wxbridge.app.sessions.group.time.time', dict(side_effect=lambda: self.now)),
                              ('wxbridge.native.server.NativeServer', {})]:
             p = patch(target, **opts); p.start(); self.addCleanup(p.stop)
         self.coordinator = self.make()

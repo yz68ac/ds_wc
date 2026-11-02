@@ -9,7 +9,7 @@ def eligible_messages(rows, account, now, settings, floor, processed=()):
         sent = message_time(m)
         if (m['local_id'] <= floor or m['local_id'] in processed or not m.get('sender')
                 or m['sender'] == account or m.get('type') != 1 or is_pat(m)
-                or sent is None or not now-settings['window_seconds'] <= sent <= now):
+                or sent is None or not now-settings.window_seconds <= sent <= now):
             continue
         text = (m.get('text') or '').strip()
         key = (m['sender'], text)
@@ -21,8 +21,8 @@ def eligible_messages(rows, account, now, settings, floor, processed=()):
 
 
 def enqueue_if_active(bot, now):
-    settings = bot.cfg['memory']['learning']
-    if (not settings['enabled'] or not settings['passive_enabled'] or not bot.memory.store
+    settings = bot.cfg.memory.learning
+    if (not settings.enabled or not settings.passive_enabled or not bot.memory.store
             or bot.journal.tasks() or bot.replies.jobs or bot.ui_job):
         return
     state = bot.journal.get('passive_learning', {})
@@ -31,15 +31,15 @@ def enqueue_if_active(bot, now):
     if bot.last_local_id <= floor:
         return
     if (bot.last_local_id <= state.get('checked_id', 0) or now-state.get('checked_at', 0) < 10
-            or now-state.get('enqueued_at', 0) < settings['min_interval_seconds']
+            or now-state.get('enqueued_at', 0) < settings.min_interval_seconds
             or any(j.get('origin') == 'activity' for j in bot.journal.memory_jobs())):
         return
-    start, end = int(now-settings['window_seconds']), int(now)
+    start, end = int(now-settings.window_seconds), int(now)
     rows = [m for m in bot.store.messages_in_window(bot.chat_id, start, end) if m['local_id'] <= bot.last_local_id]
     messages = eligible_messages(rows, bot.store.self_wxid, now, settings, floor, bot.memory.store.data.get('processed_ids', []))
     with bot.journal.db:
         state.update(checked_id=bot.last_local_id, checked_at=now, new_messages=len(messages), error='')
-        if len(messages) >= settings['min_new_messages'] and len({m['sender'] for m in messages}) >= settings['min_senders']:
+        if len(messages) >= settings.min_new_messages and len({m['sender'] for m in messages}) >= settings.min_senders:
             last = max(messages, key=lambda m: m['local_id'])
             bot.journal.enqueue_memory('activity', 'activity:'+str(last['local_id']),
                 [dict(local_id=last['local_id'], time=last['time'])], [start, end])

@@ -1,4 +1,5 @@
 """Unified decisions, full replies and confirmation with synthetic inputs only."""
+from tests.support.configuration import replace_config, update_config, snapshot
 import json
 import unittest
 import tests.support.pipeline as pipeline
@@ -100,7 +101,7 @@ class ConversationTests(ConversationFixture):
     def test_expired_approval_never_generates_or_sends(self):
         row = self.ordinary('会过期的问题')
         worker = self.bot.participation.job
-        self.now += self.cfg['target']['max_message_age_seconds']+1
+        self.now += self.cfg.target.max_message_age_seconds+1
         worker.result = dict(ok=True, decision=dict(reply_to=[row['local_id']]))
         self.bot.tick()
         self.assertFalse(self.jobs)
@@ -132,7 +133,7 @@ class ConversationTests(ConversationFixture):
     def test_disabling_cancels_unsubmitted_automatic_work(self):
         self.ordinary('尚未决定')
         worker = self.bot.participation.job
-        self.cfg['participation']['enabled'] = False
+        self.cfg = replace_config(self.cfg, 'participation.enabled', False, owner=self)
         self.bot.tick()
         self.assertTrue(worker.closed)
         self.assertEqual(self.bot.journal.participation_status()['counts']['cancelled'], 1)
@@ -172,7 +173,7 @@ class ConversationTests(ConversationFixture):
     def test_budget_shrinks_batch_without_consuming_extra_model_attempts(self):
         self.add(1, sender='wxid_a', text='甲'*300, mention=False)
         self.add(2, sender='wxid_b', text='乙'*300, mention=False)
-        self.cfg['target']['context_max_chars'] = 650
+        self.cfg = replace_config(self.cfg, 'target.context_max_chars', 650, owner=self)
         self.bot.tick()
         self.assertEqual(len(self.decision_jobs), 1)
         self.assertEqual(len(self.bot.participation.pending['source_ids']), 1)

@@ -1,5 +1,6 @@
 """合成图片、SQLite 附件索引与模拟 API；不读取真实图片或凭据。"""
 from __future__ import annotations
+from tests.support.configuration import replace_config, update_config, snapshot
 from tests.support.model_support import default_config
 from contextlib import nullcontext
 
@@ -15,7 +16,9 @@ import unittest
 from unittest.mock import Mock, patch
 import zlib
 
-from wxbridge.config import DEFAULTS, _deep_merge, load_config
+from wxbridge.config import load_config
+from wxbridge.config import default_document
+from tests.support.configuration import merge_config as _deep_merge
 from wechat_linux.storage.crypto import AES
 from tests.support.model_support import ClientFixture, ModelError
 from wxbridge.ai.reply.prompt import build_prompt
@@ -64,7 +67,7 @@ class LocalImageTests(LocalImageFixture):
         key = hashlib.md5(b"123456wxid_synthetic").hexdigest()[:16].encode()
         self.assertIn((key, 123456&255), list(key_candidates("wxid_synthetic", self.root, self.home)))
         self.path.write_bytes(encrypted(png(), key=key, xor=123456&255))
-        data, info = read_local_image(self.binding, max_bytes=self.cfg['vision']['max_image_bytes'])
+        data, info = read_local_image(self.binding, max_bytes=self.cfg.vision.max_image_bytes)
         self.assertEqual(data, png())
         self.assertEqual(info["quality"], "original")
         self.assertEqual(self.path.read_bytes()[:6], V2)
@@ -75,15 +78,15 @@ class LocalImageTests(LocalImageFixture):
         thumbnail = self.path.with_name("image_t.dat")
         thumbnail.write_bytes(png())
         self.binding["candidates"].append(dict(relative=str(thumbnail.relative_to(self.root)), quality="thumbnail"))
-        self.assertEqual(read_local_image(self.binding, max_bytes=self.cfg['vision']['max_image_bytes'])[1]["quality"], "thumbnail")
+        self.assertEqual(read_local_image(self.binding, max_bytes=self.cfg.vision.max_image_bytes)[1]["quality"], "thumbnail")
 
     def test_wxgf_conversion_keeps_pixels_in_memory_and_reports_format(self):
         source = b"wxgf"+bytes(80)
         self.path.write_bytes(encrypted(source))
         with patch('wechat_linux.media.images.key_candidates',return_value=[(b'wrong-key-123456',77),(b'synthetic-key-16',77)]), patch('wechat_linux.media.wxgf.decode_wxgf',return_value=png()) as convert:
-            data,info = read_local_image(self.binding, max_bytes=self.cfg['vision']['max_image_bytes'])
+            data,info = read_local_image(self.binding, max_bytes=self.cfg.vision.max_image_bytes)
         self.assertEqual(data,png())
-        convert.assert_called_once_with(source,self.cfg['vision']['max_image_bytes'])
+        convert.assert_called_once_with(source,self.cfg.vision.max_image_bytes)
         self.assertTrue(info['converted'])
         self.assertEqual(info['source_format'],'wxgf')
         self.assertEqual(len(list(self.path.parent.iterdir())),1)
@@ -93,24 +96,24 @@ class LocalImageTests(LocalImageFixture):
         self.path.write_bytes(encrypted(b'wxgf'+bytes(80)))
         with patch('wechat_linux.media.images.key_candidates',return_value=[(b'synthetic-key-16',77),(b'wrong-key-123456',77)]), patch('wechat_linux.media.wxgf.decode_wxgf',side_effect=WxgfError('wxgf_decoder_unavailable')):
             with self.assertRaisesRegex(MediaError,'^wxgf_decoder_unavailable$'):
-                read_local_image(self.binding, max_bytes=self.cfg['vision']['max_image_bytes'])
+                read_local_image(self.binding, max_bytes=self.cfg.vision.max_image_bytes)
             thumbnail = self.path.with_name('image_t.dat')
             thumbnail.write_bytes(png())
             self.binding['candidates'].append(dict(relative=str(thumbnail.relative_to(self.root)),quality='thumbnail'))
-            _,info=read_local_image(self.binding, max_bytes=self.cfg['vision']['max_image_bytes'])
+            _,info=read_local_image(self.binding, max_bytes=self.cfg.vision.max_image_bytes)
         self.assertEqual(info['quality'],'thumbnail')
         self.assertEqual(info['fallback_errors'],[dict(quality='original',error='wxgf_decoder_unavailable')])
 
     def test_missing_oversized_and_escape_paths_fail_closed(self):
         with self.assertRaisesRegex(MediaError, "local_image_not_cached"):
-            read_local_image(self.binding, max_bytes=self.cfg['vision']['max_image_bytes'])
+            read_local_image(self.binding, max_bytes=self.cfg.vision.max_image_bytes)
         self.path.write_bytes(b"0"*1200)
-        self.cfg["vision"]["max_image_bytes"] = 100
+        self.cfg = replace_config(self.cfg, 'vision.max_image_bytes', 100, owner=self)
         with self.assertRaisesRegex(MediaError, "image_size_limit"):
-            read_local_image(self.binding, max_bytes=self.cfg['vision']['max_image_bytes'])
+            read_local_image(self.binding, max_bytes=self.cfg.vision.max_image_bytes)
         self.binding["candidates"][0]["relative"] = "../../outside.dat"
         with self.assertRaisesRegex(MediaError, "unsafe_image_path"):
-            read_local_image(self.binding, max_bytes=self.cfg['vision']['max_image_bytes'])
+            read_local_image(self.binding, max_bytes=self.cfg.vision.max_image_bytes)
 
 
     def test_api_receives_actual_pixels_only_in_user_and_keeps_persona(self):
@@ -160,7 +163,7 @@ class LocalImageTests(LocalImageFixture):
         generation = self.generation(dict(kind="quoted_text", text="中间引用", available=True,
                                          reference=dict(kind="image", available=False, text="")))
         generation["images"][0]["depth"] = 1
-        self.cfg["vision"]["max_images"] = 1
+        self.cfg = replace_config(self.cfg, 'vision.max_images', 1, owner=self)
         # 同一图的另一个明确引用；上限后不传第二份图片。
         import copy
         generation["triggers"].append(copy.deepcopy(generation["triggers"][0]))
@@ -200,7 +203,7 @@ class ImageBindingTests(ImageBindingFixture):
         trigger["reference"] = reference
         cfg = default_config()
 
-        cfg['system_prompt_file'] = str(Path(__file__).resolve().parents[1]/'prompts/system.md')
+        cfg = replace_config(cfg, 'system_prompt_file', str(Path(__file__).resolve().parents[1]/'prompts/system.md'))
         generation = dict(context=[], triggers=[trigger], chat_title="合成群",
                           images=[dict(trigger_index=0, depth=0, **binding)])
         base = build_prompt(cfg, [], trigger, "合成群")
@@ -219,7 +222,7 @@ class ImageBindingTests(ImageBindingFixture):
         full = self.root/"msg/attach"/self.bucket/"2026-09/Img"/("b"*32+"_h.dat")
         full.parent.mkdir(parents=True)
         full.write_bytes(png())
-        _, info = read_local_image(self.store.image_binding(self.chat, reference), max_bytes=DEFAULTS['vision']['max_image_bytes'])
+        _, info = read_local_image(self.store.image_binding(self.chat, reference), max_bytes=default_document()['vision']['max_image_bytes'])
         self.assertEqual(info["quality"], "original")
 
     def test_indexless_preview_cache_is_bound_to_exact_group(self):
@@ -229,7 +232,7 @@ class ImageBindingTests(ImageBindingFixture):
         preview.parent.mkdir(parents=True)
         preview.write_bytes(png())
         binding = self.store.image_binding(self.chat, reference)
-        self.assertEqual(read_local_image(binding, max_bytes=DEFAULTS['vision']['max_image_bytes'])[1]["quality"], "preview")
+        self.assertEqual(read_local_image(binding, max_bytes=default_document()['vision']['max_image_bytes'])[1]["quality"], "preview")
 
     def test_indexless_cache_cannot_replace_original_identity_checks(self):
         _, reference = self.indexless_source()
@@ -256,7 +259,7 @@ class ImageBindingTests(ImageBindingFixture):
         own.write_bytes(png())
         binding = self.store.image_binding(self.chat, reference)
         with self.assertRaisesRegex(MediaError, "local_image_not_cached"):
-            read_local_image(binding, max_bytes=DEFAULTS['vision']['max_image_bytes'])
+            read_local_image(binding, max_bytes=default_document()['vision']['max_image_bytes'])
 
     def test_indexless_bad_month_and_unknown_source_key_fail_closed(self):
         _, reference = self.indexless_source(month="2026-13")
@@ -275,7 +278,7 @@ class ImageBindingTests(ImageBindingFixture):
         trigger["reference"] = reference
         cfg = default_config()
 
-        cfg['system_prompt_file'] = str(Path(__file__).resolve().parents[1]/'prompts/system.md')
+        cfg = replace_config(cfg, 'system_prompt_file', str(Path(__file__).resolve().parents[1]/'prompts/system.md'))
         generation = dict(context=[], triggers=[trigger], chat_title="合成群",
                           images=[dict(trigger_index=0, depth=0, **binding)])
         self.store._query_messages.reset_mock()
@@ -297,7 +300,7 @@ class ImageBindingTests(ImageBindingFixture):
         self.assertFalse(any("/2026-10/" in c["relative"] for c in binding["candidates"]))
         forged = dict(binding, candidates=[dict(relative=str((alias/"Img"/thumbnail.name).relative_to(self.root)), quality="thumbnail")])
         with self.assertRaisesRegex(MediaError, "unsafe_image_path"):
-            read_local_image(forged, max_bytes=DEFAULTS['vision']['max_image_bytes'])
+            read_local_image(forged, max_bytes=default_document()['vision']['max_image_bytes'])
 
     def test_unproven_or_forged_cache_key_cannot_select_attachment(self):
         ref = dict(image_md5="c"*32, image_cache_key="b"*32)
@@ -382,8 +385,8 @@ class VisionClientTests(unittest.TestCase):
 
     def test_default_vision_and_invalid_config(self):
         with nullcontext():
-            cfg = load_config(Path(__file__).parent/"nonexistent.json")
-        self.assertTrue(cfg["vision"]["enabled"])
-        self.assertEqual(cfg["participation"]["debounce_seconds"], 2)
-        self.assertNotIn('debounce_seconds',cfg['queue'])
-        self.assertNotIn('trigger',cfg['target'])
+            cfg = snapshot(default_document())
+        self.assertTrue(cfg.vision.enabled)
+        self.assertEqual(cfg.participation.debounce_seconds, 2)
+        self.assertFalse(hasattr(cfg.queue,'debounce_seconds'))
+        self.assertFalse(hasattr(cfg.target,'trigger'))

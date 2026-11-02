@@ -1,4 +1,5 @@
 """合成头像、内存 SQLite、假 API；头像不能作为人格或好感证据。"""
+from tests.support.configuration import replace_config, update_config, snapshot
 from tests.support.model_support import default_config
 from contextlib import nullcontext
 import copy
@@ -12,7 +13,8 @@ from unittest.mock import Mock, patch
 
 from wxbridge.ai.background.avatars import classify, validate_visual
 from wxbridge.ai.background.memory import extract, snapshot
-from wxbridge.config import DEFAULTS, _deep_merge
+from wxbridge.config import default_document
+from tests.support.configuration import merge_config as _deep_merge
 from wxbridge.storage.person_memory import MemoryStore, DAY
 from wxbridge.wechat.store import WeChatStore
 from tests.support.media import png
@@ -84,7 +86,7 @@ class AvatarTests(unittest.TestCase):
                 validate_visual(value)
 
     def test_text_judgement_never_sees_avatar_and_visual_has_no_chat_context(self):
-        self.cfg['models']['avatar']['options'].update(thinking='enabled', reasoning_effort='max')
+        self.cfg = update_config(self.cfg, 'models.avatar.options', thinking='enabled', reasoning_effort='max', owner=self)
         value = self.snap()
         response = dict(avatars=[update()])
         with patch("wxbridge.ai.client.client_for") as client:
@@ -98,8 +100,8 @@ class AvatarTests(unittest.TestCase):
             self.assertEqual(result["avatar_updates"], [update()])
             self.assertEqual([c.args[0] for c in client.call_args_list], ['memory', 'avatar'])
             from wxbridge.ai.roles import model_settings
-            self.assertEqual(model_settings(self.cfg, 'avatar')['thinking'], 'enabled')
-            self.assertEqual(model_settings(self.cfg, 'avatar')['reasoning_effort'], 'max')
+            self.assertEqual(model_settings(self.cfg, 'avatar').options.thinking, 'enabled')
+            self.assertEqual(model_settings(self.cfg, 'avatar').options.reasoning_effort, 'max')
 
     def test_visual_api_failure_keeps_text_proposal(self):
         with patch("wxbridge.ai.client.client_for") as client:
@@ -164,8 +166,8 @@ class AvatarTests(unittest.TestCase):
 class AvatarPipelineTests(PipelineFixture):
     def test_avatars_only_after_confirm_and_known_initial_not_requested_again(self):
         self.bot.close()
-        self.cfg["memory"].update(enabled=True, directory=str(Path(self.temp.name)/"memory"))
-        self.cfg["queue"]["debounce_seconds"] = 0
+        self.cfg = update_config(self.cfg, 'memory', enabled=True, directory=str(Path(self.temp.name)/"memory"), owner=self)
+        self.cfg = replace_config(self.cfg, 'queue.debounce_seconds', 0, owner=self)
         self.store.avatar.return_value = binding()
         self.make_bot()
         self.add(1)
@@ -191,8 +193,8 @@ class AvatarPipelineTests(PipelineFixture):
 
     def test_priority_limit_and_later_fill_for_old_related_members(self):
         self.bot.close()
-        self.cfg["memory"].update(enabled=True, directory=str(Path(self.temp.name)/"memory"))
-        self.cfg["queue"]["debounce_seconds"] = 0
+        self.cfg = update_config(self.cfg, 'memory', enabled=True, directory=str(Path(self.temp.name)/"memory"), owner=self)
+        self.cfg = replace_config(self.cfg, 'queue.debounce_seconds', 0, owner=self)
         self.store.avatar.return_value = binding()
         self.make_bot()
         self.add(1, sender="wxid_old_a", mention=False)

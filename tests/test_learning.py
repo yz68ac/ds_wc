@@ -1,4 +1,5 @@
 """合成对话与可控时钟；验证真实来源、跨天晋级、后台队列和旧数据兼容。"""
+from tests.support.configuration import replace_config, update_config, snapshot
 import copy
 import json
 from pathlib import Path
@@ -6,10 +7,11 @@ import unittest
 from unittest.mock import patch, Mock
 
 from wxbridge.ai.background.memory import snapshot, extract
-from wxbridge.config import DEFAULTS, load_config
+from wxbridge.config import load_config
+from wxbridge.config import default_document
 from wxbridge.storage import expression_memory as expressions
 from wxbridge.storage.person_memory import MemoryStore, DAY
-from wxbridge.app.learning import enqueue_if_active, eligible_messages
+from wxbridge.app.tasks.learning import enqueue_if_active, eligible_messages
 from tests.support.memory import MemoryFixture, IDENTITY, suggestion, observation
 from tests.support.pipeline import PipelineFixture
 from tests.support.synthetic import NOW, msg
@@ -172,7 +174,7 @@ class LearningTests(unittest.TestCase):
     def test_prompt_file_edits_are_read_and_structured_protocol_stays_enforced(self):
         prompt=Path(self.temp.name)/'prompt.md'
         cfg=copy.deepcopy(self.cfg)
-        cfg['memory']['system_prompt_file']=str(prompt)
+        cfg = replace_config(cfg, 'memory.system_prompt_file', str(prompt))
         value=snapshot(cfg,[],[msg(1,NOW,'[捂脸]','wxid_a')],IDENTITY,self.memory,NOW)
         with patch('wxbridge.ai.client.client_for') as client:
             client.return_value.complete.return_value=dict(content='{"updates":[],"learning":[]}')
@@ -231,7 +233,7 @@ class LearningPipelineTests(unittest.TestCase):
 
     def enable(self):
         self.bot.close()
-        self.cfg['memory'].update(enabled=True,directory=str(Path(self.temp.name)/'memory'))
+        self.cfg = update_config(self.cfg, 'memory', enabled=True, directory=str(Path(self.temp.name)/'memory'), owner=self)
         self.make_bot()
 
     def chat(self,count=10,one_sender=False,duplicate=False):
@@ -261,7 +263,7 @@ class LearningPipelineTests(unittest.TestCase):
                 # 独立队列重建由setUp管理，此处直接验证纯筛选结果和成员门槛。
                 rows=[msg(i,NOW,'[捂脸]' if mode=='duplicate' else '闲聊'+str(i),
                           'wxid_a' if mode=='one_sender' else 'wxid_'+str(i%2)) for i in range(1,11)]
-                settings=self.cfg['memory']['learning']
+                settings=self.cfg.memory.learning
                 rows=eligible_messages(rows,'wxid_bot',NOW,settings,10 if mode=='baseline' else 0)
                 self.assertFalse(len(rows)>=10 and len({m['sender'] for m in rows})>=2)
 
@@ -332,12 +334,12 @@ class LearningPipelineTests(unittest.TestCase):
         self.assertEqual(min(m['local_id'] for m in self.bot.memory.job[1]['messages']),11)
 
     def test_enabling_passive_later_does_not_backfill_existing_chat(self):
-        self.cfg['memory']['learning']['passive_enabled']=False
+        self.cfg = replace_config(self.cfg, 'memory.learning.passive_enabled', False, owner=self)
         self.enable()
         self.chat()
         self.bot.tick()
         self.assertEqual(self.jobs,[])
-        self.cfg['memory']['learning']['passive_enabled']=True
+        self.cfg = replace_config(self.cfg, 'memory.learning.passive_enabled', True, owner=self)
         self.restart()
         self.add(11,text='启用后的新消息',mention=False)
         self.bot.tick()

@@ -1,4 +1,5 @@
 """Synthetic regressions for topic drift, selected recipients and quoted identity."""
+from tests.support.configuration import replace_config, update_config, snapshot
 from tests.support.model_support import default_config
 from contextlib import nullcontext
 import copy
@@ -16,7 +17,7 @@ from wxbridge.ai.background.memory import snapshot
 from wxbridge.ai.context.identity import member_labels, reference_data
 from wxbridge.ai.reply.prompt import build_prompt as normal_prompt
 from wxbridge.ai.background.participation import build_prompt, evaluate, ParticipationError
-from wxbridge.config import DEFAULTS
+from wxbridge.config import default_document
 from wxbridge.storage.memory_selection import memory_dialogue, MemoryTopic
 
 
@@ -114,7 +115,7 @@ class IdentityAndFocusTests(unittest.TestCase):
     def setUp(self):
         self.cfg = default_config()
 
-        self.cfg['system_prompt_file'] = str(Path(__file__).resolve().parents[1]/'prompts/system.md')
+        self.cfg = replace_config(self.cfg, 'system_prompt_file', str(Path(__file__).resolve().parents[1]/'prompts/system.md'), owner=self)
         self.account = 'wxid_synthetic_bot'
         self.rows = [{**msg(1, NOW-2, '先前的话', self.account), 'sender_name': '同名'},
                      {**msg(2, NOW-1, 'ds这怎么看', 'person_a'), 'sender_name': '同名'},
@@ -183,13 +184,13 @@ class IdentityAndFocusTests(unittest.TestCase):
         self.assertNotIn('另外一个问题', reply[1]['content'])
 
     def test_budget_removes_whole_memory_lines_not_history_or_target(self):
-        self.cfg['target']['context_budget_strategy'] = 'strict'
+        self.cfg = replace_config(self.cfg, 'target.context_budget_strategy', 'strict', owner=self)
         base = normal_prompt(self.cfg, self.rows, self.rows[1], '合成群', account=self.account)
-        self.cfg['target']['context_max_chars'] = len(base[1]['content'])
+        self.cfg = replace_config(self.cfg, 'target.context_max_chars', len(base[1]['content']), owner=self)
         reply = normal_prompt(self.cfg, self.rows, self.rows[1], '合成群',
             memory=dict(text='DO_NOT_TRUNCATE_THIS_MEMORY'), account=self.account)
         self.assertEqual(reply, base)
-        self.cfg['target']['context_max_chars'] -= 1
+        self.cfg=replace_config(self.cfg,'target.context_max_chars',self.cfg.target.context_max_chars-1,owner=self)
         with self.assertRaises(ValueError):
             normal_prompt(self.cfg, self.rows, self.rows[1], '合成群', account=self.account)
 
@@ -210,13 +211,13 @@ class FrozenMemoryPipelineTests(unittest.TestCase):
         memory = Mock()
         memory.data = dict(watermark=0, learning=dict(started_after_id=0), processed_ids=[])
         memory.status.return_value = {}
-        self.cfg['memory']['learning']['passive_enabled'] = False
+        self.cfg = replace_config(self.cfg, 'memory.learning.passive_enabled', False, owner=self)
         view = memory.view.return_value
         view.revision = 7
         view.prompt.side_effect = lambda labels, asker, *a, **kw: 'MEMORY_FOR_'+asker
         view.reply_relationship.return_value = None
         self.bot.memory.store = memory
-        self.cfg['memory']['enabled'] = True
+        self.cfg = replace_config(self.cfg, 'memory.enabled', True, owner=self)
         self.bot.tick()
         job = self.bot.participation.job
         prompt, options = job.payload[1:]

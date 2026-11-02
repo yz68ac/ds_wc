@@ -1,5 +1,7 @@
 """Transactional candidate processing, batched decisions and safe recovery; offline only."""
+from dataclasses import replace
 from copy import deepcopy
+from wxbridge.config import QueueConfig
 import json
 from pathlib import Path
 import tempfile
@@ -20,7 +22,7 @@ class ParticipationStorageTests(unittest.TestCase):
         self.identity = dict(account='wxid_bot', chat='synthetic@chatroom')
         self.journal = self.open()
         self.addCleanup(lambda: self.journal.close())
-        self.limits = dict(max_pending=32, max_pending_per_sender=8)
+        self.limits = QueueConfig(max_pending=32, max_pending_per_sender=8)
 
     def open(self):
         with patch('wxbridge.storage.journal.checked_path', side_effect=lambda p, **kw: Path(p)):
@@ -211,7 +213,7 @@ class ParticipationStorageTests(unittest.TestCase):
         self.assertEqual(self.records()[0]['state'], 'error')
 
     def test_capacity_backpressure_leaves_unread_source_and_does_not_block_reply_head(self):
-        self.limits['max_pending'] = 2
+        self.limits=replace(self.limits,max_pending=2)
         self.intake([msg(1, NOW, '一'), msg(2, NOW, '二'), msg(3, NOW, '三')])
         self.assertEqual(self.journal.get('cursor'), 2)
         self.assertEqual(self.journal.get('backpressure')['local_id'], 3)

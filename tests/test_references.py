@@ -1,5 +1,6 @@
 """引用解析及 API 提示词：合成正文，不读取实际聊天或调用网络。"""
 from __future__ import annotations
+from tests.support.configuration import replace_config, update_config, snapshot
 from tests.support.model_support import default_config
 from contextlib import nullcontext
 
@@ -9,7 +10,8 @@ import sqlite3
 import unittest
 from unittest.mock import Mock
 
-from wxbridge.config import DEFAULTS, _deep_merge
+from wxbridge.config import default_document
+from tests.support.configuration import merge_config as _deep_merge
 from wxbridge.ai.context.selection import ContextError
 from wxbridge.ai.reply.prompt import build_prompt
 from wechat_linux.messages.references import parse_quoted_reply
@@ -96,7 +98,7 @@ class ReferencePromptTests(unittest.TestCase):
     def setUp(self):
         self.cfg = default_config()
 
-        self.cfg['system_prompt_file'] = str(Path(__file__).resolve().parents[1]/'prompts/system.md')
+        self.cfg = replace_config(self.cfg, 'system_prompt_file', str(Path(__file__).resolve().parents[1]/'prompts/system.md'), owner=self)
 
     def test_explicit_old_reference_included_but_unrelated_old_history_excluded(self):
         trigger = parse_message(quoted_xml(content="EXPLICIT_OLD_QUOTE"))
@@ -122,7 +124,7 @@ class ReferencePromptTests(unittest.TestCase):
         self.assertNotIn("IMAGE_PRIVATE_XML", prompt)
 
     def test_reference_counts_towards_budget_without_silent_truncation(self):
-        self.cfg["target"]["context_max_chars"] = 300
+        self.cfg = replace_config(self.cfg, 'target.context_max_chars', 300, owner=self)
         trigger = parse_message(quoted_xml(content="长"*1000))
         with self.assertRaises(ContextError):
             build_prompt(self.cfg, [], trigger, "合成群")

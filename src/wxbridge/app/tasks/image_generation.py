@@ -19,7 +19,7 @@ FILE_NAME = re.compile(r'[a-f0-9]{32}\.(?:png|jpg)\Z')
 
 
 def artifact_directory(cfg):
-    root = Path(cfg['queue']['file']).parent/'generated-images'
+    root = Path(cfg.paths.queue_file).parent/'generated-images'
     if root.is_symlink():
         raise ModelError('image_artifact_unavailable')
     root.mkdir(mode=0o700, exist_ok=True)
@@ -98,9 +98,9 @@ class ImageGenerationController:
     def proposal(self, values):
         if not values:
             return None
-        if not self.bot.cfg['image_generation']['enabled'] or self.bot.quiescing:
+        if not self.bot.cfg.image_generation.enabled or self.bot.quiescing:
             raise ModelError('image_generation_disabled')
-        if self.bot.journal.pending_count() >= self.bot.cfg['queue']['max_pending']:
+        if self.bot.journal.pending_count() >= self.bot.cfg.queue.max_pending:
             raise ModelError('image_queue_full')
         if (not isinstance(values, list) or len(values) != 1 or not isinstance(values[0], dict)
                 or set(values[0]) != {'prompt'} or not isinstance(values[0]['prompt'], str)
@@ -111,7 +111,7 @@ class ImageGenerationController:
 
     def _valid(self, task, now):
         if (not task or task['phase'] == 'done' or self.bot.quiescing
-                or not self.bot.cfg['image_generation']['enabled']
+                or not self.bot.cfg.image_generation.enabled
                 or self.bot.journal.get('identity') != task.get('image_identity')
                 or task['image_identity'] != dict(account=self.bot.store.self_wxid, chat=self.bot.chat_id)):
             return False
@@ -183,7 +183,7 @@ class ImageGenerationController:
         for task in journal.image_tasks():
             if task['generation'] == 'ready' and not task['intent']:
                 parent = journal.task(task['parent_task_id'])
-                if (not self.bot.cfg['image_generation']['enabled'] or now >= task.get('reply_expires_at', 0)
+                if (not self.bot.cfg.image_generation.enabled or now >= task.get('reply_expires_at', 0)
                         or task.get('image_identity') != journal.get('identity')
                         or parent and (parent['version'] != task['parent_version'] or parent.get('cancelled'))):
                     with journal.db:
@@ -195,7 +195,7 @@ class ImageGenerationController:
                 with journal.db:
                     self._cancel(task, now)
                 continue
-            if self.bot.cfg['ui']['dry_run'] or self.bot.echo:
+            if self.bot.cfg.account.ui.dry_run or self.bot.echo:
                 with journal.db:
                     self._cancel(task, now)
                 continue
@@ -216,7 +216,7 @@ class ImageGenerationController:
     def cleanup(self, now):
         if now-self.cleaned_at < 30:
             return
-        root = Path(self.bot.cfg['queue']['file']).parent/'generated-images'
+        root = Path(self.bot.cfg.paths.queue_file).parent/'generated-images'
         if not root.exists() or root.is_symlink():
             return
         active = {image['file'] for t in self.bot.journal.image_tasks() for image in t.get('images', [])}

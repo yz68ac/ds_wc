@@ -10,15 +10,15 @@ class BotNativeService:
 
     def handle(self, value):
         if value == {'op':'info'}:
-            return dict(enabled=True, transport='native_service', normal_delivery=self.bot.cfg['ui']['backend'], allowed_chat_ids=self.cfg['allowed_chat_ids'],
-                        max_text_bytes=self.cfg['max_text_bytes'])
+            return dict(enabled=True, transport='native_service', normal_delivery=self.bot.cfg.account.ui.backend, allowed_chat_ids=self.cfg.allowed_chat_ids,
+                        max_text_bytes=self.cfg.max_text_bytes)
         if isinstance(value, dict) and value.get('op') == 'status':
             identifier = value.get('request_id')
             if set(value) != {'op','request_id'} or not isinstance(identifier,str) or not REQUEST_ID.fullmatch(identifier):
                 raise NativeError('invalid_request_id')
             return self.bot.journal.external_status(identifier)
-        value = validate_send(value, self.cfg['max_text_bytes'])
-        if value['chat_id'] not in self.cfg['allowed_chat_ids']:
+        value = validate_send(value, self.cfg.max_text_bytes)
+        if value['chat_id'] not in self.cfg.allowed_chat_ids:
             raise NativeError('chat_not_allowed')
         # Duplicate requests are resolved before any fresh DB/UI work or pending limit checks.
         duplicate = self.bot.journal.external_duplicate(value)
@@ -39,7 +39,7 @@ class BotNativeService:
         # This first trial deliberately requires a known existing message table.
         self.bot.store.last_local_id(identifier)
         return self.bot.journal.enqueue_external(value, title, time.time(),
-            max_pending=self.cfg['max_pending'], max_requests=self.cfg['max_requests'])
+            max_pending=self.cfg.max_pending, max_requests=self.cfg.max_requests)
 
 
 class AccountNativeService:
@@ -51,7 +51,7 @@ class AccountNativeService:
     def handle(self, value):
         if value == {'op': 'info'}:
             return dict(enabled=True, transport='native_service', normal_delivery='native_service',
-                        allowed_chat_ids=self.cfg['allowed_chat_ids'], max_text_bytes=self.cfg['max_text_bytes'])
+                        allowed_chat_ids=self.cfg.allowed_chat_ids, max_text_bytes=self.cfg.max_text_bytes)
         if isinstance(value, dict) and value.get('op') == 'status':
             identifier = value.get('request_id')
             if set(value) != {'op', 'request_id'} or not isinstance(identifier, str) or not REQUEST_ID.fullmatch(identifier):
@@ -63,8 +63,8 @@ class AccountNativeService:
                     if exc.code != 'request_not_found':
                         raise
             raise NativeError('request_not_found')
-        value = validate_send(value, self.cfg['max_text_bytes'])
-        if value['chat_id'] not in self.cfg['allowed_chat_ids']:
+        value = validate_send(value, self.cfg.max_text_bytes)
+        if value['chat_id'] not in self.cfg.allowed_chat_ids:
             raise NativeError('chat_not_allowed')
         for session in self.account.histories(requests_only=True):
             duplicate = session.journal.external_duplicate(value)
@@ -74,9 +74,9 @@ class AccountNativeService:
         if target is None:
             # Unmanaged groups must not silently share somebody else's state.
             raise NativeError('chat_instance_not_enabled')
-        if sum(s.journal.pending_count() for s in self.sessions) >= self.cfg['max_pending']:
+        if sum(s.journal.pending_count() for s in self.sessions) >= self.cfg.max_pending:
             raise NativeError('queue_full')
         count = sum(s.journal.external_request_count() for s in self.account.histories(requests_only=True))
-        if count >= self.cfg['max_requests']:
+        if count >= self.cfg.max_requests:
             raise NativeError('request_history_full')
         return BotNativeService(target, self.cfg).handle(value)

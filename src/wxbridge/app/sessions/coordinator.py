@@ -1,6 +1,8 @@
 """Multiple logical group sessions; all WeChat reads stay on this main loop."""
 from __future__ import annotations
+from wxbridge.config import AppConfig
 
+from wxbridge.config.codec import model_items
 import json
 import logging
 import os
@@ -10,24 +12,16 @@ import time
 
 from wxbridge.native.protocol import settings as native_settings
 from wechat_linux.storage.store import StoreError
-from wxbridge.app.account import AccountRuntime
-from wxbridge.app.bot import GroupSession
+from wxbridge.app.sessions.account import AccountRuntime
+from wxbridge.app.sessions.group import GroupSession
 from wxbridge.instances import enabled_instances
-from wxbridge.app.build_info import runtime_identity
+from wxbridge.app.status.build_info import runtime_identity
 
 log = logging.getLogger('wxbridge')
 
 
-def read_account_status(cfg):
-    from wxbridge.app.monitor import read_bytes
-    path = Path(cfg['state_file']).parent/'account-status.json'
-    if not path.exists():
-        return dict(phase='not_started', instances=[e['id'] for e in cfg['instances'] if e['enabled']])
-    return json.loads(read_bytes(path, 256*1024))
-
-
 class Coordinator:
-    def __init__(self, cfg, echo=False, *, store=None):
+    def __init__(self, cfg: AppConfig, echo=False, *, store=None):
         self.cfg, self.echo = cfg, echo
         self.account = AccountRuntime(cfg, store=store)
         self.sessions = self.account.sessions
@@ -36,10 +30,10 @@ class Coordinator:
         self.closed = False
         self.rotation, self.generation_rotation, self.delivery_rotation = 0, 0, 0
         self.started_at, self.build = time.time(), runtime_identity(cfg)
-        self.status_path = Path(cfg['state_file']).parent/'account-status.json'
+        self.status_path = Path(cfg.paths.state_file).parent/'account-status.json'
         self.status_signature, self.status_written_at = None, 0
         self.status_write_error = ''
-        entries = [e for e in cfg['instances'] if e['enabled']]
+        entries = [e for e in cfg.instances.values() if e.enabled]
         configs = enabled_instances(cfg)
         if not configs:
             raise ValueError('no_enabled_instances')
@@ -47,20 +41,20 @@ class Coordinator:
         # never accepted as another group's stable identity.
         try:
             for entry in entries:
-                resolved, _ = self.account.store.resolve_chat(entry['chat'])
-                if resolved != entry['chat'] or not self.account.store.self_wxid:
+                resolved, _ = self.account.store.resolve_chat(entry.chat)
+                if resolved != entry.chat or not self.account.store.self_wxid:
                     raise StoreError('instance_chat_identity_mismatch')
             for identifier, active in configs:
                 session = GroupSession(active, echo=echo, store=self.account.store, account=self.account,
                                        instance_id=identifier, start_gateway=False)
                 self.sessions.append(session)
             options = native_settings(cfg)
-            if options['enabled'] and not cfg['ui'].get('dry_run'):
+            if options.enabled and not cfg.account.ui.dry_run:
                 from wxbridge.native.server import NativeServer
-                from wxbridge.app.native_gateway import AccountNativeService
+                from wxbridge.app.delivery.native_gateway import AccountNativeService
                 self.native_api = NativeServer(options, AccountNativeService(self, options))
-            if cfg.get('_account_config_file'):
-                from wxbridge.app.instance_control import InstanceControl
+            if cfg.metadata.path:
+                from wxbridge.app.sessions.instance_control import InstanceControl
                 self.instance_control = InstanceControl(self)
         except BaseException:
             self.close()
@@ -119,12 +113,12 @@ class Coordinator:
                 model_workers=sum(session.worker_counts().values()), model_channels=session.models.status(),
                 participation=value['participation'],
                 context=session.journal.get('context', {}),
-                context_policy={key:session.cfg['target'][key] for key in ('context_recent_messages',
+                context_policy={key:getattr(session.cfg.target, key) for key in ('context_recent_messages',
                     'context_max_age_seconds','context_bot_messages','context_max_chars','context_budget_strategy')},
                 profile=session.profile.status() if session.profile else dict(enabled=False),
-                image_generation=dict(enabled=session.cfg['image_generation']['enabled'],
+                image_generation=dict(enabled=session.cfg.image_generation.enabled,
                     running=len(session.image_generation.jobs), last=value.get('last_image_generation')),
-                models={role:value['model'] for role,value in session.cfg['models'].items()},
+                models={role:value.model for role,value in model_items(session.cfg.models)},
                 quiescing=getattr(session,'quiescing',False),
                 status_write_error=session.status_write_error)
         signature = json.dumps({k:v for k,v in status.items() if k != 'updated_at'}, sort_keys=True)
@@ -154,7 +148,7 @@ class Coordinator:
                 self.tick()
                 if once:
                     return
-                time.sleep(min(float(self.cfg['poll_interval_seconds']), 1.0))
+                time.sleep(min(float(self.cfg.account.poll_interval_seconds), 1.0))
         except KeyboardInterrupt:
             log.info('停止监听，未完成任务保留在内存队列')
 

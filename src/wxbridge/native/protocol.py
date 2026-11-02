@@ -6,24 +6,23 @@ from wechat_linux.native.protocol import (
 
 
 def settings(cfg):
-    data = cfg.get('native_api') or {}
-    if not data:
-        return {'enabled': False}
-    required = {'enabled', 'socket', 'helper_socket', 'allowed_chat_ids', 'max_text_bytes', 'max_pending', 'max_requests'}
-    if not isinstance(data, dict) or set(data) != required or type(data['enabled']) is not bool:
+    from wxbridge.config import NativeAPIConfig
+    data = cfg.account.native_api
+    if not isinstance(data, NativeAPIConfig) or data.extensions:
         raise NativeError('invalid_native_config')
     for key in ('socket', 'helper_socket'):
-        if not isinstance(data[key], str) or not data[key].startswith('/') or len(data[key].encode()) > 100:
+        value = getattr(data, key)
+        if not value.startswith('/') or len(value.encode()) > 100:
             raise NativeError('invalid_native_socket')
-    if data['socket'] == data['helper_socket']:
+    if data.socket == data.helper_socket:
         raise NativeError('invalid_native_socket')
-    ids = data['allowed_chat_ids']
-    if not isinstance(ids, list) or not ids or len(ids)>16 or any(not isinstance(x,str) or not CHAT_ID.fullmatch(x) for x in ids):
+    ids = data.allowed_chat_ids
+    if not ids or len(ids)>16 or any(not CHAT_ID.fullmatch(x) for x in ids):
         raise NativeError('invalid_native_allowlist')
     for key, minimum, maximum in [('max_text_bytes',1,4096),('max_pending',1,32),('max_requests',1,4096)]:
-        if type(data[key]) is not int or not minimum <= data[key] <= maximum:
+        if not minimum <= getattr(data, key) <= maximum:
             raise NativeError('invalid_native_limit')
-    return dict(data)
+    return data
 
 
 def task_status(task):

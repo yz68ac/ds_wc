@@ -1,4 +1,5 @@
 """Adaptive context regressions: synthetic SQLite, frozen tasks, no real APIs."""
+from tests.support.configuration import replace_config, update_config, snapshot
 from copy import deepcopy
 import json
 from pathlib import Path
@@ -14,7 +15,8 @@ from wxbridge.ai.context.payload import chat_payload, encode_payload, fit_payloa
 from wxbridge.ai.reply.prompt import build_prompt
 from wxbridge.ai.background.participation import build_prompt as judgment_prompt
 from wxbridge.ai.composer import PromptComposer
-from wxbridge.config import migrate_context_data, resolve_config
+from wxbridge.config import migrate_context_data
+from wxbridge.config.validation import validate_document as resolve_config
 from wxbridge.wechat.store import WeChatStore
 import tests.support.conversation as conversation
 import tests.support.private as private
@@ -27,7 +29,7 @@ class SelectionTests(unittest.TestCase):
 
     def test_latest_thirty_and_older_bot_neighbors_are_deduplicated(self):
         rows = [msg(i, NOW-1000+i, str(i), 'bot' if i in (10,20,30,60) else 'person') for i in range(1,81)]
-        self.cfg['target']['context_recent_messages'] = 3
+        self.cfg = replace_config(self.cfg, 'target.context_recent_messages', 3, owner=self)
         saved = deepcopy(rows)
         chosen = select_context(self.cfg, rows, self.source, account='bot')
         self.assertEqual(chosen.recent_ids, (78,79,80))
@@ -36,7 +38,7 @@ class SelectionTests(unittest.TestCase):
         self.assertNotIn(10,[m['local_id'] for m in chosen])
         self.assertEqual(rows,saved)
         self.assertEqual(len(select_context(self.cfg,rows,self.source)),3)
-        self.cfg['target']['context_bot_messages'] = 0
+        self.cfg = replace_config(self.cfg, 'target.context_bot_messages', 0, owner=self)
         self.assertEqual(len(select_context(self.cfg,rows,self.source,account='bot')),3)
 
     def test_slow_chat_boundary_and_watermark_exclude_later_backfilled_messages(self):
@@ -86,7 +88,7 @@ class SelectionTests(unittest.TestCase):
 class BudgetTests(unittest.TestCase):
     def setUp(self):
         self.cfg = default_config()
-        self.cfg['target'].update(context_recent_messages=2,context_bot_messages=2)
+        self.cfg = update_config(self.cfg, 'target', context_recent_messages=2, context_bot_messages=2, owner=self)
         self.rows = [msg(i,NOW-100+i,'完整历史'+str(i)+'甲'*200,'bot' if i in (5,15) else 'person') for i in range(1,26)]
         self.source = msg(30,NOW,'当前问题')
         self.source['reference'] = dict(kind='image',sender='person',available=False,text='',image_md5='a'*32)
@@ -123,7 +125,7 @@ class BudgetTests(unittest.TestCase):
         self.assertEqual(fitted,self.payload)
 
     def test_media_rebinding_reuses_priority_without_resurrecting_removed_history(self):
-        self.cfg['target']['context_max_chars'] = len(encode_payload(self.without(set(range(3,8)))))
+        self.cfg = replace_config(self.cfg, 'target.context_max_chars', len(encode_payload(self.without(set(range(3,8))))), owner=self)
         prompt = build_prompt(self.cfg,self.selection,self.source,'合成群',account='bot')
         before = json.loads(prompt[1]['content'])
         changed = deepcopy(self.source)
@@ -133,12 +135,12 @@ class BudgetTests(unittest.TestCase):
         self.assertTrue({m['id'] for m in after['messages']} <= {m['id'] for m in before['messages']})
         self.assertEqual(after['history_omitted'],10)
         self.assertEqual([m['id'] for m in after['messages']],[24,25,30])
-        self.assertLessEqual(rebound.context_stats['chars'],self.cfg['target']['context_max_chars'])
+        self.assertLessEqual(rebound.context_stats['chars'],self.cfg.target.context_max_chars)
 
     def test_required_quote_overflow_has_specific_nonretryable_code_even_in_strict_mode(self):
         self.source['reference']['text'] = '长引用'*6000
         for strategy in ('recent','strict'):
-            self.cfg['target']['context_budget_strategy']=strategy
+            self.cfg = replace_config(self.cfg, 'target.context_budget_strategy', strategy, owner=self)
             with self.assertRaises(ContextError) as caught:
                 build_prompt(self.cfg,[],self.source,'合成群',account='bot')
             self.assertEqual(caught.exception.code,'context_required_too_large')

@@ -1,4 +1,5 @@
 """Synthetic bot-to-native image routing, recovery and reader ownership tests."""
+from tests.support.configuration import replace_config, update_config, snapshot
 import base64
 from copy import deepcopy
 import unittest
@@ -18,9 +19,8 @@ class NativeImageBotTests(unittest.TestCase):
         self.case = media.LocalImageFixture('runTest')
         self.case.setUp()
         self.addCleanup(self.case.doCleanups)
-        self.case.cfg['vision'].update(download_enabled=True, download_backend='native')
-        self.case.cfg['native_api'].update(helper_socket='/run/synthetic/helper.sock',
-                                            allowed_chat_ids=[native.CHAT])
+        self.case.cfg = update_config(self.case.cfg, 'vision', download_enabled=True, download_backend='native', owner=self)
+        self.case.cfg = update_config(self.case.cfg, 'account.native_api', helper_socket='/run/synthetic/helper.sock', allowed_chat_ids=[native.CHAT], owner=self)
         self.generation = self.case.generation()
         self.generation['account'] = self.case.binding['account']
         self.generation['images'][0].update(
@@ -108,8 +108,8 @@ class NativeImagePipelineTests(unittest.TestCase):
     restart = pipeline.PipelineFixture.restart
 
     def test_intent_precedes_worker_and_restart_keeps_same_id_and_reader_owner(self):
-        self.cfg['queue']['debounce_seconds'] = 0
-        self.cfg['vision'].update(download_enabled=True, download_backend='native')
+        self.cfg = replace_config(self.cfg, 'queue.debounce_seconds', 0, owner=self)
+        self.cfg = update_config(self.cfg, 'vision', download_enabled=True, download_backend='native', owner=self)
         self.store.image_binding.return_value = dict(account='wxid_self', candidates=[],
             download=dict(verified=True, chat_id='synthetic@chatroom', server_id='123',
                           sender='wxid_friend', image_md5='a'*32))

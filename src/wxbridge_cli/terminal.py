@@ -6,7 +6,8 @@ import sys
 import time
 import unicodedata
 
-from wxbridge.app.monitor import PAGES, StatusReader, pages
+from wxbridge.app.status.snapshot import StatusReader
+from .presentation import PAGES, pages
 
 HELP = ['键盘操作', '', '1–5：切换页面；Tab / 左右方向键：前后页',
         '上下方向键 / PgUp / PgDn：滚动；g / G：顶部 / 底部',

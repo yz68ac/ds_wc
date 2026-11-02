@@ -27,6 +27,7 @@ SUITES = {
         'test_wxgf',
     ),
     'bot': (
+        'test_configuration',
         'test_avatars',
         'test_chat_payload',
         'test_citation_output',

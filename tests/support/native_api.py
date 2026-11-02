@@ -1,11 +1,12 @@
 """Shared synthetic native_api fixtures; contains no executable tests."""
 from __future__ import annotations
+from tests.support.configuration import replace_config, update_config, snapshot
 from tests.support.model_support import default_config
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
-from wxbridge.app.delivery import DeliveryController
+from wxbridge.app.delivery.controller import DeliveryController
 from wxbridge.storage.journal import Journal
 from tests.support.paths import ROOT
 
@@ -21,8 +22,8 @@ class JournalFixture(unittest.TestCase):
         self.path=Path(self.temp.name)/'queue.sqlite3'
         self.identity={'account':'synthetic','chat':'synthetic@chatroom'}
         self.journal=self.open();self.addCleanup(lambda:self.journal.close())
-        self.cfg=default_config();self.cfg['ui']['dry_run']=False
-        self.cfg['target']['cooldown_seconds']=0
+        self.cfg=default_config();self.cfg = replace_config(self.cfg, 'account.ui.dry_run', False, owner=self)
+        self.cfg = replace_config(self.cfg, 'target.cooldown_seconds', 0, owner=self)
         self.store=Mock(self_wxid='synthetic');self.store.last_local_id.return_value=2
         self.delivery=DeliveryController(self.cfg,self.journal,self.store,'synthetic@chatroom','合成群')
 
@@ -35,14 +36,14 @@ class JournalFixture(unittest.TestCase):
                                              max_pending=16,max_requests=1024)
 
     def normal_task(self,chunks=None,notice=False):
-        self.cfg['ui']['backend']='native_service'
+        self.cfg = replace_config(self.cfg, 'account.ui.backend', 'native_service', owner=self)
         with self.journal.db:
             identifier=self.journal._next_task_id()
             task=dict(id=identifier,phase='queued',version=1,sender='other',trigger_kind='mention',
                 deadline=0,accepted_at=0,triggers=[],intent=None,blocked_reason='',generation='ready',
                 next_chunk=0,chunks=chunks or ['合成回复'])
             if notice:
-                self.cfg['search']['feedback_enabled']=True
+                self.cfg = replace_config(self.cfg, 'search.feedback_enabled', True, owner=self)
                 task['notice']=dict(state='pending',text='合成搜索提示')
             self.journal.put(task)
         return identifier

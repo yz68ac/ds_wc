@@ -9,7 +9,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from wxbridge.wechat.messages import chunk_text
-from wxbridge.config import DEFAULTS, _deep_merge
+from wxbridge.config import default_document
+from tests.support.configuration import merge_config as _deep_merge
 from wxbridge.ai.reply.prompt import build_prompt
 from tests.support.synthetic import msg
 

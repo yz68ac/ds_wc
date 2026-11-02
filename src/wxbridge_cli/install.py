@@ -242,9 +242,11 @@ def dependency_health():
 def doctor(paths):
     result = []
     try:
-        cfg = json.loads((paths.app/'config.json').read_text())
+        from wxbridge.config import load_config
+        cfg = load_config(paths.app/'config.json')
     except (OSError,ValueError):
-        cfg = {}
+        from wxbridge.config import AppConfig
+        cfg = AppConfig()
     def add(name, ok, detail=''):
         result.append(dict(name=name,ok=bool(ok),detail=detail))
     add('Linux x86_64',sys.platform == 'linux' and platform.machine().lower() in ('x86_64','amd64'))
@@ -263,7 +265,7 @@ def doctor(paths):
             add('安装包与发布清单一致',False,'发布校验失败。')
     for name in ('Xvfb','dbus-launch','xdotool','xauth','fluxbox'):
         add(name,shutil.which(name) is not None)
-    if cfg.get('ui',{}).get('backend') != 'native_service':
+    if cfg.account.ui.backend != 'native_service':
         add('xclip（桌面发送）',shutil.which('xclip') is not None)
     gui = subprocess.run(['/usr/bin/python3','-c',
         "import gi; gi.require_version('Atspi','2.0'); gi.require_version('Gdk','3.0'); from gi.repository import Atspi,Gdk"],
@@ -286,8 +288,9 @@ def doctor(paths):
     except (OSError,KeyError):
         add('运行目录权限',False)
     try:
-        cfg = json.loads((paths.app/'config.json').read_text())
-        add('账号绑定',bool(cfg.get('db_dir')), '首次扫码后运行 sudo wxbridge setup。' if not cfg.get('db_dir') else '')
+        from wxbridge.config import load_config
+        cfg = load_config(paths.app/'config.json')
+        add('账号绑定',bool(cfg.account.db_dir), '首次扫码后运行 sudo wxbridge setup。' if not cfg.account.db_dir else '')
         from wxbridge.config import load_config
         load_config(paths.app/'config.json')
         add('实例配置',True)

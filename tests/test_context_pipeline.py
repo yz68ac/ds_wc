@@ -1,5 +1,7 @@
 """真实 SQLite + 可控时钟/子进程替身，覆盖接收至发送确认，不联网。"""
 from __future__ import annotations
+from wxbridge.ai.roles import provider_settings
+from tests.support.configuration import replace_config, update_config, snapshot
 from tests.support.model_support import default_config
 from contextlib import nullcontext
 
@@ -10,11 +12,12 @@ import time
 import unittest
 from unittest.mock import Mock, patch
 
-from wxbridge.app.bot import GroupSession
-from wxbridge.config import DEFAULTS, _deep_merge
+from wxbridge.app.sessions.group import GroupSession
+from wxbridge.config import default_document
+from tests.support.configuration import merge_config as _deep_merge
 from tests.support.model_support import ClientFixture
 from wxbridge.storage.journal import Journal
-from wxbridge.app.workers import ProcessJob
+from wxbridge.app.execution.workers import ProcessJob
 from tests.support.synthetic import NOW, msg, history_page
 from tests.support.messages import parse_message, quoted_xml
 from tests.support.pipeline import FakeJob, PipelineFixture
@@ -22,9 +25,21 @@ from tests.support.pipeline import FakeJob, PipelineFixture
 
 class PipelineTests(PipelineFixture):
 
+    def test_image_tool_does_not_replace_reply_worker_timeout_with_disabled_search_budget(self):
+        self.cfg = update_config(self.cfg, 'search', enabled=False, total_timeout_seconds=1, owner=self)
+        self.cfg = replace_config(self.cfg, 'image_generation.enabled', True, owner=self)
+        self.cfg = replace_config(self.cfg, 'models.reply.options.timeout_seconds', 240, owner=self)
+        factory=Mock(side_effect=self.bot.job_factory)
+        self.bot.job_factory=factory
+        self.add(1)
+        self.bot.tick()
+        submitted=[call for call in factory.call_args_list if call.args[0]=='generate']
+        self.assertEqual(len(submitted),1)
+        self.assertEqual(submitted[0].kwargs['timeout'],255)
+
 
     def test_debounce_before_decision_merges_questions_and_sends_one_final_reply(self):
-        self.cfg['participation']['debounce_seconds'] = 3
+        self.cfg = replace_config(self.cfg, 'participation.debounce_seconds', 3, owner=self)
         first = self.add(1)
         self.bot.tick()
         self.assertFalse(self.jobs)
@@ -51,7 +66,7 @@ class PipelineTests(PipelineFixture):
         self.assertEqual(len(self.sends()), 1)
 
     def test_quoted_image_binding_only_in_main_and_queue_never_contains_pixels(self):
-        self.cfg["participation"]["debounce_seconds"] = 0
+        self.cfg = replace_config(self.cfg, 'participation.debounce_seconds', 0, owner=self)
         item = self.add(1)
         item["reference"] = dict(kind="image", available=False, text="", image_md5="a"*32)
         self.store.image_binding.return_value = dict(error="local_image_not_cached", candidates=[])
@@ -81,7 +96,7 @@ class PipelineTests(PipelineFixture):
         self.assertEqual(text.count('之前已发出的答案'), 1)
 
     def test_vision_disabled_does_not_resolve_images(self):
-        self.cfg["vision"]["enabled"] = False
+        self.cfg = replace_config(self.cfg, 'vision.enabled', False, owner=self)
         item = self.add(1)
         item["reference"] = dict(kind="image", available=False, text="")
         self.bot.tick()
@@ -142,7 +157,7 @@ class PipelineTests(PipelineFixture):
         self.assertEqual(self.bot.last_local_id, 4)
 
     def test_approved_reply_uses_reply_deadline_instead_of_candidate_age(self):
-        self.cfg["target"]["cooldown_seconds"] = 100
+        self.cfg = replace_config(self.cfg, 'target.cooldown_seconds', 100, owner=self)
         with self.bot.journal.db:
             self.bot.journal.set("last_success", self.now)
         self.add(1)
@@ -170,7 +185,7 @@ class PipelineTests(PipelineFixture):
             self.assertEqual(self.bot._admission_reason({**valid, 'mentioned_users': mentions}, self.now), 'accepted')
 
     def test_cursor_idempotence_and_capacity_bounded_pagination(self):
-        self.cfg['target']['context_budget_strategy'] = 'recent'
+        self.cfg = replace_config(self.cfg, 'target.context_budget_strategy', 'recent', owner=self)
         for identifier in range(1, 205):
             self.add(identifier, mention=identifier==204)
         for _ in range(30):
@@ -189,12 +204,12 @@ class PipelineTests(PipelineFixture):
                 raise RuntimeError("synthetic rollback")
             return True
         with self.assertRaises(RuntimeError):
-            self.bot.journal.intake_participation(items, accept, self.now, ttl_seconds=90, limits=self.cfg['queue'])
+            self.bot.journal.intake_participation(items, accept, self.now, ttl_seconds=90, limits=self.cfg.queue)
         self.assertEqual(self.bot.last_local_id, 0)
         self.assertFalse(self.bot.journal.tasks())
 
     def test_merged_context_uses_latest_trigger_time_and_excludes_all_questions(self):
-        self.cfg['participation']['debounce_seconds'] = 3
+        self.cfg = replace_config(self.cfg, 'participation.debounce_seconds', 3, owner=self)
         self.add(1, text='OLD_SECRET', sent=NOW-1801, mention=False)
         self.add(2, text='BOUNDARY', sent=NOW-1798, mention=False)
         first = self.add(3)
@@ -234,7 +249,7 @@ class PipelineTests(PipelineFixture):
         self.assertEqual(self.jobs[-1].kind, "send")
 
     def test_restart_after_send_confirms_without_resending_and_continues_chunks(self):
-        self.cfg["target"]["max_reply_chars"] = 4
+        self.cfg = replace_config(self.cfg, 'target.max_reply_chars', 4, owner=self)
         self.ready("abcdefgh")
         self.bot.tick()
         first = self.sends()[0].payload[2]
@@ -291,7 +306,7 @@ class PipelineTests(PipelineFixture):
 
     def test_identity_mismatch_rejects_recovery(self):
         with self.assertRaisesRegex(ValueError, "账号或目标群"):
-            Journal(self.cfg["queue"]["file"], {"account": "other", "chat": "wrong"}, 0)
+            Journal(self.cfg.paths.queue_file, {"account": "other", "chat": "wrong"}, 0)
 
     def test_quoted_real_mention_reaches_generation_send_and_confirmation(self):
         question = parse_message(quoted_xml(question="@ds QUESTION_SECRET", content="REFERENCE_SECRET"))
@@ -333,7 +348,7 @@ class PipelineTests(PipelineFixture):
                 raise RuntimeError("synthetic diagnostic failure")
             return {"local_id": 1, "reason": "accepted"}
         with self.assertRaises(RuntimeError):
-            self.bot.journal.intake_participation(rows, lambda m: True, self.now, ttl_seconds=90, limits=self.cfg['queue'], describe=describe)
+            self.bot.journal.intake_participation(rows, lambda m: True, self.now, ttl_seconds=90, limits=self.cfg.queue, describe=describe)
         self.assertEqual(self.bot.last_local_id, 0)
         self.assertFalse(self.bot.journal.tasks())
         self.assertEqual(self.bot.journal.get("recent_intake", []), [])
@@ -389,8 +404,8 @@ class PipelineTests(PipelineFixture):
         self.assertTrue(self.bot.journal.head()["intent"])
 
     def test_failed_generation_fallback_is_confirmed_then_later_answer_continues(self):
-        self.cfg['participation']['debounce_seconds'] = 0
-        self.cfg['queue']['generation_retries'] = 0
+        self.cfg = replace_config(self.cfg, 'participation.debounce_seconds', 0, owner=self)
+        self.cfg = replace_config(self.cfg, 'queue.generation_retries', 0, owner=self)
         self.add(1)
         self.add(2, sender='wxid_second')
         self.bot.tick()
@@ -412,7 +427,7 @@ class PipelineTests(PipelineFixture):
         self.assertFalse(self.bot.journal.memory_jobs())
 
     def test_empty_reply_finishes_without_sending_and_later_task_continues(self):
-        self.cfg['participation']['debounce_seconds'] = 0
+        self.cfg = replace_config(self.cfg, 'participation.debounce_seconds', 0, owner=self)
         self.add(1)
         self.add(2, sender='wxid_second')
         self.bot.tick()
@@ -439,8 +454,8 @@ class PipelineTests(PipelineFixture):
         self.assertEqual(len([j for j in self.jobs if j.kind == 'generate']), 1)
 
     def test_empty_reply_preserves_existing_notice_intent_until_confirmed(self):
-        self.cfg['participation']['debounce_seconds'] = 0
-        self.cfg['search']['feedback_enabled'] = True
+        self.cfg = replace_config(self.cfg, 'participation.debounce_seconds', 0, owner=self)
+        self.cfg = replace_config(self.cfg, 'search.feedback_enabled', True, owner=self)
         self.add(1)
         self.bot.tick()
         generator = self.search_started()
@@ -459,8 +474,8 @@ class PipelineTests(PipelineFixture):
         self.assertEqual(len(self.sends()), 1)
 
     def test_generation_retry_deadline_and_budget_survive_restart(self):
-        self.cfg['participation']['debounce_seconds'] = 0
-        self.cfg['queue']['generation_retries'] = 1
+        self.cfg = replace_config(self.cfg, 'participation.debounce_seconds', 0, owner=self)
+        self.cfg = replace_config(self.cfg, 'queue.generation_retries', 1, owner=self)
         self.add(1)
         self.bot.tick()
         self.jobs[-1].result = dict(ok=False, error='WorkerTimeout')
@@ -481,7 +496,7 @@ class PipelineTests(PipelineFixture):
         self.assertEqual(len(self.sends()), 1)
 
     def test_permanent_generation_error_does_not_retry_or_expose_message(self):
-        self.cfg['participation']['debounce_seconds'] = 0
+        self.cfg = replace_config(self.cfg, 'participation.debounce_seconds', 0, owner=self)
         self.add(1)
         self.bot.tick()
         self.jobs[-1].result = dict(ok=False, error='http_401', retryable=False)
@@ -492,7 +507,7 @@ class PipelineTests(PipelineFixture):
         self.assertNotIn('401', self.sends()[0].payload[2])
 
     def test_legacy_failed_generation_recovers_without_losing_later_ready_task(self):
-        self.cfg['participation']['debounce_seconds'] = 0
+        self.cfg = replace_config(self.cfg, 'participation.debounce_seconds', 0, owner=self)
         self.add(1)
         self.add(2, sender='wxid_second')
         self.bot.tick()
@@ -507,8 +522,8 @@ class PipelineTests(PipelineFixture):
         self.assertEqual(self.sends()[0].payload[2], '重新生成的答案')
 
     def test_fallback_after_submit_restart_is_only_confirmed(self):
-        self.cfg['participation']['debounce_seconds'] = 0
-        self.cfg['queue']['generation_retries'] = 0
+        self.cfg = replace_config(self.cfg, 'participation.debounce_seconds', 0, owner=self)
+        self.cfg = replace_config(self.cfg, 'queue.generation_retries', 0, owner=self)
         self.add(1)
         self.bot.tick()
         self.jobs[-1].result = dict(ok=False, error='WorkerTimeout')
@@ -541,8 +556,8 @@ class PipelineTests(PipelineFixture):
         self.assertEqual(tasks[1].get('last_generation_error', ''), '')
 
     def test_retention_zero_does_not_remove_task_awaiting_ui_result(self):
-        self.cfg['participation']['debounce_seconds'] = 0
-        self.cfg['queue']['completed_retention'] = 0
+        self.cfg = replace_config(self.cfg, 'participation.debounce_seconds', 0, owner=self)
+        self.cfg = replace_config(self.cfg, 'queue.completed_retention', 0, owner=self)
         self.add(1)
         self.bot.tick()
         self.generated()
@@ -558,8 +573,8 @@ class PipelineTests(PipelineFixture):
 
     def test_status_heartbeat_is_limited_but_new_intake_is_published(self):
         from os import replace
-        with patch('wxbridge.app.bot.time.monotonic', return_value=100) as clock, \
-                patch('wxbridge.app.bot.os.replace', wraps=replace) as publish:
+        with patch('wxbridge.app.sessions.group.time.monotonic', return_value=100) as clock, \
+                patch('wxbridge.app.sessions.group.os.replace', wraps=replace) as publish:
             self.bot.tick()
             self.bot.tick()
             self.assertEqual(publish.call_count, 1)
@@ -575,7 +590,7 @@ class PipelineTests(PipelineFixture):
         from provider.adapters import get_protocol_adapter
         client.adapter = get_protocol_adapter('deepseek')
         from wxbridge.ai.roles import model_settings
-        client.cfg = dict(model_settings(self.cfg), thinking='disabled')
+        client.cfg = dict(provider_settings(model_settings(self.cfg)), thinking='disabled')
         client._post = Mock(return_value={"choices": [{"message": {"content": "", "reasoning_content": "PRIVATE"}}]})
         from wxbridge.ai.client import ModelError
         with self.assertRaisesRegex(ModelError, 'empty_reply'):
@@ -584,14 +599,14 @@ class PipelineTests(PipelineFixture):
 
 
     def test_search_notice_then_final_reply_both_confirmed_and_cooldown(self):
-        self.cfg['search']['feedback_enabled'] = True
-        self.cfg["participation"]["debounce_seconds"] = 0
-        self.cfg["target"]["cooldown_seconds"] = 8
+        self.cfg = replace_config(self.cfg, 'search.feedback_enabled', True, owner=self)
+        self.cfg = replace_config(self.cfg, 'participation.debounce_seconds', 0, owner=self)
+        self.cfg = replace_config(self.cfg, 'target.cooldown_seconds', 8, owner=self)
         self.add(1)
         self.bot.tick()
         generator = self.search_started()
         notice = self.sends()[0].payload[2]
-        self.assertIn(notice, self.cfg['search']['feedback_phrases'])
+        self.assertIn(notice, self.cfg.search.feedback_phrases)
         self.assertEqual(self.bot.journal.head()["intent"]["kind"], "notice")
         self.sends()[0].result = dict(ok=True, ui=dict(submitted=True))
         self.add(2, sender="wxid_self", text=notice, mention=False)
@@ -614,8 +629,8 @@ class PipelineTests(PipelineFixture):
         self.assertEqual(task["notice"]["text"], "")
 
     def test_search_notice_is_not_repeated_for_repeated_events_or_after_restart(self):
-        self.cfg['search']['feedback_enabled'] = True
-        self.cfg["participation"]["debounce_seconds"] = 0
+        self.cfg = replace_config(self.cfg, 'search.feedback_enabled', True, owner=self)
+        self.cfg = replace_config(self.cfg, 'participation.debounce_seconds', 0, owner=self)
         self.add(1)
         self.bot.tick()
         generator = self.search_started()
@@ -631,8 +646,8 @@ class PipelineTests(PipelineFixture):
         self.assertEqual(len(self.sends()), 1)  # 只保留首次旧发送对象，没有新增提示发送。
 
     def test_search_notice_confirmation_timeout_blocks_sends_but_keeps_receiving(self):
-        self.cfg['search']['feedback_enabled'] = True
-        self.cfg["participation"]["debounce_seconds"] = 0
+        self.cfg = replace_config(self.cfg, 'search.feedback_enabled', True, owner=self)
+        self.cfg = replace_config(self.cfg, 'participation.debounce_seconds', 0, owner=self)
         self.add(1)
         self.bot.tick()
         self.search_started()
@@ -647,8 +662,8 @@ class PipelineTests(PipelineFixture):
         self.assertEqual(len(self.bot.journal.tasks()), 2)
 
     def test_new_message_preserves_running_search_and_pending_notice(self):
-        self.cfg['search']['feedback_enabled'] = True
-        self.cfg['target']['cooldown_seconds'] = 10
+        self.cfg = replace_config(self.cfg, 'search.feedback_enabled', True, owner=self)
+        self.cfg = replace_config(self.cfg, 'target.cooldown_seconds', 10, owner=self)
         with self.bot.journal.db:
             self.bot.journal.set('last_success', self.now)
         self.add(1)
@@ -663,14 +678,14 @@ class PipelineTests(PipelineFixture):
         self.assertEqual(self.bot.journal.head()['notice']['state'], 'pending')
         old.result = dict(ok=True, reply='原问题答案')
         self.bot.tick()
-        self.cfg['search']['feedback_enabled'] = False
+        self.cfg = replace_config(self.cfg, 'search.feedback_enabled', False, owner=self)
         self.now += 10
         self.bot.tick()
         self.assertEqual([job.payload[2] for job in self.sends()], ['原问题答案'])
 
     def test_search_feedback_can_be_disabled(self):
-        self.assertFalse(self.cfg['search']['feedback_enabled'])
-        self.cfg["participation"]["debounce_seconds"] = 0
+        self.assertFalse(self.cfg.search.feedback_enabled)
+        self.cfg = replace_config(self.cfg, 'participation.debounce_seconds', 0, owner=self)
         self.add(1)
         self.bot.tick()
         self.search_started()
@@ -679,8 +694,8 @@ class PipelineTests(PipelineFixture):
         self.assertEqual(len(self.sends()), 1)
 
     def test_disabling_feedback_discards_pending_notice_but_sends_final_reply(self):
-        self.cfg['search']['feedback_enabled'] = True
-        self.cfg['target']['cooldown_seconds'] = 5
+        self.cfg = replace_config(self.cfg, 'search.feedback_enabled', True, owner=self)
+        self.cfg = replace_config(self.cfg, 'target.cooldown_seconds', 5, owner=self)
         with self.bot.journal.db:
             self.bot.journal.set('last_success', self.now)
         self.add(1)
@@ -688,7 +703,7 @@ class PipelineTests(PipelineFixture):
         self.search_started()
         self.assertEqual(self.bot.journal.head()['notice']['state'], 'pending')
         self.assertFalse(self.sends())
-        self.cfg['search']['feedback_enabled'] = False
+        self.cfg = replace_config(self.cfg, 'search.feedback_enabled', False, owner=self)
         self.now += 3
         self.bot.tick()
         self.assertIsNone(self.bot.journal.head().get('notice'))
@@ -699,13 +714,13 @@ class PipelineTests(PipelineFixture):
         self.assertEqual([j.payload[2] for j in self.sends()], ['只发最终回答'])
 
     def test_disabling_feedback_does_not_cancel_uncertain_submitted_notice(self):
-        self.cfg['search']['feedback_enabled'] = True
-        self.cfg['participation']['debounce_seconds'] = 0
+        self.cfg = replace_config(self.cfg, 'search.feedback_enabled', True, owner=self)
+        self.cfg = replace_config(self.cfg, 'participation.debounce_seconds', 0, owner=self)
         self.add(1)
         self.bot.tick()
         self.search_started()
         notice = self.sends()[0].payload[2]
-        self.cfg['search']['feedback_enabled'] = False
+        self.cfg = replace_config(self.cfg, 'search.feedback_enabled', False, owner=self)
         self.restart()
         self.bot.tick()
         self.assertEqual(len(self.sends()), 1)
@@ -718,12 +733,12 @@ class PipelineTests(PipelineFixture):
 
 class WorkerTests(unittest.TestCase):
     def test_search_disabled_still_uses_plain_text_and_output_preferences(self):
-        from wxbridge.app.model_runtime import GroupModels
+        from wxbridge.app.execution.model_runtime import GroupModels
         from wxbridge.ai.reply.output import reply_rules
-        cfg=default_config();cfg['search']['enabled']=False
+        cfg=default_config();cfg = replace_config(cfg, 'search.enabled', False)
         runtime=GroupModels(cfg)
         try:
-            with patch('wxbridge.app.model_runtime.client_for') as client:
+            with patch('wxbridge.app.execution.model_runtime.client_for') as client:
                 from tests.support.tool_support import model_result
                 client.return_value.request.return_value = model_result(dict(content="**简单说**，先这样。"))
                 result=runtime.submit('generate',(cfg,[dict(role='system',content='合成指令')],None),timeout=5).future.result(timeout=2)
@@ -736,14 +751,14 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(result['reply'],'简单说，先这样。')
 
     def test_progress_event_does_not_replace_final_result(self):
-        from wxbridge.app.model_runtime import GroupModels
+        from wxbridge.app.execution.model_runtime import GroupModels
         cfg=default_config();runtime=GroupModels(cfg)
         def answer(cfg, client, prompt, on_search, **kwargs):
             on_search()
             from wxbridge.ai.tools.base import ToolReply
             return ToolReply("联网回答", dict(attempted=True, calls=1, results=1, errors=[]))
         try:
-            with patch('wxbridge.app.model_runtime.client_for'), patch('wxbridge.ai.reply.runner.run_tool_loop',side_effect=answer):
+            with patch('wxbridge.app.execution.model_runtime.client_for'), patch('wxbridge.ai.reply.runner.run_tool_loop',side_effect=answer):
                 job=runtime.submit('generate',(cfg,[],None),timeout=5)
                 job.future.result(timeout=2)
                 self.assertEqual(job.poll(),dict(event='search_started'))
@@ -755,13 +770,13 @@ class WorkerTests(unittest.TestCase):
             runtime.close()
 
     def test_image_proposal_can_finish_without_worker_confirmation_text(self):
-        from wxbridge.app.model_runtime import GroupModels
+        from wxbridge.app.execution.model_runtime import GroupModels
         from wxbridge.ai.tools.base import ToolReply
         cfg = default_config()
-        cfg['image_generation']['enabled'] = True
+        cfg = replace_config(cfg, 'image_generation.enabled', True)
         runtime = GroupModels(cfg)
         try:
-            with patch('wxbridge.app.model_runtime.client_for'), patch('wxbridge.ai.reply.runner.run_tool_loop',
+            with patch('wxbridge.app.execution.model_runtime.client_for'), patch('wxbridge.ai.reply.runner.run_tool_loop',
                     return_value=ToolReply('', {}, (dict(prompt='cat'),))) as loop:
                 result = runtime.submit('generate', (cfg, [], None), timeout=5).future.result(timeout=2)
             self.assertTrue(result['ok'])
@@ -773,10 +788,10 @@ class WorkerTests(unittest.TestCase):
             runtime.close()
 
     def test_real_model_lane_echo_without_creating_client(self):
-        from wxbridge.app.model_runtime import GroupModels
+        from wxbridge.app.execution.model_runtime import GroupModels
         cfg=default_config();runtime=GroupModels(cfg)
         try:
-            with patch('wxbridge.app.model_runtime.create_client') as create:
+            with patch('wxbridge.app.execution.model_runtime.create_client') as create:
                 result=runtime.submit('generate',(cfg,[],'本地线程测试'),timeout=5).future.result(timeout=2)
                 self.assertTrue(result['ok'])
                 self.assertEqual(result['reply'],'本地线程测试')

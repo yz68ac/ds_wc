@@ -1,4 +1,5 @@
 """合成身份、可控时间和假工作进程；绝不读真实聊天或调用 API。"""
+from tests.support.configuration import replace_config, update_config, snapshot
 from tests.support.model_support import default_config
 from contextlib import nullcontext
 import copy
@@ -11,7 +12,8 @@ import os
 
 from wxbridge.ai.background.memory import snapshot, member_labels, extract
 from wxbridge.ai.reply.prompt import build_prompt
-from wxbridge.config import DEFAULTS, _deep_merge
+from wxbridge.config import default_document
+from tests.support.configuration import merge_config as _deep_merge
 from wxbridge.storage.person_memory import MemoryStore, DAY, fuzzy_time, affinity_value
 from tests.support.pipeline import PipelineFixture
 from tests.support.synthetic import NOW, msg
@@ -137,14 +139,14 @@ class MemoryTests(MemoryFixture):
         self.assertLessEqual(len(extra), 1200)
         prompt = build_prompt(self.cfg, [a], b, "测试", memory=dict(labels=labels, text=extra))[1]["content"]
         self.assertEqual([m['sender'] for m in json.loads(prompt)['messages']], ['wxid_b','wxid_a'])
-        self.cfg["target"]["context_max_chars"] = len(build_prompt(self.cfg, [a], b, "测试", memory=dict(labels=labels))[1]["content"])
+        self.cfg = replace_config(self.cfg, 'target.context_max_chars', len(build_prompt(self.cfg, [a], b, "测试", memory=dict(labels=labels))[1]["content"]), owner=self)
         short = build_prompt(self.cfg, [a], b, "测试", memory=dict(labels=labels, text=extra))[1]["content"]
         self.assertIn("完整历史", short)
         self.assertNotIn('memory', json.loads(short))
 
     def test_extractor_uses_memory_thinking_preserves_foreground_and_uses_no_tools(self):
-        self.cfg['models']['reply']['options']["reasoning_effort"] = "high"
-        self.cfg['models']['memory']['options'].update(thinking='enabled', reasoning_effort='max')
+        self.cfg = replace_config(self.cfg, 'models.reply.options.reasoning_effort', "high", owner=self)
+        self.cfg = update_config(self.cfg, 'models.memory.options', thinking='enabled', reasoning_effort='max', owner=self)
         before = copy.deepcopy(self.cfg)
         with patch("wxbridge.ai.client.client_for") as client:
             client.return_value.complete.return_value = dict(content='{"updates":[]}', reasoning_content="PRIVATE_REASONING")
@@ -152,9 +154,9 @@ class MemoryTests(MemoryFixture):
             client.assert_called_once_with('memory')
             from wxbridge.ai.roles import model_settings
             settings = model_settings(self.cfg, 'memory')
-            self.assertEqual(settings['thinking'], 'enabled')
-            self.assertEqual(settings['reasoning_effort'], 'max')
-            self.assertEqual(self.cfg['models']['reply']['options']["reasoning_effort"], "high")
+            self.assertEqual(settings.options.thinking, 'enabled')
+            self.assertEqual(settings.options.reasoning_effort, 'max')
+            self.assertEqual(self.cfg.models.reply.options.reasoning_effort, "high")
             self.assertEqual(self.cfg, before)
             self.assertNotIn("tools", client.return_value.complete.call_args.kwargs)
 
@@ -172,17 +174,17 @@ class MemoryTests(MemoryFixture):
     @unittest.skipIf(os.name == "nt", "Linux 文件权限与 flock")
     def test_private_permissions_and_maintenance_listener_lock(self):
         from argparse import Namespace
-        from wxbridge.debug_cli import memory_command
-        from wxbridge.app.runtime import instance_lock
+        from wxbridge_cli.debug import memory_command
+        from wxbridge.app.execution.locks import instance_lock
         self.memory.apply(suggestion(), self.snap(), NOW)
         for path, expected in [(self.memory.directory, 0o700), (self.memory.path, 0o600), (self.memory.projection, 0o600)]:
             self.assertEqual(path.stat().st_mode & 0o777, expected)
-        self.cfg["memory"]["directory"] = self.temp.name
-        self.cfg["queue"]["file"] = str(Path(self.temp.name)/"queue.sqlite3")
-        self.cfg["decrypted_dir"] = str(Path(self.temp.name)/"decrypted")
-        Path(self.cfg["decrypted_dir"]).mkdir(mode=0o700)
-        with patch("wxbridge.app.locks.require_memory_directory"):
-            with instance_lock(self.cfg["queue"]["file"]+".lock"):
+        self.cfg = replace_config(self.cfg, 'paths.memory_directory', self.temp.name, owner=self)
+        self.cfg = replace_config(self.cfg, 'paths.queue_file', str(Path(self.temp.name)/"queue.sqlite3"), owner=self)
+        self.cfg = replace_config(self.cfg, 'account.decrypted_dir', str(Path(self.temp.name)/"decrypted"), owner=self)
+        Path(self.cfg.account.decrypted_dir).mkdir(mode=0o700)
+        with patch("wxbridge.app.execution.locks.require_memory_directory"):
+            with instance_lock(self.cfg.paths.queue_file+".lock"):
                 with self.assertRaisesRegex(ValueError, "resource_busy"):
                     memory_command(self.cfg, Namespace(action="clear"))
         os.chmod(self.memory.path, 0o644)
@@ -278,7 +280,7 @@ class MemoryPipelineTests(MemoryPipelineFixture):
         self.assertEqual(self.bot.journal.status()["memory_pending"], 1)
 
     def test_notice_and_dry_run_do_not_enqueue_memory(self):
-        self.cfg['search']['feedback_enabled'] = True
+        self.cfg = replace_config(self.cfg, 'search.feedback_enabled', True, owner=self)
         self.enable()
         self.add(1)
         self.bot.tick()

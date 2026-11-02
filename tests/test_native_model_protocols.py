@@ -1,4 +1,7 @@
 """Responses/Anthropic contracts and hosted-search fault cases; never network."""
+from wxbridge.config import effective_document
+from wxbridge.ai.roles import provider_settings
+from tests.support.configuration import replace_config, update_config, snapshot
 from tests.support.model_support import default_config
 from contextlib import nullcontext
 from copy import deepcopy
@@ -11,10 +14,13 @@ from unittest.mock import Mock, patch
 
 from tests.support.model_support import ClientFixture, ModelError, capture_metrics
 from provider.adapters import ModelRequest, get_protocol_adapter
-from wxbridge.ai.roles import model_settings, validate_models
+from wxbridge.ai.roles import model_settings
+from tests.support.configuration import validate_models
 from tests.support.tool_support import run_answer
-from wxbridge.app.metrics import Metrics
-from wxbridge.config import DEFAULTS, _deep_merge, load_config
+from wxbridge.app.status.metrics import Metrics
+from wxbridge.config import load_config
+from wxbridge.config import default_document
+from tests.support.configuration import merge_config as _deep_merge
 
 URL='https://example.com/verified'
 TOOL=dict(type='function',function=dict(name='web_search',description='synthetic',parameters={'type':'object'}))
@@ -25,8 +31,8 @@ MESSAGES=[dict(role='system',content='PRIVATE_PERSONA'),dict(role='user',content
 
 def config(provider='openai_responses'):
     cfg=default_config()
-    cfg['model_clients']['reply'] = 'anthropic' if provider == 'anthropic' else 'openai'
-    cfg['models']['reply']['options'].update(thinking='enabled', reasoning_effort='max', max_tokens=4096, temperature=1)
+    cfg = replace_config(cfg, 'model_clients.reply', 'anthropic' if provider == 'anthropic' else 'openai')
+    cfg = update_config(cfg, 'models.reply.options', thinking='enabled', reasoning_effort='max', max_tokens=4096, temperature=1)
     return cfg
 
 
@@ -51,7 +57,7 @@ def http(data):
 
 class NativeProtocolTests(unittest.TestCase):
     def test_responses_images_functions_temperature_and_stateless_payload(self):
-        cfg=config();adapter=get_protocol_adapter('openai_responses');settings=model_settings(cfg)
+        cfg=config();adapter=get_protocol_adapter('openai_responses');settings=provider_settings(model_settings(cfg))
         wire=adapter.build_payload(settings,ModelRequest(MESSAGES,[TOOL],'auto'))
         self.assertFalse(wire['store']);self.assertIn('reasoning.encrypted_content',wire['include'])
         self.assertEqual(wire['reasoning'],dict(effort='max'));self.assertNotIn('temperature',wire)
@@ -69,7 +75,7 @@ class NativeProtocolTests(unittest.TestCase):
                dict(type='function_call',id='fc-1',call_id='call-1',name='web_search',arguments='{"query":"synthetic"}')]
         result=adapter.parse_response(response(items));turn=adapter.assistant_message(result.message)
         history=[*MESSAGES,turn,dict(role='tool',tool_call_id='call-1',content='PRIVATE_RESULT')]
-        wire=adapter.build_payload(model_settings(config()),ModelRequest(history,[TOOL]))
+        wire=adapter.build_payload(provider_settings(model_settings(config())),ModelRequest(history,[TOOL]))
         self.assertEqual(wire['input'][2:4],items)
         self.assertEqual(wire['input'][-1],dict(type='function_call_output',call_id='call-1',output='PRIVATE_RESULT'))
         turn['_provider_state']['items'][0]['summary'].append('changed')
@@ -77,7 +83,7 @@ class NativeProtocolTests(unittest.TestCase):
         self.assertNotIn('PRIVATE',repr(result))
 
     def test_anthropic_system_images_and_sampling_are_converted(self):
-        adapter=get_protocol_adapter('anthropic');settings=model_settings(config('anthropic'))
+        adapter=get_protocol_adapter('anthropic');settings=provider_settings(model_settings(config('anthropic')))
         wire=adapter.build_payload(settings,ModelRequest(MESSAGES,[TOOL]))
         self.assertEqual(wire['system'],'PRIVATE_PERSONA');self.assertEqual(len(wire['messages']),1)
         self.assertEqual(wire['messages'][0]['content'][1],dict(type='image',source=dict(type='base64',media_type='image/png',data='AAAA')))
@@ -97,14 +103,14 @@ class NativeProtocolTests(unittest.TestCase):
         result=adapter.parse_response(claude(blocks,'tool_use'))
         history=[*MESSAGES,adapter.assistant_message(result.message),
                  dict(role='tool',tool_call_id='call-1',content='first'),dict(role='tool',tool_call_id='call-2',content='second')]
-        wire=adapter.build_payload(model_settings(config('anthropic')),ModelRequest(history,[TOOL]))
+        wire=adapter.build_payload(provider_settings(model_settings(config('anthropic'))),ModelRequest(history,[TOOL]))
         self.assertEqual(wire['messages'][1]['content'],blocks)
         self.assertEqual([b['tool_use_id'] for b in wire['messages'][2]['content']],['call-1','call-2'])
         self.assertEqual(result.message['content'],'');self.assertEqual(len(result.message['tool_calls']),2)
         self.assertNotIn('PRIVATE',repr(result))
 
     def test_manual_thinking_budget_and_between_tools_are_explicit(self):
-        settings=model_settings(config('anthropic'));settings.update(thinking_mode='manual',reasoning_effort=None,thinking_budget_tokens=2048)
+        settings=provider_settings(model_settings(config('anthropic')));settings.update(thinking_mode='manual',reasoning_effort=None,thinking_budget_tokens=2048)
         adapter=get_protocol_adapter('anthropic');wire=adapter.build_payload(settings,ModelRequest(MESSAGES,[TOOL],'none'))
         self.assertEqual(wire['thinking'],dict(type='enabled',budget_tokens=2048))
         with self.assertRaisesRegex(ModelError,'unsupported_tool_choice'):adapter.build_payload(settings,ModelRequest(MESSAGES,[TOOL],'required'))
@@ -115,7 +121,7 @@ class NativeProtocolTests(unittest.TestCase):
 
     def test_cross_provider_state_and_duplicate_or_unmatched_results_fail_before_http(self):
         for provider in ('openai_responses','anthropic'):
-            adapter=get_protocol_adapter(provider);settings=model_settings(config(provider))
+            adapter=get_protocol_adapter(provider);settings=provider_settings(model_settings(config(provider)))
             foreign=dict(role='assistant',_provider_state=dict(provider='other',items=[]))
             with self.subTest(provider=provider),self.assertRaisesRegex(ModelError,'continuation_provider_mismatch'):
                 adapter.build_payload(settings,ModelRequest([foreign]))
@@ -175,7 +181,7 @@ class NativeSearchTests(unittest.TestCase):
 
 
     def run_search(self,provider,responses,**options):
-        cfg=config(provider);cfg['search']['backend']='native';cfg['search'].update(options)
+        cfg=config(provider);cfg = replace_config(cfg, 'search.backend', 'native');cfg = update_config(cfg, 'search', values=options)
         c=client(cfg)
         self.http=patch.object(c,'_post',side_effect=responses).start()
         self.addCleanup(patch.stopall)
@@ -240,7 +246,7 @@ class NativeSearchTests(unittest.TestCase):
         self.assertIn('invalid_tool', meta['errors'])
 
     def test_http_failure_does_not_fall_back_to_external_search(self):
-        cfg=config();cfg['search']['backend']='native';c=client(cfg)
+        cfg=config();cfg = replace_config(cfg, 'search.backend', 'native');c=client(cfg)
         with patch.object(c,'_post',side_effect=ModelError('http_429',retryable=True)),patch('wxbridge.ai.tools.web.SearchClient') as external:
             with self.assertRaisesRegex(ModelError,'http_429'):run_answer(cfg,c,MESSAGES)
         external.assert_not_called()
@@ -250,43 +256,43 @@ class ProfileTests(unittest.TestCase):
 
 
     def test_auto_search_is_selected_before_http_and_explicit_external_override_works(self):
-        cfg=config();cfg['search']['backend']='auto';c=client(cfg)
+        cfg=config();cfg = replace_config(cfg, 'search.backend', 'auto');c=client(cfg)
         with patch.object(c,'_post',return_value=response()) as post,patch('wxbridge.ai.tools.web.SearchClient') as external:
             run_answer(cfg,c,MESSAGES)
         self.assertEqual(post.call_args.args[0]['tools'],[dict(type='web_search')]);external.assert_not_called()
-        cfg['search']['backend']='external';c=client(cfg)
+        cfg = replace_config(cfg, 'search.backend', 'external');c=client(cfg)
         with patch.object(c,'_post',return_value=response()) as post, patch('wxbridge.ai.tools.web.SearchClient'):
             run_answer(cfg,c,MESSAGES)
         self.assertEqual(post.call_args.args[0]['tools'][0]['type'],'function')
-        cfg['model_clients']['reply']='deepseek';cfg['search']['backend']='native'
+        cfg = replace_config(cfg, 'model_clients.reply', 'deepseek');cfg = replace_config(cfg, 'search.backend', 'native')
         with self.assertRaisesRegex(ValueError, 'unsupported_native_search'):validate_models(cfg)
 
     def profile_cfg(self):
         cfg=default_config()
-        cfg['model_clients'].update(reply='openai', background='anthropic')
-        cfg['models']['reply']['model']='synthetic-openai'
-        cfg['models']['memory']['model']='synthetic-claude'
+        cfg = update_config(cfg, 'model_clients', reply='openai', background='anthropic')
+        cfg = replace_config(cfg, 'models.reply.model', 'synthetic-openai')
+        cfg = replace_config(cfg, 'models.memory.model', 'synthetic-claude')
         return cfg
 
     def test_explicit_clients_and_role_options_keep_judgment_disabled(self):
-        cfg=self.profile_cfg();cfg['models']['memory']['options']['reasoning_effort']='high'
+        cfg=self.profile_cfg();cfg = replace_config(cfg, 'models.memory.options.reasoning_effort', 'high')
         original=deepcopy(cfg);validate_models(cfg)
-        self.assertEqual(model_settings(cfg,'reply')['model'],'synthetic-openai')
-        self.assertEqual(model_settings(cfg,'participation')['thinking'],'disabled')
-        self.assertEqual(model_settings(cfg,'memory')['provider'],'anthropic_messages')
-        self.assertEqual(model_settings(cfg,'memory')['reasoning_effort'],'high')
+        self.assertEqual(model_settings(cfg,'reply').model,'synthetic-openai')
+        self.assertEqual(model_settings(cfg,'participation').options.thinking,'disabled')
+        self.assertEqual(model_settings(cfg,'memory').provider,'anthropic_messages')
+        self.assertEqual(model_settings(cfg,'memory').options.reasoning_effort,'high')
         self.assertEqual(cfg,original)
 
     def test_role_token_limit_is_taken_from_explicit_model_options(self):
         cfg=default_config();validate_models(cfg)
-        self.assertEqual(model_settings(cfg)['provider'],'deepseek')
-        self.assertEqual(model_settings(cfg,'memory')['max_tokens'],cfg['models']['memory']['options']['max_tokens'])
+        self.assertEqual(model_settings(cfg).provider,'deepseek')
+        self.assertEqual(model_settings(cfg,'memory').options.max_tokens,cfg.models.memory.options.max_tokens)
 
     def test_resolver_accepts_explicit_clients_and_rejects_removed_profiles(self):
-        from wxbridge.config import resolve_config
+        from tests.support.configuration import resolve_fixture as resolve_config
         cfg=self.profile_cfg()
         loaded=resolve_config(cfg, Path('synthetic-missing.json'), environment=False)
-        self.assertEqual(model_settings(loaded)['provider'],'openai_responses')
+        self.assertEqual(model_settings(loaded).provider,'openai_responses')
         for key in ('model_profile', 'model_profiles', 'deepseek', 'persona'):
             with self.subTest(key=key), self.assertRaisesRegex(ValueError, 'obsolete_model_configuration'):
-                resolve_config(dict(cfg, **{key:{}}), Path('synthetic-missing.json'), environment=False)
+                resolve_config(dict(effective_document(cfg), **{key:{}}), Path('synthetic-missing.json'), environment=False)

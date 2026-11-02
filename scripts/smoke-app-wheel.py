@@ -37,14 +37,40 @@ renamed = {
  'wxbridge.ai.group_profile':'wxbridge.ai.background.group_profile',
  'wxbridge.ai.avatars':'wxbridge.ai.background.avatars',
  'wxbridge.ai.native_search':'wxbridge.ai.tools.native_search',
- 'wxbridge.app.image_generation':'wxbridge.app.image_generation_controller',
- 'wxbridge.app.memory':'wxbridge.app.memory_controller',
- 'wxbridge.app.participation':'wxbridge.app.participation_controller',
- 'wxbridge.app.group_profile':'wxbridge.app.group_profile_controller',
+ 'wxbridge.app.image_generation':'wxbridge.app.tasks.image_generation',
+ 'wxbridge.app.memory':'wxbridge.app.tasks.memory',
+ 'wxbridge.app.participation':'wxbridge.app.tasks.participation',
+ 'wxbridge.app.group_profile':'wxbridge.app.tasks.group_profile',
+ 'wxbridge.app.bot':'wxbridge.app.sessions.group',
+ 'wxbridge.app.account':'wxbridge.app.sessions.account',
+ 'wxbridge.app.coordinator':'wxbridge.app.sessions.coordinator',
+ 'wxbridge.app.session_phases':'wxbridge.app.sessions.phases',
+ 'wxbridge.app.instance_control':'wxbridge.app.sessions.instance_control',
+ 'wxbridge.app.reply':'wxbridge.app.tasks.reply',
+ 'wxbridge.app.participation_controller':'wxbridge.app.tasks.participation',
+ 'wxbridge.app.memory_controller':'wxbridge.app.tasks.memory',
+ 'wxbridge.app.group_profile_controller':'wxbridge.app.tasks.group_profile',
+ 'wxbridge.app.image_generation_controller':'wxbridge.app.tasks.image_generation',
+ 'wxbridge.app.learning':'wxbridge.app.tasks.learning',
+ 'wxbridge.app.task_policy':'wxbridge.app.tasks.policy',
+ 'wxbridge.app.model_runtime':'wxbridge.app.execution.model_runtime',
+ 'wxbridge.app.workers':'wxbridge.app.execution.workers',
+ 'wxbridge.app.locks':'wxbridge.app.execution.locks',
+ 'wxbridge.app.confirmation':'wxbridge.app.delivery.confirmation',
+ 'wxbridge.app.native_gateway':'wxbridge.app.delivery.native_gateway',
+ 'wxbridge.app.metrics':'wxbridge.app.status.metrics',
+ 'wxbridge.app.build_info':'wxbridge.app.status.build_info',
+ 'wxbridge.app.logging_context':'wxbridge.app.status.logging_context',
+ 'wxbridge.app.operations':'wxbridge.app.status.paths',
+ 'wxbridge.app.monitor':'wxbridge.app.status.snapshot',
+ 'wxbridge.app.diagnostics':'wxbridge_cli.diagnostics',
+ 'wxbridge.app.terminal':'wxbridge_cli.terminal',
+ 'wxbridge.debug_cli':'wxbridge_cli.debug',
  'wxbridge.storage.image_generation':'wxbridge.storage.image_generation_journal',
 }
 for old,new in renamed.items():
- module = Path(wxbridge.__file__).parent.joinpath(*new.split('.')[1:])
+ package = find_spec(new.split('.')[0])
+ module = Path(package.origin).parent.joinpath(*new.split('.')[1:])
  assert module.with_suffix('.py').is_file() or (module/'__init__.py').is_file(), new
  assert find_spec(old) is None, old
 for name in ('reply/runner.py','tools/native_search.py','tools/registry.py','tools/base.py','tools/web.py','tools/image.py'):
@@ -58,9 +84,14 @@ assert find_spec('wxbridge_service') is None
 assert find_spec('wxbridge.cli') is None
 assert find_spec('wxbridge.host.supervisor') is not None
 assert find_spec('wxbridge.management.repository') is not None
-from wxbridge.config import DEFAULTS, DEFAULTS_FILE
-assert DEFAULTS_FILE == resource_path('config.defaults.json')
-assert DEFAULTS['target']['context_max_chars'] > 0
+assert find_spec('wxbridge.app.delivery.controller') is not None
+assert not (Path(wxbridge.__file__).parent/'app/delivery.py').exists()
+assert find_spec('wxbridge_cli.presentation') is not None
+from wxbridge.config import InstanceConfig, default_document
+assert InstanceConfig().target.context_max_chars > 0
+from unittest.mock import patch
+with patch.object(Path, 'read_text', side_effect=AssertionError('must not load defaults')):
+    assert default_document()['target']['context_max_chars'] > 0
 assert resource_path('prompts/system.md').read_text(encoding='utf-8').strip()
 assert resource_path('prompts/memory.md').read_text(encoding='utf-8').strip()
 from wxbridge.emoticons import catalog

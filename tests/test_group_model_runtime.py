@@ -1,4 +1,5 @@
 """Thread-lane contracts using local functions and synthetic provider clients."""
+from tests.support.configuration import replace_config, update_config, snapshot
 from threading import Event, Thread
 from copy import deepcopy
 from concurrent.futures import CancelledError
@@ -7,7 +8,7 @@ from unittest.mock import Mock, patch
 
 from provider import ImageRequest, ModelResult
 from tests.support.model_support import default_config
-from wxbridge.app.model_runtime import GroupModels, ModelLane
+from wxbridge.app.execution.model_runtime import GroupModels, ModelLane
 
 
 class GroupModelRuntimeTests(TestCase):
@@ -76,8 +77,8 @@ class GroupModelRuntimeTests(TestCase):
 
     def test_reply_and_background_start_in_parallel_with_detached_request_options(self):
         cfg = default_config()
-        cfg['models']['reply']['options'].update(thinking='enabled', reasoning_effort='high')
-        cfg['models']['participation']['options'].update(thinking='disabled')
+        cfg = update_config(cfg, 'models.reply.options', thinking='enabled', reasoning_effort='high')
+        cfg = update_config(cfg, 'models.participation.options', thinking='disabled')
         saved = deepcopy(cfg)
         started, release, requests = [Event(), Event()], Event(), []
         def create(*args, **kwargs):
@@ -90,16 +91,16 @@ class GroupModelRuntimeTests(TestCase):
                 return ModelResult({'content': 'ok'}, 'stop', {})
             client.generate.side_effect = generate
             return client
-        cfg['models']['reply']['model'] = 'reply-model'
-        cfg['models']['participation']['model'] = 'judge-model'
+        cfg = replace_config(cfg, 'models.reply.model', 'reply-model')
+        cfg = replace_config(cfg, 'models.participation.model', 'judge-model')
         saved = deepcopy(cfg)
-        with patch('wxbridge.app.model_runtime.create_client', side_effect=create):
+        with patch('wxbridge.app.execution.model_runtime.create_client', side_effect=create):
             runtime = GroupModels(cfg)
             try:
                 jobs = [runtime.submit('request', (cfg, role, []), timeout=5)
                         for role in ('reply', 'participation')]
                 self.assertTrue(all(event.wait(2) for event in started))
-                cfg['models']['reply']['options']['reasoning_effort'] = 'low'
+                cfg = replace_config(cfg, 'models.reply.options.reasoning_effort', 'low')
                 release.set()
                 self.assertTrue(all(job.future.result(timeout=2)['ok'] for job in jobs))
                 by_model = {r.model: r.options for r in requests}
@@ -131,16 +132,16 @@ class GroupModelRuntimeTests(TestCase):
 
     def test_groups_reuse_their_own_clients_and_roles_keep_options(self):
         cfg = default_config()
-        cfg['models']['memory']['model'] = 'memory-model'
-        cfg['models']['avatar']['model'] = 'avatar-model'
-        cfg['models']['group_profile']['model'] = 'profile-model'
+        cfg = replace_config(cfg, 'models.memory.model', 'memory-model')
+        cfg = replace_config(cfg, 'models.avatar.model', 'avatar-model')
+        cfg = replace_config(cfg, 'models.group_profile.model', 'profile-model')
         clients = []
         def create(*args, **kwargs):
             client = Mock()
             client.generate.return_value = ModelResult({'content': 'ok'}, 'stop', {})
             clients.append(client)
             return client
-        with patch('wxbridge.app.model_runtime.create_client', side_effect=create):
+        with patch('wxbridge.app.execution.model_runtime.create_client', side_effect=create):
             first, second = GroupModels(cfg), GroupModels(cfg)
             try:
                 for role in ('memory', 'avatar', 'group_profile'):
@@ -159,7 +160,7 @@ class GroupModelRuntimeTests(TestCase):
     def test_expired_image_request_never_creates_a_client(self):
         runtime = GroupModels(default_config())
         try:
-            with patch('wxbridge.app.model_runtime.create_client') as create:
+            with patch('wxbridge.app.execution.model_runtime.create_client') as create:
                 result = runtime.submit_images(ImageRequest('image-model', 'synthetic'), deadline=0)
                 with self.assertRaises(Exception):
                     result.result(timeout=2)
@@ -169,12 +170,12 @@ class GroupModelRuntimeTests(TestCase):
 
     def test_batch_decision_uses_background_client_and_full_reply_uses_reply_client(self):
         cfg = default_config()
-        cfg['search']['enabled'] = False
-        cfg['models']['participation']['model'] = 'judge-model'
-        cfg['models']['reply']['model'] = 'reply-model'
-        cfg['models']['memory']['model'] = 'memory-model'
-        cfg['models']['reply']['options'].update(thinking='enabled', reasoning_effort='high')
-        cfg['models']['participation']['options'].update(thinking='disabled')
+        cfg = replace_config(cfg, 'search.enabled', False)
+        cfg = replace_config(cfg, 'models.participation.model', 'judge-model')
+        cfg = replace_config(cfg, 'models.reply.model', 'reply-model')
+        cfg = replace_config(cfg, 'models.memory.model', 'memory-model')
+        cfg = update_config(cfg, 'models.reply.options', thinking='enabled', reasoning_effort='high')
+        cfg = update_config(cfg, 'models.participation.options', thinking='disabled')
         saved = deepcopy(cfg)
         clients, requests = [], []
         text = '完整回复不受旧的三十字短答限制。'*6
@@ -188,7 +189,7 @@ class GroupModelRuntimeTests(TestCase):
             clients.append(client)
             return client
         prompt = [dict(role='system', content='合成规则'), dict(role='user', content='合成上下文')]
-        with patch('wxbridge.app.model_runtime.create_client', side_effect=create):
+        with patch('wxbridge.app.execution.model_runtime.create_client', side_effect=create):
             runtime = GroupModels(cfg)
             try:
                 decision = runtime.submit('participation', (cfg, prompt, dict(source_ids=[1,2])),

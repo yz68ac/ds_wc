@@ -2,13 +2,13 @@
 import time
 from pathlib import Path
 
-from wxbridge.app.monitor import read_json, safe_events
+from wxbridge.app.status.snapshot import read_json, safe_events
 from wxbridge.control import BOT, SESSION
 
 
 def overview(repository, services, operations, *, demo=False):
     cfg = repository.account()
-    runtime = Path(cfg['state_file']).parent
+    runtime = Path(cfg.state_file).parent
     states = services.status()
     live, failure = read_json(runtime/'account-status.json')
     login, _ = read_json(runtime/'login-status.json')
@@ -44,7 +44,7 @@ def overview(repository, services, operations, *, demo=False):
             applied_revision=lifecycle.get('applied_revision'),
             config_pending=item['revision']!=lifecycle.get('applied_revision'),
             request_id=lifecycle.get('request_id'),error=lifecycle.get('error',''),active_models=status.get('models',{})))
-    events, event_error = safe_events(cfg['log_file'])
+    events, event_error = safe_events(cfg.log_file)
     return dict(demo=demo, collected_at=now, services=states,
         runtime=dict(state='unavailable' if bot['state']=='unavailable' else ('listening' if live.get('instances') else 'idle') if fresh else 'stopped' if bot['state']=='inactive' else 'stale' if live else 'unavailable',
             control_error=getattr(services,'status_error',''),

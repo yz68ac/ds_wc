@@ -35,6 +35,8 @@ jobs:
           cache-dependency-glob: |
             uv.lock
             **/pyproject.toml
+      - name: Generated configuration defaults
+        run: python scripts/config-defaults.py --check
       - name: Native image libraries
         if: runner.os == 'Linux'
         run: |

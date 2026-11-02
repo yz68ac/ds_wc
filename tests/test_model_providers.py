@@ -1,4 +1,6 @@
 """Provider boundary contract tests; synthetic HTTP and tools only."""
+from wxbridge.ai.roles import provider_settings
+from tests.support.configuration import replace_config, update_config, snapshot
 from tests.support.model_support import default_config
 from contextlib import nullcontext
 from copy import deepcopy
@@ -13,10 +15,10 @@ from unittest.mock import Mock, patch
 
 from tests.support.model_support import ClientFixture, ModelError, capture_metrics
 from provider.adapters import ModelRequest, ModelResult, get_protocol_adapter
-from wxbridge.ai.roles import validate_models
+from tests.support.configuration import validate_models
 from wxbridge.ai.tools.web import SearchClient, SearchError
 from tests.support.tool_support import run_answer
-from wxbridge.config import DEFAULTS
+from wxbridge.config import default_document
 from provider import create_client, load_config as provider_config
 from wxbridge.ai.roles import model_settings
 
@@ -74,7 +76,7 @@ class ProviderTests(unittest.TestCase):
         messages=[dict(role='user',content=[dict(type='text',text='PRIVATE_CHAT'),
                   dict(type='image_url',image_url=dict(url='data:image/png;base64,AAAA',detail='original'))])]
         tools=[dict(type='function',function=dict(name='lookup',parameters={'type':'object'}))]
-        original=deepcopy((messages,tools));settings=model_settings(default_config())
+        original=deepcopy((messages,tools));settings=provider_settings(model_settings(default_config()))
         for provider in ('deepseek','openai','openai_compatible'):
             adapter=get_protocol_adapter(provider);wire=adapter.build_payload(settings,ModelRequest(messages,tools,'none'))
             self.assertEqual(wire['messages'],messages);self.assertEqual(wire['tools'],tools)
@@ -84,7 +86,7 @@ class ProviderTests(unittest.TestCase):
             self.assertEqual((messages,tools),original)
 
     def test_alternative_wire_protocol_can_run_the_existing_search_loop(self):
-        cfg=default_config();cfg['search']['backend']='auto'
+        cfg=default_config();cfg = replace_config(cfg, 'search.backend', 'auto')
         client=self.client(cfg,adapter=SyntheticWireAdapter())
         tool=dict(id='call-1',type='function',function=dict(name='web_search',arguments='{"query":"synthetic"}'))
         replies=[dict(answer='',operations=[tool],wire_state='PRIVATE_CONTINUATION'),
@@ -125,7 +127,7 @@ class ProviderTests(unittest.TestCase):
 
 
     def test_search_uses_its_provider_connection_instead_of_chat_credentials(self):
-        cfg=default_config();cfg['model_clients']['reply']='openai'
+        cfg=default_config();cfg = replace_config(cfg, 'model_clients.reply', 'openai')
         for key in ('search-key', ''):
             config=provider_config(ROOT/'tests/.synthetic-provider.env', environ={
                 'DEEPSEEK_API_KEY':key, 'OPENAI_API_KEY':'chat-key'})
@@ -145,7 +147,7 @@ class ProviderTests(unittest.TestCase):
             self.assertEqual(chat.cfg['proxy_url'],'http://127.0.0.1:10808')
             self.assertIs(sdk_send.call_args_list[0].args[1], chat._sdk_client)
             self.assertEqual(sdk_send.call_args_list[1].args[2], 'deepseek')
-            self.assertFalse(memory.cfg.get('proxy_url'))
+            self.assertFalse(memory.cfg['proxy_url'])
         self.assertEqual(dict(os.environ),original)
 
     def test_proxy_failure_never_falls_back_or_exposes_error_contents(self):
@@ -163,7 +165,7 @@ class ProviderTests(unittest.TestCase):
                       'http://PRIVATE:SECRET@proxy.example:80','http://proxy.example/path',
                       'http://proxy.example?PRIVATE','http://proxy.example:bad','http://proxy.example:0','',False,[],
                       'http://proxy.example\n'):
-            cfg=default_config();cfg['models']['reply']={'proxy_url':value}
+            cfg=default_config();cfg = replace_config(cfg, 'models.reply', {'proxy_url':value})
             with self.subTest(value=value),self.assertRaises(ValueError) as caught:validate_models(cfg)
             self.assertNotIn('PRIVATE',str(caught.exception));self.assertNotIn('SECRET',str(caught.exception))
 
@@ -181,7 +183,7 @@ assert callable(get_protocol_adapter('deepseek').build_payload)
         self.assertEqual(run.returncode,0,run.stderr.decode())
 
     def test_business_entrypoints_use_neutral_names_and_search_has_no_vendor_replay(self):
-        for name in ('src/wxbridge/ai/background/avatars.py','src/wxbridge/ai/background/memory.py','src/wxbridge/ai/background/participation.py','src/wxbridge/app/workers.py'):
+        for name in ('src/wxbridge/ai/background/avatars.py','src/wxbridge/ai/background/memory.py','src/wxbridge/ai/background/participation.py','src/wxbridge/app/execution/workers.py'):
             text=(ROOT/name).read_text(encoding='utf-8')
             self.assertNotIn('ClientFixture',text)
         self.assertNotIn('reasoning_content',(ROOT/'src/wxbridge/ai/reply/runner.py').read_text(encoding='utf-8'))

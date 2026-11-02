@@ -1,4 +1,5 @@
 """One bounded reply/tool loop; returns proposals without changing owner state."""
+from wxbridge.config import InstanceConfig
 from copy import deepcopy
 import json
 import time
@@ -11,10 +12,12 @@ from ..tools.registry import apply_tool_instructions, dispatch_tool_call, get_en
 from ..tools.base import ToolContext, ToolReply
 
 
-def run_tool_loop(cfg, client, messages, on_search=None, *, search_client=None, deadline=None, check=None):
-    settings = deepcopy(cfg)
-    search = settings.get('search', {})
-    end = time.monotonic() + float(search.get('total_timeout_seconds', 120))
+def run_tool_loop(cfg: InstanceConfig, client, messages, on_search=None, *, search_client=None, deadline=None, check=None):
+    settings = cfg
+    search = settings.search
+    timeout = (search.total_timeout_seconds if search.enabled
+               else settings.models.reply.options.timeout_seconds)
+    end = time.monotonic() + float(timeout)
     if deadline is not None:
         end = min(end, deadline)
     backend = resolve_search_backend(settings, client)
@@ -31,7 +34,7 @@ def run_tool_loop(cfg, client, messages, on_search=None, *, search_client=None, 
             raise ModelError('empty_reply', retryable=True)
         return ToolReply(text, context.metadata(), tuple(deepcopy(context.image_requests)))
 
-    maximum_rounds = int(search.get('max_tool_rounds', 2))
+    maximum_rounds = int(search.max_tool_rounds)
     for turn in range(maximum_rounds + 1):
         context.check_active()
         exhausted = turn >= maximum_rounds

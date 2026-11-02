@@ -12,7 +12,7 @@ import tempfile
 import time
 import uuid
 
-from wxbridge.config import DEFAULTS, load_config, resolve_config
+from wxbridge.config import (load_config, load_account, resolve_instance, json_value, configuration_hash)
 from wxbridge.config_merge import deep_merge
 from wxbridge.instances import CHAT_ID, GROUP_FIELDS, INSTANCE_ID, validate_account_fields
 from .locking import FileLock
@@ -108,7 +108,7 @@ class ConfigRepository:
         data, _ = self._json(self.config_file)
         try:
             validate_account_fields(data)
-            return resolve_config(data, self.config_file, validate_role_models=False)
+            return load_account(self.config_file)
         except (ValueError, TypeError, KeyError):
             raise ManagementError('invalid_account_config', '账号配置无效，请先检查服务器 config.json。') from None
 
@@ -153,14 +153,8 @@ class ConfigRepository:
             other, _ = self._json(path)
             if path.parent.name.casefold() == identifier.casefold() or other.get('chat') == chat:
                 raise ManagementError('duplicate_instance', '实例 ID 或会话 ID 已存在。', 409)
-        account = self.account()
-        override = {key: deepcopy(value) for key, value in data.items() if key in GROUP_FIELDS}
-        override['system_prompt_file'] = str(target)
-        merged = deep_merge(account, override)
-        merged['target']['chat'] = chat
         try:
-            effective = resolve_config(merged, self._directory(identifier)/'config.json', environment=False,
-                                       validate_role_models=data.get('enabled',True))
+            effective = resolve_instance(self.account(), data, path=self._directory(identifier)/'config.json')
         except (ValueError, TypeError, KeyError):
             raise ManagementError('invalid_model_or_settings', '模型、连接或参数无效。启用的任务必须填写模型 ID，请检查数值范围与连接名称。') from None
         return effective
@@ -170,9 +164,15 @@ class ConfigRepository:
             data, version = self._json(self._directory(identifier)/'config.json')
             no_secrets(data)
             # Display existing configurations without requiring an enabled model.
-            effective = deep_merge(self.account(), {k:v for k,v in data.items() if k in GROUP_FIELDS})
+            # Editing a disabled or incomplete configuration does not require an enabled model.
+            from wxbridge.config.loader import _validated
+            from wxbridge.config.codec import account_document, instance_from_document
+            combined = deep_merge(account_document(self.account()), {k:v for k,v in data.items() if k in GROUP_FIELDS})
+            combined.setdefault('target', {})['chat'] = data.get('chat', '')
+            document = _validated(combined, self._directory(identifier)/'config.json', environment=False, validate_role_models=False)
+            effective = instance_from_document(document)
             return dict(id=identifier, config=data, revision=version,
-                        effective={key:effective[key] for key in ['models', 'model_clients', 'participation', 'memory', 'profile', 'search', 'vision', 'image_generation']})
+                        effective={key:json_value(getattr(effective,key)) for key in ['models', 'model_clients', 'participation', 'memory', 'profile', 'search', 'vision', 'image_generation']})
 
     def save(self, identifier, data, expected, *, create=False):
         with self.lock:
@@ -274,7 +274,7 @@ class ConfigRepository:
     def validate_start(self):
         try:
             cfg = load_config(self.config_file)
-            if not any(entry['enabled'] for entry in cfg['instances']):
+            if not any(entry.enabled for entry in cfg.instances.values()):
                 raise ValueError('no_enabled_instances')
             return cfg
         except (ValueError, TypeError, KeyError):
@@ -282,7 +282,7 @@ class ConfigRepository:
 
     def config_hash(self):
         try:
-            from wxbridge.app.build_info import runtime_identity
+            from wxbridge.app.status.build_info import runtime_identity
             return runtime_identity(load_config(self.config_file))['config_hash']
         except (ValueError, OSError, TypeError, KeyError):
             return None

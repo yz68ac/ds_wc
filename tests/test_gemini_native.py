@@ -1,4 +1,6 @@
 """Native Gemini wire, signed tool replay, media and failure boundaries; no live HTTP."""
+from tests.support.configuration import replace_config, update_config, snapshot
+from tests.support.configuration import replace_config, update_config, snapshot
 import base64
 from copy import deepcopy
 import json
@@ -11,7 +13,7 @@ from google import genai
 
 from provider import Client, ImageRequest, ModelError, ModelRequest, capture_metrics, create_client, load_config
 from provider.adapters import get_protocol_adapter
-from wxbridge.ai.roles import validate_models
+from tests.support.configuration import validate_models
 from tests.support.tool_support import run_answer
 from tests.support.model_support import default_config
 
@@ -51,8 +53,8 @@ class GeminiNativeTests(unittest.TestCase):
         for bad in ('https://gateway.example/v1','https://gateway.example/v1beta','https://gateway.example/v1beta/openai'):
             with self.assertRaisesRegex(ValueError,'gemini_base_url_requires_server_root'):
                 self.config(GEMINI_BASE_URL=bad)
-        bot = default_config();bot['model_clients']['reply'] = 'gemini'
-        bot['models']['reply']['options']['max_tokens'] = None
+        bot = default_config();bot = replace_config(bot, 'model_clients.reply', 'gemini')
+        bot = replace_config(bot, 'models.reply.options.max_tokens', None)
         with patch('wxbridge.ai.roles.load_config', return_value=cfg):validate_models(bot)
         with create_client('gemini', config=cfg) as client:
             with patch.object(client, '_post', return_value=response()) as post:
@@ -167,7 +169,7 @@ class GeminiNativeTests(unittest.TestCase):
             with patch.object(client,'_post',return_value=response(reason='SAFETY')),capture_metrics() as metrics:
                 with self.assertRaisesRegex(ModelError,'output_filtered'):client.request([],require_complete=True)
             self.assertEqual(metrics[0]['native_finish_reason'],'SAFETY')
-        from wxbridge.app.metrics import Metrics
+        from wxbridge.app.status.metrics import Metrics
         counter=Metrics();counter.record_models(metrics)
         self.assertEqual(counter.snapshot()['models']['reply']['last_native_finish_reason'],'SAFETY')
 
@@ -182,7 +184,7 @@ class GeminiNativeTests(unittest.TestCase):
                 self.adapter.build_payload(dict(self.settings,reasoning_effort=effort),request)
 
     def test_existing_external_search_loop_uses_native_function_responses(self):
-        cfg=default_config();cfg['search']['backend']='external'
+        cfg=default_config();cfg = replace_config(cfg, 'search.backend', 'external')
         backend=Mock();backend.search.return_value=dict(results=[dict(url='https://example.com/source',title='synthetic')])
         with Client(dict(provider='gemini',model='gemini-test',base_url='https://example.test'),api_key='synthetic') as client:
             with patch.object(client,'_post',side_effect=[tool_response('web_search'),response([dict(text='合成结论')])]) as post:

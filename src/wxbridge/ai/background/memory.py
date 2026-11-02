@@ -81,7 +81,7 @@ def snapshot(cfg, context, triggers, identity, memory, now, *, window=None, prof
     return dict(identity=dict(identity), profile=profile, revision=memory.revision, watermark=memory.watermark,
                 through=max(m["local_id"] for m in triggers), members=members, messages=messages,
                 interactions=interactions, dialogue=dialogue,
-                learning_enabled=cfg['memory'].get('learning', {}).get('enabled', False) and bool(learning_ids),
+                learning_enabled=cfg.memory.learning.enabled and bool(learning_ids),
                 learning_source_ids=learning_ids,
                 learning_existing=memory.expression_background(labels, now),
                 existing=memory.background({u: m["label"] for u, m in members.items()}, now))
@@ -89,7 +89,7 @@ def snapshot(cfg, context, triggers, identity, memory, now, *, window=None, prof
 
 def extract(cfg, value):
     from wxbridge.ai.client import client_for
-    settings = cfg["memory"]
+    settings = cfg.memory
     from wxbridge.ai.roles import model_settings
     public = {k: value[k] for k in ("revision", "watermark", "messages", "existing")}
     new_labels = {m["member"] for m in value["messages"]}
@@ -108,10 +108,10 @@ def extract(cfg, value):
     public['system_instructions'] = system_prompt(cfg)
     if value.get('recovery'):
         public['recovery'] = value['recovery']
-    deadline = time.monotonic()+model_settings(cfg, 'memory')['timeout_seconds']
+    deadline = time.monotonic()+model_settings(cfg, 'memory').options.timeout_seconds
     proposal = {"updates": []}
     if value["messages"]:
-        path = Path(settings['system_prompt_file'])
+        path = Path(settings.system_prompt_file)
         if not path.is_absolute():
             path = PROJECT_ROOT/path
         instructions = path.read_text(encoding='utf-8-sig')

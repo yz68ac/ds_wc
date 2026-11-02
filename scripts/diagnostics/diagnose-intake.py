@@ -1,4 +1,5 @@
 """Stopped-listener diagnostic: metadata only; never calls API or sends messages."""
+import argparse
 from contextlib import ExitStack
 from pathlib import Path
 import json
@@ -7,20 +8,28 @@ import time
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'src'))
-from wxbridge.app.bot import GroupSession
+from wxbridge.app.sessions.group import GroupSession
 from wxbridge.config import load_config
-from wxbridge.app.runtime import instance_lock
+from wxbridge.instances import select_instance
+from wxbridge.app.execution.locks import instance_lock
 
 
-def main():
-    cfg = load_config(ROOT/"config.json")
+def main(argv=None):
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--instance')
+    parser.add_argument('after', nargs='?', type=int)
+    args=parser.parse_args(argv)
+    app=load_config(ROOT/'config.json')
+    identifier=args.instance or (next(iter(app.instances)) if len(app.instances)==1 else None)
+    if identifier is None:parser.error('--instance is required when there is not exactly one configured instance')
+    cfg=select_instance(app,identifier)
     with ExitStack() as stack:
-        for name in sorted({cfg["queue"]["file"]+".lock", str(Path(cfg["decrypted_dir"])/".listener.lock")}):
+        for name in sorted({cfg.paths.queue_file+".lock", str(Path(cfg.account.decrypted_dir)/".listener.lock")}):
             stack.enter_context(instance_lock(name))
-        bot = GroupSession(cfg)
+        bot = GroupSession(cfg, instance_id=cfg.id or None)
         try:
             now = time.time()
-            after = int(sys.argv[1]) if len(sys.argv) > 1 else max(0, bot.last_local_id-12)
+            after = args.after if args.after is not None else max(0, bot.last_local_id-12)
             rows = bot.store.messages_after(bot.chat_id, after, limit=20)
             info = []
             for msg in rows:
@@ -28,7 +37,7 @@ def main():
                                  age_seconds=round(now-msg["time"], 3), own=msg["sender"]==bot.store.self_wxid,
                                  sender_known=bool(msg["sender"]), chars=len(msg["text"]),
                                  mention_metadata=msg["mentioned_users"] is not None,
-                                 mentions=len(msg["mentioned_users"] or []), self_mentioned=bot._triggered(msg),
+                                 mentions=len(msg["mentioned_users"] or []), self_mentioned=bot.store.self_wxid in (msg["mentioned_users"] or []),
                                  text_has_at="@" in msg["text"], accepted_now=bot._accept(msg, now)))
                 if msg["type"] > 4294967295:
                     import xml.etree.ElementTree as ET

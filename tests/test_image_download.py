@@ -1,4 +1,5 @@
 """Synthetic match ambiguity, source binding, cache confirmation and queue-worker boundaries."""
+from tests.support.configuration import replace_config, update_config, snapshot
 from tests.support.model_support import default_config
 from contextlib import nullcontext
 from contextlib import contextmanager
@@ -8,7 +9,7 @@ import time
 import unittest
 from unittest.mock import Mock,patch
 
-from wxbridge.config import DEFAULTS
+from wxbridge.config import default_document
 from wechat_linux.desktop.image_download import DesktopImages,DownloadError,improve_image,similarity,unique_match
 import tests.support.media as media
 
@@ -46,15 +47,15 @@ class ImageDownloadTests(unittest.TestCase):
         self.assertFalse(any(c.args[0]=='click' for c in desktop.x._xdotool.call_args_list))
 
     def test_unverified_source_never_opens_ui(self):
-        cfg=default_config();cfg['ui']['backend']='native_service';adapter=Mock()
+        cfg=default_config();cfg = replace_config(cfg, 'account.ui.backend', 'native_service');adapter=Mock()
         for proof in ({},{'verified':'yes','chat_title':'synthetic','server_id':'10'},
                       {'verified':True,'chat_title':'','server_id':'10'}):
-            data,info=improve_image({'download':proof}, cfg['ui'], b'thumb', {'quality':'thumbnail'}, time.monotonic()+1, runtime_dir=str(Path(cfg['queue']['file']).parent), adapter=adapter)
+            data,info=improve_image({'download':proof}, cfg.account.ui, b'thumb', {'quality':'thumbnail'}, time.monotonic()+1, runtime_dir=str(Path(cfg.paths.queue_file).parent), adapter=adapter)
             self.assertEqual(data,b'thumb');self.assertEqual(info['download']['outcome'],'download_unverified')
         adapter.assert_not_called()
 
     def test_click_only_succeeds_after_original_bound_cache_confirms_and_closes_under_lock(self):
-        cfg=default_config();cfg['ui']['backend']='atspi'
+        cfg=default_config();cfg = replace_config(cfg, 'account.ui.backend', 'atspi')
         binding=dict(download=dict(verified=True,chat_title='synthetic',server_id='10'))
         original=dict(quality='thumbnail',width=20,height=20)
         desktop=Mock();events=[]
@@ -64,26 +65,26 @@ class ImageDownloadTests(unittest.TestCase):
         desktop.close.side_effect=lambda:events.append('closed')
         with patch('wechat_linux.desktop.image_download.download_lock',locked),\
              patch('wechat_linux.media.images.read_local_image',return_value=(b'full',dict(quality='cached',width=600,height=800))) as read:
-            data,info=improve_image(binding, cfg['ui'], b'thumb', original, time.monotonic()+2, runtime_dir=str(Path(cfg['queue']['file']).parent), adapter=lambda *args:desktop)
+            data,info=improve_image(binding, cfg.account.ui, b'thumb', original, time.monotonic()+2, runtime_dir=str(Path(cfg.paths.queue_file).parent), adapter=lambda *args:desktop)
         self.assertEqual(data,b'full');self.assertEqual(info['download']['outcome'],'downloaded')
         read.assert_called_once_with(binding,max_bytes=8*1024*1024)
         self.assertEqual(events,['locked','closed','unlocked'])
 
     def test_timeout_or_ambiguous_match_retains_correct_thumbnail_and_safe_error(self):
-        cfg=default_config();cfg['ui']['backend']='native_service'
+        cfg=default_config();cfg = replace_config(cfg, 'account.ui.backend', 'native_service')
         binding=dict(download=dict(verified=True,chat_title='synthetic',server_id='10'))
         desktop=Mock();desktop.open_matching.side_effect=DownloadError('download_match_ambiguous')
         @contextmanager
         def locked(*args):yield
         with patch('wechat_linux.desktop.image_download.download_lock',locked),patch('wechat_linux.media.images.read_local_image') as read:
-            data,info=improve_image(binding, cfg['ui'], b'correct-thumb', dict(quality='thumbnail'), time.monotonic()+1, runtime_dir=str(Path(cfg['queue']['file']).parent), adapter=lambda *args:desktop)
+            data,info=improve_image(binding, cfg.account.ui, b'correct-thumb', dict(quality='thumbnail'), time.monotonic()+1, runtime_dir=str(Path(cfg.paths.queue_file).parent), adapter=lambda *args:desktop)
         self.assertEqual(data,b'correct-thumb');self.assertEqual(info['download']['outcome'],'download_match_ambiguous')
         desktop.close.assert_called_once();read.assert_not_called()
 
     def test_expired_budget_never_initializes_ui(self):
-        cfg=default_config();cfg['ui']['backend']='native_service';adapter=Mock()
+        cfg=default_config();cfg = replace_config(cfg, 'account.ui.backend', 'native_service');adapter=Mock()
         binding=dict(download=dict(verified=True,chat_title='synthetic',server_id='10'))
-        data,info=improve_image(binding, cfg['ui'], b'correct-thumb', dict(quality='thumbnail'), time.monotonic()-1, runtime_dir=str(Path(cfg['queue']['file']).parent), adapter=adapter)
+        data,info=improve_image(binding, cfg.account.ui, b'correct-thumb', dict(quality='thumbnail'), time.monotonic()-1, runtime_dir=str(Path(cfg.paths.queue_file).parent), adapter=adapter)
         self.assertEqual(info['download']['outcome'],'download_timeout')
         self.assertEqual(data,b'correct-thumb');adapter.assert_not_called()
 
@@ -93,7 +94,7 @@ class ImageDownloadTests(unittest.TestCase):
         with patch('wechat_linux.desktop.image_download.improve_image') as improve:
             _,info=case.prepare(generation)
             improve.assert_not_called();self.assertEqual(info['images'],1)
-        case.cfg['vision']['download_enabled']=True
+        case.cfg = replace_config(case.cfg, 'vision.download_enabled', True, owner=case)
         before=dict(mime='image/png',width=10,height=10,bytes=20,quality='thumbnail')
         after=dict(before,width=1000,height=1000,quality='cached')
         with patch('wechat_linux.media.images.read_local_image',return_value=(b'original-thumb',before)),\

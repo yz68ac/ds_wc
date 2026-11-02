@@ -13,7 +13,7 @@ class ChatContext:
     @classmethod
     def build(cls, cfg, rows, triggers, title, *, account='', profile=None, memory=None):
         history = select_context(cfg, rows, source_anchor(triggers), triggers=triggers, account=account)
-        memory_enabled = cfg.get('memory', {}).get('enabled', False)
+        memory_enabled = cfg.memory.enabled
         payload = chat_payload([*history, *triggers], title, [m['local_id'] for m in triggers],
                                account=account, profile=profile, memory_enabled=memory_enabled)
         if memory_enabled and (memory or {}).get('text'):
@@ -21,9 +21,9 @@ class ChatContext:
         return cls(history, payload)
 
     def fit(self, cfg):
-        target = cfg['target']
-        return replace(self, payload=fit_payload(self.payload, target['context_max_chars'],
-            strategy=target.get('context_budget_strategy', 'recent'), plan=self.selection))
+        target = cfg.target
+        return replace(self, payload=fit_payload(self.payload, target.context_max_chars,
+            strategy=target.context_budget_strategy, plan=self.selection))
 
     @property
     def text(self):

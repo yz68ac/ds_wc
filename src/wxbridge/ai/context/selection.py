@@ -48,7 +48,7 @@ def source_anchor(triggers):
 
 def memory_bounds(cfg, trigger):
     end = message_key(trigger)[0]
-    return end-cfg['memory']['context_window_seconds'], end
+    return end-cfg.memory.context_window_seconds, end
 
 
 def valid_message(message):
@@ -72,7 +72,7 @@ def select_context(cfg, context, trigger, *, triggers=None, account=''):
     upper = message_key(anchor)
     watermark = max(m['local_id'] for m in sources)
     required = {m['local_id'] for m in sources}
-    start = upper[0]-cfg['target']['context_max_age_seconds']
+    start = upper[0]-cfg.target.context_max_age_seconds
     rows = {}
     for message in context:
         if (valid_message(message) and message['local_id'] not in required
@@ -86,10 +86,10 @@ def select_context(cfg, context, trigger, *, triggers=None, account=''):
     if isinstance(context, ContextRows):
         return ContextRows(ordered, recent_ids=context.recent_ids, bot_groups=context.bot_groups,
                            scanned=context.scanned, scan_limit_hit=context.scan_limit_hit)
-    recent = ordered[-cfg['target']['context_recent_messages']:]
+    recent = ordered[-cfg.target.context_recent_messages:]
     positions = [i for i, m in enumerate(ordered)
                  if account and m['sender'] == account and not is_pat(m)]
-    count = cfg['target']['context_bot_messages']
+    count = cfg.target.context_bot_messages
     groups = [tuple(m['local_id'] for m in ordered[max(0,i-2):i+3])
               for i in (positions[-count:] if count else [])]
     chosen = {m['local_id'] for m in recent} | {i for group in groups for i in group}
@@ -101,7 +101,7 @@ def read_context(cfg, store, chat_id, triggers, *, account=''):
     """Reader-thread-only pagination; at most 1000 raw database records."""
     anchor = source_anchor(triggers)
     cursor = message_key(anchor)
-    since = cursor[0]-cfg['target']['context_max_age_seconds']
+    since = cursor[0]-cfg.target.context_max_age_seconds
     watermark = max(m['local_id'] for m in triggers)
     rows, scanned, exhausted = [], 0, False
     required = {m['local_id'] for m in triggers}
@@ -119,8 +119,8 @@ def read_context(cfg, store, chat_id, triggers, *, account=''):
         cursor = page.cursor
         eligible = sorted((m for m in rows if valid_message(m) and m['local_id'] not in required), key=message_key)
         bots = [i for i,m in enumerate(eligible) if account and m['sender'] == account and not is_pat(m)]
-        count = cfg['target']['context_bot_messages'] if account else 0
-        if (len(eligible) >= cfg['target']['context_recent_messages']
+        count = cfg.target.context_bot_messages if account else 0
+        if (len(eligible) >= cfg.target.context_recent_messages
                 and (not count or len(bots) >= count and bots[-count] >= 2)):
             break
     selected = select_context(cfg, rows, anchor, triggers=triggers, account=account)

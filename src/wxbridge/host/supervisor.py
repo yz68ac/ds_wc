@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from http.client import HTTPException
 import logging
 import os
 from pathlib import Path
@@ -15,7 +16,7 @@ import time
 import urllib.request
 
 from wxbridge.control import ACTIONS, WEB_ACTIONS, BOT, COMPONENTS, DEFAULT_SOCKET, HELPER, RECOVERY, SESSION, WEB, receive
-from .settings import WEB_CONFIG, WEB_PASSWORD, DEFAULT_WEB, read_web, migrate_state
+from .settings import WEB_CONFIG, WEB_PASSWORD, DEFAULT_WEB, read_web, migrate_state, web_document
 
 log = logging.getLogger('wxbridge.service')
 GUI_ENV = frozenset(('DISPLAY', 'XAUTHORITY', 'XDG_RUNTIME_DIR', 'DBUS_SESSION_BUS_ADDRESS',
@@ -153,7 +154,7 @@ class Supervisor:
             HELPER: Child(HELPER, [str(helper/'venv/bin/python'), '-I', str(helper/'helper.py'), '--serve', str(helper/'helper-config.json')], cwd=str(helper), timeout=None),
             BOT: Child(BOT, [python, '-m', 'wxbridge.app.runtime', '--config', str(self.root/'config.json'), '--send'], timeout=330, **identity),
             WEB: Child(WEB, [python, '-m', 'web.backend', '--root', str(self.root),
-                '--host', DEFAULT_WEB['host'], '--port', str(DEFAULT_WEB['port']), '--password-file', str(WEB_PASSWORD),
+                '--host', DEFAULT_WEB.host, '--port', str(DEFAULT_WEB.port), '--password-file', str(WEB_PASSWORD),
                 '--allow-service-control', '--control-socket', str(self.control_path),
                 '--catalog-file', '/var/lib/wxbridge-web/models.json'], **identity),
             RECOVERY: Child(RECOVERY, [python, str(self.root/'scripts/boot-recovery.py'), 'prepare'], cwd=str(self.root), timeout=15),
@@ -191,10 +192,10 @@ class Supervisor:
             env = self.environment(gui=name != SESSION)
             if name == WEB and child.process is None:
                 self.web_saved = read_web(self.web_config)
-                self.web_launch_settings = dict(self.web_saved)
+                self.web_launch_settings = self.web_saved
                 command = child.command
-                command[command.index('--host')+1] = self.web_saved['host']
-                command[command.index('--port')+1] = str(self.web_saved['port'])
+                command[command.index('--host')+1] = self.web_saved.host
+                command[command.index('--port')+1] = str(self.web_saved.port)
                 self.web_health_token = secrets.token_hex(16)
                 env['WXBRIDGE_WEB_HEALTH_TOKEN'] = self.web_health_token
             return child.start(env, None if capture else self.output(name), capture=capture)
@@ -219,8 +220,8 @@ class Supervisor:
         except (OSError, ValueError):
             saved, error = self.web_saved, 'web_settings_invalid'
         child = self.children[WEB]
-        return dict(**child.status(), enabled=self.web_enabled, saved=saved,
-                    effective=self.web_effective, ready=self.web_ready and child.running and not child.stopping,
+        return dict(**child.status(), enabled=self.web_enabled, saved=web_document(saved),
+                    effective=web_document(self.web_effective), ready=self.web_ready and child.running and not child.stopping,
                     pending=saved != self.web_effective or self.web_applied_generation != self.web_generation,
                     generation=self.web_applied_generation, requested_generation=self.web_generation, error=error)
 
@@ -253,19 +254,22 @@ class Supervisor:
             return
         self.web_next_probe = time.monotonic()+1
         settings = self.web_launch_settings
-        host = '['+settings['host']+']' if ':' in settings['host'] else settings['host']
+        host = '['+settings.host+']' if ':' in settings.host else settings.host
         try:
             opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-            with opener.open(f"http://{host}:{settings['port']}/healthz", timeout=.2) as response:
+            with opener.open(f"http://{host}:{settings.port}/healthz", timeout=.2) as response:
                 healthy = (response.status == 200 and response.read(128) == b'{"status":"ok"}'
                     and response.headers.get('X-WXBridge-Health') == self.web_health_token)
             self.web_ready = healthy
             if healthy:
-                self.web_effective = dict(settings)
+                self.web_effective = settings
                 self.web_applied_generation = self.web_generation
                 self.web_ready, self.web_error = True, ''
-        except (OSError, ValueError):
+            else:
+                self.web_error = 'web_health_check_failed'
+        except (OSError, ValueError, HTTPException):
             self.web_ready = False
+            self.web_error = 'web_health_check_failed'
 
     def action(self, action, *, uid=0):
         if action not in ACTIONS:

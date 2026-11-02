@@ -1,4 +1,5 @@
 """Owner-loop lifecycle with detached fake sessions; no WeChat DB, model or UI calls."""
+from tests.support.configuration import replace_config, update_config, snapshot
 from contextlib import nullcontext
 from copy import deepcopy
 from pathlib import Path
@@ -9,9 +10,9 @@ import unittest
 from unittest.mock import Mock,patch
 
 from wxbridge.config import load_config
-from wxbridge.app.instance_control import InstanceControl
-from wxbridge.app.coordinator import Coordinator
-from wxbridge.app.model_runtime import ModelLane
+from wxbridge.app.sessions.instance_control import InstanceControl
+from wxbridge.app.sessions.coordinator import Coordinator
+from wxbridge.app.execution.model_runtime import ModelLane
 from web.backend.demo import seed
 from wxbridge.management.repository import ConfigRepository
 
@@ -20,7 +21,7 @@ class FakeSession:
     def __init__(self,cfg,*,instance_id,**kwargs):
         self.cfg,self.instance_id=cfg,instance_id
         self.quiescing,self.ready,self.closed=False,False,False
-        self.chat_id=cfg['target']['chat']
+        self.chat_id=cfg.chat
         self.calls=[]
     def begin_stop(self):self.quiescing=True
     def drain_stop(self):return self.ready
@@ -44,16 +45,16 @@ class InstanceControlTests(unittest.TestCase):
         group=self.repo.get('group_demo');group['config']['enabled']=True
         self.repo.save('group_demo',group['config'],group['revision'])
         cfg=load_config(self.root/'config.json')
-        cfg['ui']['dry_run']=True
-        sessions=[FakeSession(entry['config'],instance_id=entry['id']) for entry in cfg['instances'] if entry['enabled']]
+        cfg = replace_config(cfg, 'account.ui.dry_run', True)
+        sessions=[FakeSession(entry,instance_id=entry.id) for entry in cfg.instances.values() if entry.enabled]
         store=Mock(self_wxid='wxid_synthetic_bot');store.resolve_chat.side_effect=lambda value:(value,'synthetic')
         self.owner=SimpleNamespace(cfg=cfg,sessions=sessions,echo=False,account=SimpleNamespace(store=store,inactive=[]),build={})
         self.control=InstanceControl(self.owner);self.addCleanup(self.control.close)
         self.a=next(session for session in sessions if session.instance_id=='private_demo')
         self.b=next(session for session in sessions if session.instance_id=='group_demo')
         self.enterContext(patch.object(self.control,'_inactive'))
-        self.enterContext(patch('wxbridge.app.instance_control.instance_lock',side_effect=lambda value:nullcontext()))
-        self.constructor=self.enterContext(patch('wxbridge.app.bot.GroupSession',side_effect=FakeSession))
+        self.enterContext(patch('wxbridge.app.sessions.instance_control.instance_lock',side_effect=lambda value:nullcontext()))
+        self.constructor=self.enterContext(patch('wxbridge.app.sessions.group.GroupSession',side_effect=FakeSession))
 
     def request(self,name,action):
         item=self.repo.get(name)
@@ -79,7 +80,7 @@ class InstanceControlTests(unittest.TestCase):
         self.a.ready=True;self.control.tick()
         current=next(session for session in self.owner.sessions if session.instance_id=='private_demo')
         self.assertIsNot(current,self.a)
-        self.assertEqual(current.cfg['models']['reply']['model'],'replacement-model')
+        self.assertEqual(current.cfg.models.reply.model,'replacement-model')
         self.assertIs(next(session for session in self.owner.sessions if session.instance_id=='group_demo'),self.b)
         self.assertFalse(self.b.quiescing)
 
@@ -116,7 +117,7 @@ class InstanceControlTests(unittest.TestCase):
         self.request('group_demo','stop');self.b.ready=True;self.control.tick()
         self.assertEqual(self.owner.sessions,[])
         self.assertTrue(all(row['state']=='stopped' for row in self.control.status().values()))
-        from wxbridge.app.coordinator import Coordinator
+        from wxbridge.app.sessions.coordinator import Coordinator
         coordinator=Coordinator.__new__(Coordinator)
         coordinator.sessions=[];coordinator.instance_control=None
         coordinator.rotation=coordinator.delivery_rotation=0;coordinator.native_api=None
@@ -126,7 +127,7 @@ class InstanceControlTests(unittest.TestCase):
 
     def test_other_instance_completes_all_phases_during_drain(self):
         self.request('private_demo','stop')
-        from wxbridge.app.coordinator import Coordinator
+        from wxbridge.app.sessions.coordinator import Coordinator
         coordinator=Coordinator.__new__(Coordinator)
         coordinator.sessions=self.owner.sessions;coordinator.instance_control=self.control
         coordinator.rotation=coordinator.delivery_rotation=0;coordinator.native_api=None
@@ -182,11 +183,11 @@ class RealJournalTransitionTests(unittest.TestCase):
         stopped_snapshot=json.loads(owner.status_path.read_text(encoding='utf-8'))['inactive_queues']['alpha']
         self.assertEqual(stopped_snapshot['cursor'],cursor)
         self.assertGreater(stopped_snapshot['queue_length'],0)
-        from wxbridge.app.operations import configured_groups
+        from wxbridge.app.status.paths import configured_groups
         checkpoint_ids={identifier for identifier,_,_ in configured_groups(fixture.root,fixture.root,include_disabled=True)}
         self.assertIn('alpha',checkpoint_ids)
         item=repo.get('alpha');repo.request_instance('alpha','start',item['revision'])
-        with patch('wxbridge.app.instance_control.instance_lock',side_effect=lambda value:nullcontext()):
+        with patch('wxbridge.app.sessions.instance_control.instance_lock',side_effect=lambda value:nullcontext()):
             control.checked=0;control.tick()
         after=next(session for session in owner.sessions if session.instance_id=='alpha')
         self.assertEqual(after.last_local_id,cursor)

@@ -1,4 +1,5 @@
 """Offline SDK wire, queued generation, artifact and delivery contracts."""
+from tests.support.configuration import replace_config, update_config, snapshot
 import base64
 from concurrent.futures import Future
 from copy import deepcopy
@@ -16,10 +17,10 @@ from PIL import Image
 
 from provider import GeneratedImage, ImageRequest, ImageResult, ModelError, create_client, load_config
 from provider.gemini_images import build_gemini_image_payload, parse_gemini_image_response
-from wxbridge.ai.roles import validate_models
+from tests.support.configuration import validate_models
 from wxbridge.ai.reply.runner import run_tool_loop
 from tests.support.tool_support import model_result
-from wxbridge.app.image_generation_controller import checked_image, artifact_path
+from wxbridge.app.tasks.image_generation import checked_image, artifact_path
 from tests.support.model_support import default_config
 import tests.support.pipeline as pipeline
 from tests.support.synthetic import msg
@@ -114,8 +115,8 @@ class ImageProviderTests(unittest.TestCase):
                 with self.assertRaisesRegex(ModelError, 'invalid_image_options'):
                     client.generate_images(ImageRequest('synthetic', 'synthetic', options))
         cfg = default_config()
-        cfg['model_clients']['image'] = 'gemini'
-        cfg['models']['image']['options'] = dict(quality='low')
+        cfg = replace_config(cfg, 'model_clients.image', 'gemini')
+        cfg = replace_config(cfg, 'models.image.options', dict(quality='low'))
         with self.assertRaisesRegex(ValueError, 'invalid_image_options'):
             validate_models(cfg)
 
@@ -150,8 +151,8 @@ class ImageProviderTests(unittest.TestCase):
 
     def test_image_tool_is_available_with_search_off_and_never_searches(self):
         cfg = default_config()
-        cfg['search']['enabled'] = False
-        cfg['image_generation']['enabled'] = True
+        cfg = replace_config(cfg, 'search.enabled', False)
+        cfg = replace_config(cfg, 'image_generation.enabled', True)
         client = Mock()
         client.request.side_effect = [model_result(dict(content=None, tool_calls=[dict(id='one', function=dict(
             name='generate_image', arguments=json.dumps(dict(prompt='PRIVATE_DRAWING'))))])), model_result(dict(content=''))]
@@ -167,8 +168,8 @@ class ImageProviderTests(unittest.TestCase):
     def test_image_tool_coexists_with_hosted_search_and_returns_its_tool_result(self):
         from provider import ModelResult
         cfg = default_config()
-        cfg['search']['backend'] = 'native'
-        cfg['image_generation']['enabled'] = True
+        cfg = replace_config(cfg, 'search.backend', 'native')
+        cfg = replace_config(cfg, 'image_generation.enabled', True)
         client = Mock()
         client.request.side_effect = [ModelResult(dict(content='', tool_calls=[dict(id='one', function=dict(
             name='generate_image', arguments='{"prompt":"synthetic drawing"}'))]), 'tool_calls', {}, {}),
@@ -186,9 +187,9 @@ class ImagePipelineTests(unittest.TestCase):
     add = pipeline.PipelineFixture.add
 
     def ready_image(self):
-        self.cfg['image_generation']['enabled'] = True
-        self.cfg['ui']['backend'] = 'native_service'
-        self.cfg['native_api'].update(enabled=True, allowed_chat_ids=[self.bot.chat_id])
+        self.cfg = replace_config(self.cfg, 'image_generation.enabled', True, owner=self)
+        self.cfg = replace_config(self.cfg, 'account.ui.backend', 'native_service', owner=self)
+        self.cfg = update_config(self.cfg, 'account.native_api', enabled=True, allowed_chat_ids=[self.bot.chat_id], owner=self)
         self.future = Future()
         self.future.cancel_request = Mock(side_effect=self.future.cancel)
         self.bot.submit_images = Mock(return_value=self.future)
@@ -208,8 +209,8 @@ class ImagePipelineTests(unittest.TestCase):
         self.assertEqual(len(self.bot.journal.image_tasks()), 1)
 
     def test_full_queue_rejects_proposal_without_a_success_confirmation(self):
-        self.cfg['image_generation']['enabled'] = True
-        self.cfg['queue']['max_pending'] = 1
+        self.cfg = replace_config(self.cfg, 'image_generation.enabled', True, owner=self)
+        self.cfg = replace_config(self.cfg, 'queue.max_pending', 1, owner=self)
         self.add(1)
         self.bot.tick()
         worker = next(job for job in self.jobs if job.kind == 'generate')
@@ -219,7 +220,7 @@ class ImagePipelineTests(unittest.TestCase):
         self.assertNotIn('在画了', json.dumps(self.bot.journal.tasks(), ensure_ascii=False))
 
     def test_late_parent_version_discards_image_proposal_and_confirmation(self):
-        self.cfg['image_generation']['enabled'] = True
+        self.cfg = replace_config(self.cfg, 'image_generation.enabled', True, owner=self)
         self.add(1)
         self.bot.tick()
         worker = next(job for job in self.jobs if job.kind == 'generate')
@@ -237,8 +238,8 @@ class ImagePipelineTests(unittest.TestCase):
         task = self.ready_image()
         self.assertEqual(self.bot.journal.task(task['id'])['generation'], 'image_running')
         request = self.bot.submit_images.call_args.args[0]
-        self.cfg['models']['image']['model'] = 'changed-after-enqueue'
-        self.assertNotEqual(request.model, self.cfg['models']['image']['model'])
+        self.cfg = replace_config(self.cfg, 'models.image.model', 'changed-after-enqueue', owner=self)
+        self.assertNotEqual(request.model, self.cfg.models.image.model)
         self.add(2)
         self.bot.tick()
         self.assertEqual(len([j for j in self.jobs if j.kind == 'generate']), 2)
@@ -279,7 +280,7 @@ class ImagePipelineTests(unittest.TestCase):
         self.bot.image_generation.step()
         self.assertEqual(self.bot.journal.task(task['id'])['phase'], 'done')
         self.bot.submit_images.assert_called_once()
-        self.assertFalse((Path(self.cfg['queue']['file']).parent/'generated-images').exists())
+        self.assertFalse((Path(self.cfg.paths.queue_file).parent/'generated-images').exists())
 
     def test_ready_expired_image_does_not_block_later_text_or_keep_artifact(self):
         task = self.ready_image()
@@ -311,7 +312,7 @@ class ImagePipelineTests(unittest.TestCase):
         self.bot.image_generation.step()
         task = self.bot.journal.task(task['id'])
         path = artifact_path(self.cfg, task['images'][0])
-        self.cfg['image_generation']['enabled'] = False
+        self.cfg = replace_config(self.cfg, 'image_generation.enabled', False, owner=self)
         self.bot.image_generation.step()
         self.bot.image_generation.cleanup(float('inf'))
         self.assertEqual(self.bot.journal.task(task['id'])['phase'], 'done')

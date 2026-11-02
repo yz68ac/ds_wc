@@ -1,4 +1,5 @@
 """The explicitly selected compatible Gemini protocol remains available."""
+from tests.support.configuration import replace_config, update_config, snapshot
 from copy import deepcopy
 import json
 from pathlib import Path
@@ -9,7 +10,8 @@ import httpx2
 import openai
 
 from provider import ModelRequest, create_client, load_config
-from wxbridge.ai.roles import model_settings, validate_models
+from wxbridge.ai.roles import model_settings
+from tests.support.configuration import validate_models
 from tests.support.model_support import default_config
 
 
@@ -30,9 +32,9 @@ class GeminiConnectionTests(unittest.TestCase):
         self.assertEqual(config.api_key('openai'), 'synthetic-other-key')
         self.assertIsNone(config.connections['gemini'].proxy_url)
         cfg = default_config()
-        cfg['model_clients']['reply'] = 'gemini'
+        cfg = replace_config(cfg, 'model_clients.reply', 'gemini')
         validate_models(cfg)
-        self.assertEqual(model_settings(cfg, provider_config=config)['connection'], 'gemini')
+        self.assertEqual(model_settings(cfg, provider_config=config).connection, 'gemini')
 
     def test_discovery_and_tool_round_trip_reuse_one_sdk_client(self):
         calls = []

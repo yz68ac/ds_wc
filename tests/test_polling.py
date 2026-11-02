@@ -1,11 +1,13 @@
 """消息接收节流与发送前补读：合成时钟、SQLite和工作进程，不访问真实微信。"""
+from tests.support.configuration import replace_config, update_config, snapshot
 from tests.support.model_support import default_config
 from contextlib import nullcontext
 import copy
 import unittest
 from unittest.mock import patch
 
-from wxbridge.config import DEFAULTS, load_config
+from wxbridge.config import load_config
+from wxbridge.config import default_document
 import tests.support.pipeline as pipeline
 
 
@@ -17,13 +19,13 @@ class PollingTests(unittest.TestCase):
     def setUp(self):
         pipeline.PipelineFixture.setUp(self)
         self.clock = 100.
-        clock = patch('wxbridge.app.bot.time.monotonic', side_effect=lambda: self.clock)
+        clock = patch('wxbridge.app.sessions.group.time.monotonic', side_effect=lambda: self.clock)
         clock.start()
         self.addCleanup(clock.stop)
 
     def make_bot(self):
-        self.cfg['poll_interval_seconds'] = 2
-        self.cfg['participation'].update(enabled=True, debounce_seconds=0)
+        self.cfg = replace_config(self.cfg, 'account.poll_interval_seconds', 2, owner=self)
+        self.cfg = update_config(self.cfg, 'participation', enabled=True, debounce_seconds=0, owner=self)
         pipeline.PipelineFixture.make_bot(self)
 
     def advance(self, seconds):
@@ -73,7 +75,7 @@ class PollingTests(unittest.TestCase):
         self.assertFalse(self.sends())
 
     def test_cooldown_blocked_and_inflight_tasks_do_not_trigger_pre_send_reads(self):
-        self.cfg['target']['cooldown_seconds'] = 8
+        self.cfg = replace_config(self.cfg, 'target.cooldown_seconds', 8, owner=self)
         self.add(1)
         self.bot.tick()
         with self.bot.journal.db:
@@ -131,8 +133,8 @@ class PollingTests(unittest.TestCase):
         self.assertEqual(self.bot.last_local_id, 2)
 
     def test_later_polled_tail_gets_its_own_decision_without_rewriting_reserved_sources(self):
-        self.cfg['poll_interval_seconds'] = 4
-        self.cfg['participation']['debounce_seconds'] = 3
+        self.cfg = replace_config(self.cfg, 'account.poll_interval_seconds', 4, owner=self)
+        self.cfg = replace_config(self.cfg, 'participation.debounce_seconds', 3, owner=self)
         self.add(1)
         self.bot.tick()
         self.assertFalse(self.jobs)
@@ -171,9 +173,7 @@ class PollingTests(unittest.TestCase):
         self.assertEqual(self.store.messages_after.call_count, 3)
 
     def test_config_requires_a_finite_positive_interval(self):
+        from wxbridge.config.validation import validate_document
         for value in (0, -1, True, '2', float('inf'), float('nan')):
-            defaults = default_config()
-            defaults['poll_interval_seconds'] = value
-            with self.subTest(value=value), patch('wxbridge.config.DEFAULTS', defaults), \
-                    nullcontext(), self.assertRaisesRegex(ValueError, 'poll_interval_seconds'):
-                load_config('__missing_synthetic_config__.json')
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError,'poll_interval_seconds'):
+                validate_document({'poll_interval_seconds':value},'__missing_synthetic_config__.json',environment=False,validate_role_models=False)

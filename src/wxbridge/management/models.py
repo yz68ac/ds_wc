@@ -19,7 +19,7 @@ class ModelCatalog:
         self.executor=ThreadPoolExecutor(max_workers=1,thread_name_prefix='web-model-list')
 
     def _paths(self):
-        source=env_path(self.repository.account().get('provider_env'))
+        source=env_path(self.repository.account().provider_env)
         target=self.path or source.with_name('models.json')
         return source,target
 

@@ -1,4 +1,5 @@
 """Per-group serial model lanes; results are applied only by the owner loop."""
+from wxbridge.config import InstanceConfig
 from concurrent.futures import Future, CancelledError
 from copy import deepcopy
 from queue import Queue, Empty
@@ -6,6 +7,7 @@ from threading import Thread, Lock, Event
 import time
 from provider import ModelError, create_client, capture_metrics, load_config
 from wxbridge.ai.client import _scope, client_for
+from wxbridge.config.codec import channel_items
 
 class ModelJob:
 
@@ -113,10 +115,10 @@ class ModelLane:
 
 class GroupModels:
 
-    def __init__(self, cfg):
-        self.cfg = deepcopy(cfg)
-        config = load_config(cfg.get('provider_env'))
-        self.lanes = {name: ModelLane(name, connection, config) for name, connection in cfg['model_clients'].items()}
+    def __init__(self, cfg: InstanceConfig):
+        self.cfg = cfg
+        config = load_config(cfg.account.provider_env)
+        self.lanes = {name: ModelLane(name, connection, config) for name, connection in channel_items(cfg.model_clients)}
 
     def submit(self, kind, payload, *, timeout):
         lane = self.lanes['reply' if kind == 'generate' or (kind == 'request' and payload[1] == 'reply') else 'background']
@@ -130,7 +132,7 @@ class GroupModels:
                 except Exception as exc:
                     result = dict(ok=False, error=getattr(exc, 'code', type(exc).__name__), retryable=getattr(exc, 'retryable', False), model_metrics=metrics)
                     if kind == 'participation':
-                        from wxbridge.app.task_policy import participation_failure_code
+                        from wxbridge.app.tasks.policy import participation_failure_code
                         result['error'] = participation_failure_code(result)
                     return result
                 finally:
@@ -143,7 +145,7 @@ class GroupModels:
             _, prompt, echo = payload[:3]
             vision = search = None
             if len(payload) > 3 and echo is None:
-                from wxbridge.app.workers import ProcessJob
+                from wxbridge.app.execution.workers import ProcessJob
                 prep = ProcessJob('prepare_images', (cfg, prompt, payload[3]), timeout=max(1, job.deadline - time.monotonic()))
                 try:
                     while (value := prep.poll()) is None:

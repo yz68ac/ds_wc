@@ -324,7 +324,7 @@ class RelationshipPipelineTests(unittest.TestCase):
         self.assertTrue(record['learning_suppressed'])
         self.assertFalse(value['learning_enabled'])
         self.assertEqual(value['learning_existing'], [])
-        self.assertTrue(self.cfg['memory']['learning']['enabled'])
+        self.assertTrue(self.cfg.memory.learning.enabled)
         job.result = dict(ok=True, proposal=proposal(delta=1, trust=1, member='wxid_friend'))
         self.bot.tick()
         self.assertFalse(self.bot.journal.memory_jobs())

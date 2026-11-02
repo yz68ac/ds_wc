@@ -2,6 +2,8 @@
 from contextlib import nullcontext
 import importlib.util
 from pathlib import Path
+from tests.support.configuration import application
+from tests.support.model_support import default_config
 import unittest
 from unittest.mock import MagicMock, Mock, patch
 
@@ -26,7 +28,7 @@ class FocusRecoveryTests(unittest.TestCase):
         self.a.composer_controls.return_value[1].get_action_iface.return_value.get_n_actions.return_value = 1
         self.a.Atspi.Action.get_action_name.return_value = "SetFocus"
         for target, opts in [
-            ("load_config", dict(return_value={"queue": {"file": "queue"}, "decrypted_dir": "decode", "ui": {}})),
+            ("load_config", dict(return_value=application(default_config()))),
             ("instance_lock", dict(side_effect=lambda path: nullcontext())),
             ("GroupSession", dict(return_value=self.bot)),
             ("A11y", dict(return_value=self.a)),

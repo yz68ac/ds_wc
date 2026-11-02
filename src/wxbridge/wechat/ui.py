@@ -1,5 +1,6 @@
 """Application dry-run policy around the desktop adapter."""
 import logging
+from wxbridge.config import json_value
 
 from wechat_linux.desktop.ui import (
     A11y, Clipboard, Sender as DesktopSender, UIError, WrongChatError, X11, chat_label_matches,
@@ -8,7 +9,7 @@ from wechat_linux.desktop.ui import (
 
 class Sender(DesktopSender):
     def __init__(self, cfg):
-        options = dict(cfg['ui'])
+        options = json_value(cfg.account.ui)
         self.dry_run = options.pop('dry_run', False)
         super().__init__(options)
 

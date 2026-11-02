@@ -12,9 +12,9 @@ import tests.support.instances as instances
 import tests.support.memory as memory_tests
 import tests.support.conversation as conversation
 from wechat_linux.errors import StoreError
-from wxbridge.app.workers import WorkerLease, WorkerCleanupError, ProcessJob
-from wxbridge.app.bot import GroupSession
-from wxbridge.app.reply import ReplyController
+from wxbridge.app.execution.workers import WorkerLease, WorkerCleanupError, ProcessJob
+from wxbridge.app.sessions.group import GroupSession
+from wxbridge.app.tasks.reply import ReplyController
 
 
 def fixture(case, cls):
@@ -259,7 +259,7 @@ class WorkerLifecycleTests(unittest.TestCase):
 
         f.add(0, 1)
         f.add(1, 1)
-        with patch('wxbridge.app.bot.os.replace', side_effect=fail_one):
+        with patch('wxbridge.app.sessions.group.os.replace', side_effect=fail_one):
             f.coordinator.tick()
         self.assertEqual((a.last_local_id, b.last_local_id), (1, 1))
         self.assertEqual(a.status_write_error, 'PermissionError')
@@ -285,7 +285,7 @@ class WorkerLifecycleTests(unittest.TestCase):
 
     def test_unknown_status_errors_are_not_silently_downgraded(self):
         f = fixture(self, pipeline.PipelineFixture)
-        with patch('wxbridge.app.bot.os.replace', side_effect=ValueError('synthetic unexpected failure')):
+        with patch('wxbridge.app.sessions.group.os.replace', side_effect=ValueError('synthetic unexpected failure')):
             with self.assertRaises(ValueError):
                 f.bot.save_status()
 

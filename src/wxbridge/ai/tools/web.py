@@ -26,9 +26,9 @@ class SearchError(ToolError):
 
 class SearchClient:
     def __init__(self, cfg):
-        self.settings = cfg.get("search", {})
-        config = load_config(cfg.get('provider_env'))
-        connection = self.settings.get('connection', 'deepseek')
+        self.settings = cfg.search
+        config = load_config(cfg.account.provider_env)
+        connection = self.settings.connection
         self.api_key = config.api_key(connection)
         endpoint = config.connections[connection]
         self.base_url = endpoint.base_url.rstrip('/')
@@ -48,7 +48,7 @@ class SearchClient:
                 data=json.dumps(payload, ensure_ascii=False).encode(),
                 headers={"Content-Type": "application/json", "Authorization": "Bearer "+self.api_key}, method="POST")
             try:
-                with open_request(request, timeout=min(float(self.settings.get("timeout_seconds", 15)), remaining)) as response:
+                with open_request(request, timeout=min(float(self.settings.timeout_seconds), remaining)) as response:
                     data = response.read(2*1024*1024+1)
                 if len(data) > 2*1024*1024:
                     raise SearchError("search_response_too_large")
@@ -72,7 +72,7 @@ class SearchClient:
         raise SearchError(code)
 
     def search(self, query, deadline):
-        return self._post("search", dict(query=query, count=self.settings.get("max_results", 5), need_content=False), deadline)
+        return self._post("search", dict(query=query, count=self.settings.max_results, need_content=False), deadline)
 
     def fetch(self, url, deadline):
         return self._post("fetch", dict(url=url), deadline)
@@ -99,7 +99,7 @@ def web_search(arguments, context):
     if not isinstance(rows, list):
         raise ToolError('invalid_search_response')
     found = []
-    for row in rows[:int(context.settings.get('search', {}).get('max_results', 5))]:
+    for row in rows[:int(context.settings.search.max_results)]:
         if not isinstance(row, dict) or not is_public_url_candidate(row.get('url')):
             continue
         item = {key: str(row.get(key) or '')[:limit] for key, limit in

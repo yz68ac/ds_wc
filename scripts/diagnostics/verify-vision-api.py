@@ -5,7 +5,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT/'src'))
 from wxbridge.config import load_config
-from wxbridge.app.model_runtime import GroupModels
+from wxbridge.app.execution.model_runtime import GroupModels
 
 def main():
     parser=argparse.ArgumentParser()

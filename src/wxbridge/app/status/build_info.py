@@ -31,5 +31,5 @@ def code_revision():
 
 
 def runtime_identity(cfg):
-    return dict(commit=code_revision(), config_hash=hashlib.sha256(
-        json.dumps(cfg, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:16])
+    from wxbridge.config import configuration_hash
+    return dict(commit=code_revision(), config_hash=configuration_hash(cfg))

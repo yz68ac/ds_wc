@@ -51,7 +51,7 @@ class ModelCatalogTests(unittest.TestCase):
         item=self.repository.get('private_demo')
         result=self.repository.request_instance('private_demo','stop',item['revision'])
         self.assertFalse(result['enabled'])
-        from wxbridge.app.instance_control import read_request
+        from wxbridge.app.sessions.instance_control import read_request
         record=read_request(self.root/'instance/private_demo/.runtime-request.json')
         self.assertEqual(record['revision'],result['revision'])
         self.assertEqual(original,(self.root/'instance/private_demo/system.md').read_bytes())

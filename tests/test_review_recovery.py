@@ -23,7 +23,7 @@ class ReviewRecoveryTests(unittest.TestCase):
         job.poll.return_value = dict(ok=False, ui=dict(error='native_service_unavailable', operation=dict(submitted=False)))
         factory = Mock(return_value=job)
         for attempt in range(4):
-            with patch('wxbridge.app.delivery.time.time', return_value=100+attempt*32):
+            with patch('wxbridge.app.delivery.controller.time.time', return_value=100+attempt*32):
                 case.delivery.send(factory)
                 case.delivery.poll_result()
         task = case.journal.task(identifier)

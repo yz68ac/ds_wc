@@ -1,4 +1,5 @@
 """appmsg/62 合成拍一拍，覆盖实际身份、队列、上下文及记忆来源隔离。"""
+from tests.support.configuration import replace_config, update_config, snapshot
 from tests.support.model_support import default_config
 from contextlib import nullcontext
 import copy
@@ -14,7 +15,10 @@ from wxbridge.wechat.store import WeChatStore
 from wxbridge.wechat.messages import display_message
 from wxbridge.ai.background.memory import snapshot, extract
 from wxbridge.ai.reply.prompt import build_prompt
-from wxbridge.config import DEFAULTS, _deep_merge, load_config, resolve_config
+from wxbridge.config import load_config
+from wxbridge.config import default_document
+from tests.support.configuration import merge_config as _deep_merge
+from tests.support.configuration import resolve_fixture as resolve_config
 from wxbridge.storage.person_memory import MemoryStore
 from tests.support.pipeline import PipelineFixture
 from tests.support.memory import suggestion
@@ -48,7 +52,7 @@ class PatTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.cfg = default_config()
 
-        self.cfg['system_prompt_file'] = str(Path(__file__).resolve().parents[1]/'prompts/system.md')
+        self.cfg = replace_config(self.cfg, 'system_prompt_file', str(Path(__file__).resolve().parents[1]/'prompts/system.md'), owner=self)
         self.identity = dict(account="wxid_self", chat=CHAT)
         self.memory = MemoryStore(self.temp.name, self.identity)
 
@@ -125,7 +129,7 @@ class PatTests(unittest.TestCase):
             path.write_text(json.dumps(change))
             with nullcontext():
                 cfg = resolve_config(_deep_merge(default_config(),change),path,environment=False)
-            self.assertEqual(cfg["target"]["context_max_age_seconds"], change['target']['context_max_age_seconds'])
+            self.assertEqual(cfg.target.context_max_age_seconds, change['target']['context_max_age_seconds'])
         for change in [dict(target=dict(context_max_age_seconds=True)), dict(target=dict(context_max_age_seconds=0)),
                        dict(target=dict(context_max_age_seconds="300")), dict(participation=dict(pat_enabled="true"))]:
             path.write_text(json.dumps(change))
@@ -143,7 +147,7 @@ class PatPipelineTests(PipelineFixture):
         wrong = copy.deepcopy(event)
         wrong["pat"]["chat"] = "wrong@chatroom"
         self.assertEqual(self.bot._admission_reason(wrong, self.now), 'pat_not_for_bot')
-        self.cfg["participation"]["pat_enabled"] = False
+        self.cfg = replace_config(self.cfg, 'participation.pat_enabled', False, owner=self)
         self.rows.append(event)
         self.bot.tick()
         self.assertFalse(self.jobs)
@@ -180,8 +184,8 @@ class PatPipelineTests(PipelineFixture):
 
     def test_pat_final_ack_enqueues_background_using_verified_actor(self):
         self.bot.close()
-        self.cfg["memory"].update(enabled=True, directory=str(Path(self.temp.name)/"memory"))
-        self.cfg["memory"]["avatar"]["enabled"] = False
+        self.cfg = update_config(self.cfg, 'memory', enabled=True, directory=str(Path(self.temp.name)/"memory"), owner=self)
+        self.cfg = replace_config(self.cfg, 'memory.avatar.enabled', False, owner=self)
         self.make_bot()
         self.rows.append(parsed(1))
         self.bot.tick()

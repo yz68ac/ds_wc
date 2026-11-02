@@ -47,7 +47,7 @@ class BootRecoveryTests(unittest.TestCase):
             db.commit(); db.close()
             account=SimpleNamespace(pw_uid=995,pw_gid=984)
             with patch.object(boot,'RUN',run),patch.object(boot,'PERSIST',persist),\
-                 patch.object(boot,'configured_groups',return_value=[(None,dict(queue=dict(file=str(run/'queue.sqlite3'))),True)]),\
+                 patch.object(boot,'configured_groups',return_value=[(None,SimpleNamespace(paths=SimpleNamespace(queue_file=str(run/'queue.sqlite3'))),True)]),\
                  patch.object(boot,'owner',return_value=account),\
                  patch.object(boot.os,'geteuid',return_value=0,create=True),\
                  patch.object(boot.os,'chown',create=True) as ownership:
@@ -64,7 +64,7 @@ class BootRecoveryTests(unittest.TestCase):
         parent=Path(__file__).resolve().parents[1]/'.test-tmp'
         parent.mkdir(exist_ok=True)
         with tempfile.TemporaryDirectory(dir=parent) as name,patch.object(boot,'RUN',Path(name)),\
-             patch.object(boot,'configured_groups',return_value=[(None,dict(queue=dict(file=str(Path(name)/'queue.sqlite3'))),True)]):
+             patch.object(boot,'configured_groups',return_value=[(None,SimpleNamespace(paths=SimpleNamespace(queue_file=str(Path(name)/'queue.sqlite3'))),True)]):
             self.assertFalse(boot.checkpoint()['saved'])
 
     def test_busy_database_stops_preparation_before_scanning_or_probing(self):

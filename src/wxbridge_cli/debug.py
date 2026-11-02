@@ -54,8 +54,8 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def execute(args):
-    from wxbridge.app import diagnostics
-    from wxbridge.config import load_config
+    from wxbridge_cli import diagnostics
+    from wxbridge.config import load_config, AppConfig, prepare_runtime
     from wechat_linux.storage.keyscan import extract_keys
     from wxbridge.app.runtime import run_bot
     from wxbridge.storage.journal import read_status
@@ -67,13 +67,13 @@ def execute(args):
                 raise ValueError('--instance 仅用于只读状态、检查和记忆维护；run 统一启动所有实例')
             from wxbridge.instances import select_instance
             cfg = select_instance(cfg, args.instance)
-        elif cfg.get('instances') and args.command in ('memory', 'check'):
-            raise ValueError('多群模式下此命令须指定 --instance')
+        elif isinstance(cfg, AppConfig) and args.command in ('memory', 'check'):
+            raise ValueError('此命令须指定 --instance 选择会话实例')
         if args.command == 'explain-config':
             from wxbridge.config import explain_config
             from wxbridge.instances import enabled_instances
             value = ({identifier: explain_config(active) for identifier, active in enabled_instances(cfg)}
-                     if cfg.get('instances') else explain_config(cfg))
+                     if isinstance(cfg, AppConfig) else explain_config(cfg))
             print(json.dumps(value, ensure_ascii=False, indent=2))
             return 0
         if args.command == 'native-api':
@@ -82,39 +82,39 @@ def execute(args):
         if args.command == 'status':
             if not 0.5 <= args.interval <= 30:
                 raise ValueError('status --interval 必须在0.5–30秒之间')
-            if cfg.get('instances'):
-                from wxbridge.app.coordinator import read_account_status
+            if isinstance(cfg, AppConfig):
+                from wxbridge.app.status.snapshot import read_account_status
                 print(json.dumps(read_account_status(cfg), ensure_ascii=False, indent=2))
                 return 0
-            from wxbridge.app.terminal import run_status
+            from wxbridge_cli.terminal import run_status
             return run_status(cfg, once=args.once, interval=args.interval)
         if args.command == "memory":
             return memory_command(cfg, args)
         if args.command == "queue-status":
-            if cfg.get('instances'):
+            if isinstance(cfg, AppConfig) and cfg.instances:
                 from wxbridge.instances import enabled_instances
                 result = {}
                 for identifier, active in enabled_instances(cfg):
                     from pathlib import Path
-                    path = active['queue']['file']
+                    path = active.paths.queue_file
                     result[identifier] = read_status(path) if Path(path).exists() else {'phase': 'not_started'}
                 print(json.dumps(result, ensure_ascii=False, indent=2))
                 return 0
-            print(json.dumps(read_status(cfg["queue"]["file"]), ensure_ascii=False, indent=2))
+            print(json.dumps(read_status(cfg.paths.queue_file), ensure_ascii=False, indent=2))
             return 0
         if args.command == "env":
             return diagnostics.environment(cfg)
         if args.command == "check":
             return diagnostics.check(cfg, args.group)
         if args.command == "scan-keys":
-            db_dir = args.db_dir or discover_db_dir(cfg.get("db_dir") or "")
-            extract_keys(db_dir, args.out or cfg["keys_file"], pid=args.pid, show_keys=False)
+            db_dir = args.db_dir or discover_db_dir(cfg.account.db_dir or "")
+            extract_keys(db_dir, args.out or cfg.account.keys_file, pid=args.pid, show_keys=False)
             return 0
         if args.command == "run":
             if args.send:
-                cfg["ui"]["dry_run"] = False
+                cfg = prepare_runtime(cfg, dry_run=False)
             elif args.dry_run:
-                cfg["ui"]["dry_run"] = True
+                cfg = prepare_runtime(cfg, dry_run=True)
             return run_bot(cfg, once=args.once, echo=args.echo)
         if args.command == "a11y":
             return diagnostics.ui_tree(cfg, args.scope, args.depth)
@@ -132,7 +132,7 @@ def memory_command(cfg, args):
     from contextlib import ExitStack
     from pathlib import Path
     import time
-    from wxbridge.app.locks import instance_lock
+    from wxbridge.app.execution.locks import instance_lock
     from wxbridge.storage.journal import checked_path
     from wxbridge.storage.person_memory import MemoryStore
     from wxbridge.storage.inspection import inspect_queue
@@ -142,18 +142,18 @@ def memory_command(cfg, args):
         raise ValueError('group/bot 作用域不能同时指定 --member')
     with ExitStack() as stack:
         if mutating:
-            for path in sorted({cfg["queue"]["file"]+".lock", str(Path(cfg["decrypted_dir"])/".listener.lock")}):
+            for path in sorted({cfg.paths.queue_file+".lock", str(Path(cfg.account.decrypted_dir)/".listener.lock")}):
                 stack.enter_context(instance_lock(path))
-        path = checked_path(cfg["queue"]["file"], existing=True)
+        path = checked_path(cfg.paths.queue_file, existing=True)
         inspection = inspect_queue(path)
         meta = dict(identity=inspection.identity, cursor=inspection.cursor)
         if inspection.instance_id is not None:
             meta['instance_id'] = inspection.instance_id
-        identifier = cfg.get('_instance_id')
-        if identifier and (meta['identity'].get('chat') != cfg['target']['chat']
+        identifier = cfg.id
+        if identifier and (meta['identity'].get('chat') != cfg.chat
                            or meta.get('instance_id', identifier) != identifier):
             raise ValueError('memory_instance_identity_mismatch')
-        store = MemoryStore(cfg["memory"]["directory"], meta["identity"], create=mutating)
+        store = MemoryStore(cfg.paths.memory_directory, meta["identity"], create=mutating)
         now = time.time()
         if args.action == "status":
             result = store.status(now)

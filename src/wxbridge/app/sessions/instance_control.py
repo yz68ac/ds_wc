@@ -4,15 +4,14 @@ The Web process writes metadata only. All readers, Journals, controllers and
 model clients remain owned by Coordinator; no additional database writer exists.
 """
 from contextlib import ExitStack
-from copy import deepcopy
 import hashlib
 import json
 from pathlib import Path
 import time
 from types import SimpleNamespace
 
-from wxbridge.app.build_info import runtime_identity
-from wxbridge.app.locks import instance_lock
+from wxbridge.app.status.build_info import runtime_identity
+from wxbridge.app.execution.locks import instance_lock
 from wxbridge.instance_requests import REQUEST_FILE, read_request
 from wxbridge.instances import INSTANCE_ID, runtime_locks
 
@@ -20,12 +19,12 @@ from wxbridge.instances import INSTANCE_ID, runtime_locks
 class InstanceControl:
     def __init__(self,owner):
         self.owner=owner
-        self.path=Path(owner.cfg['_account_config_file'])
+        self.path=Path(owner.cfg.metadata.path)
         self.directory=self.path.parent/'instance'
         self.initial_root=self.path.read_bytes()
-        self.rows={entry['id']:dict(state='running' if entry['enabled'] else 'stopped',
-                                   applied_revision=entry.get('config_revision'),request_id=None,error='')
-                   for entry in owner.cfg['instances']}
+        self.rows={entry.id:dict(state='running' if entry.enabled else 'stopped',
+                                   applied_revision=entry.metadata.revision,request_id=None,error='')
+                   for entry in owner.cfg.instances.values()}
         self.seen,self.pending,self.checked={}, {}, 0
         self.locks,self.locked=ExitStack(),set(runtime_locks(owner.cfg))
         # A process restart has already loaded the desired configuration. Old
@@ -54,29 +53,24 @@ class InstanceControl:
 
     def _start(self,identifier):
         from wxbridge.config import load_config
-        from wxbridge.app.bot import GroupSession
+        from wxbridge.app.sessions.group import GroupSession
         if self.path.read_bytes()!=self.initial_root:
             raise ValueError('account_config_changed_restart_required')
         current=load_config(self.path)
-        entry=next((entry for entry in current['instances'] if entry['id']==identifier),None)
-        if entry is None or not entry['enabled']:
+        entry=next((entry for entry in current.instances.values() if entry.id==identifier),None)
+        if entry is None or not entry.enabled:
             raise ValueError('instance_not_enabled')
-        cfg=deepcopy(entry['config'])
-        cfg['ui']['dry_run']=self.owner.cfg['ui']['dry_run']
-        cfg['ui']['verify_chat_selected']=True
-        cfg['reply_to_backlog']=False
-        if cfg['ui']['dry_run']:
-            cfg['queue']['file']+='.dry-run'
-            cfg['state_file']=str(Path(cfg['state_file']).parent/'dry-run/state.json')
-        elif (cfg['ui']['backend']!='native_service'
-              or cfg['vision']['download_enabled'] and cfg['vision']['download_backend']!='native'):
+        from wxbridge.config import prepare_runtime
+        cfg=prepare_runtime(entry, dry_run=self.owner.cfg.account.ui.dry_run)
+        if not cfg.account.ui.dry_run and (cfg.account.ui.backend!='native_service'
+                or cfg.vision.download_enabled and cfg.vision.download_backend!='native'):
             raise ValueError('invalid_instance_transport')
-        resolved,_=self.owner.account.store.resolve_chat(entry['chat'])
-        if resolved!=entry['chat']:
+        resolved,_=self.owner.account.store.resolve_chat(entry.chat)
+        if resolved!=entry.chat:
             raise ValueError('instance_chat_identity_mismatch')
-        if cfg['ui']['backend']=='native_service' and entry['chat'] not in cfg['native_api']['allowed_chat_ids']:
+        if cfg.account.ui.backend=='native_service' and entry.chat not in cfg.account.native_api.allowed_chat_ids:
             raise ValueError('instance_target_not_allowed')
-        lock=cfg['queue']['file']+'.lock'
+        lock=cfg.paths.queue_file+'.lock'
         if lock not in self.locked:
             self.locks.enter_context(instance_lock(lock))
             self.locked.add(lock)
@@ -88,10 +82,10 @@ class InstanceControl:
             session=GroupSession(cfg,echo=self.owner.echo,store=self.owner.account.store,
                                  account=self.owner.account,instance_id=identifier,start_gateway=False)
         except BaseException:
-            self._inactive(identifier,cfg['queue']['file'])
+            self._inactive(identifier,cfg.paths.queue_file)
             raise
         self.owner.sessions.append(session)
-        return entry['config_revision']
+        return entry.metadata.revision
 
     def _request(self,identifier,record):
         config_path=self.directory/identifier/'config.json'
@@ -140,7 +134,7 @@ class InstanceControl:
             self.pending.pop(identifier)
             # Cleanup failures retain the runtime's existing fail-closed rule.
             if session:
-                path=session.cfg['queue']['file']
+                path=session.cfg.paths.queue_file
                 session.close()
                 self.owner.sessions.remove(session)
                 self._inactive(identifier,path)
@@ -166,9 +160,9 @@ class InstanceControl:
             current=load_config(self.path)
             if self.path.read_bytes()!=self.initial_root:
                 return
-            for entry in current['instances']:
-                row=self.rows.get(entry['id'],{})
-                if row.get('applied_revision')!=entry['config_revision'] or row.get('state')!=('running' if entry['enabled'] else 'stopped'):
+            for entry in current.instances.values():
+                row=self.rows.get(entry.id,{})
+                if row.get('applied_revision')!=entry.metadata.revision or row.get('state')!=('running' if entry.enabled else 'stopped'):
                     return
             self.owner.build=runtime_identity(current)
         except (OSError,ValueError,TypeError,KeyError):

@@ -1,4 +1,5 @@
 """Fresh-host plans and CLI lifecycle semantics; no apt, native sends or model calls."""
+from wxbridge.host.settings import WebConfig
 from contextlib import redirect_stdout, redirect_stderr
 import hashlib
 import io
@@ -133,6 +134,16 @@ class HostCLITests(unittest.TestCase):
             cli.reload_web(30)
         self.assertIn('下次启动',output.getvalue())
 
+    def test_web_status_remains_available_when_saved_settings_are_invalid(self):
+        value=dict(enabled=True,state='active',pid=13,effective=dict(host='127.0.0.1',port=8730),
+                   pending=True,error='web_settings_invalid')
+        with patch.object(cli,'read_web',side_effect=ValueError('invalid_json')), \
+                patch.object(cli,'control_request',return_value=dict(web=value)):
+            result=cli.web_status()
+        self.assertEqual(result['pid'],13)
+        self.assertIsNone(result['saved'])
+        self.assertEqual(result['error'],'web_settings_invalid')
+
 
 class WebSettingsTests(unittest.TestCase):
     def test_settings_reject_public_wildcard_and_invalid_types(self):
@@ -141,7 +152,7 @@ class WebSettingsTests(unittest.TestCase):
             with self.subTest(host=host),self.assertRaises(ValueError):validate_web(dict(host=host,port=8730))
         for port in (0,65536,True,'8730'):
             with self.subTest(port=port),self.assertRaises(ValueError):validate_web(dict(host='127.0.0.1',port=port))
-        self.assertEqual(validate_web(dict(host='localhost',port=8730)),dict(host='127.0.0.1',port=8730))
+        self.assertEqual(validate_web(dict(host='localhost',port=8730)),WebConfig())
 
     def test_state_upgrade_preserves_component_switches_and_rejects_unknown_fields(self):
         from wxbridge.host.settings import migrate_state
@@ -157,14 +168,14 @@ class WebSettingsTests(unittest.TestCase):
             path=Path(directory)/'web.json'
             path.write_text('{"host":"127.0.0.1","port":8730}');path.chmod(0o600)
             from wxbridge.host import settings
-            def read(value):return json.loads(Path(value).read_text())
+            def read(value):return settings.validate_web(json.loads(Path(value).read_text()))
             def write(value,data):Path(value).write_text(json.dumps(data))
             with patch.object(cli,'WEB_CONFIG',path),patch.object(cli,'need_root'), \
                     patch.object(cli,'read_web',side_effect=read),patch.object(settings,'read_web',side_effect=read), \
                     patch.object(settings,'atomic_json',side_effect=write), \
                     patch.object(cli,'reload_web') as reload,redirect_stdout(io.StringIO()):
                 self.assertEqual(cli.main(['web','config','set','--port','8740']),0)
-                self.assertEqual(read(path)['port'],8740)
+                self.assertEqual(read(path).port,8740)
             reload.assert_called_once_with(30)
 
     def test_password_reset_writes_only_private_password_and_reloads_only_web(self):
@@ -203,7 +214,7 @@ class WebSettingsTests(unittest.TestCase):
                     with self.subTest(uid=uid,mode=permissions),patch.object(Path,'stat',mode(uid,permissions)),self.assertRaisesRegex(ValueError,'unsafe'):
                         settings.read_web(path)
                 with patch.object(Path,'stat',mode(0,0o600)):
-                    self.assertEqual(settings.read_web(path),value)
+                    self.assertEqual(settings.web_document(settings.read_web(path)),value)
 
 
 class InstallerTests(unittest.TestCase):
@@ -245,12 +256,16 @@ class InstallerTests(unittest.TestCase):
         self.assertIn('SendSIGKILL=no',service)
 
     def test_new_installation_is_paused_and_has_no_bound_database_or_models(self):
-        cfg=install.initial_config(Paths())
-        self.assertEqual(cfg['db_dir'],'')
-        self.assertEqual(cfg['native_api']['allowed_chat_ids'],['filehelper'])
-        self.assertNotIn('models',cfg)
-        self.assertNotIn('instances',cfg)
-        self.assertEqual(Path(cfg['memory']['directory']),Paths().home/'memory')
+        document=install.initial_config(Paths())
+        from wxbridge.config import default_document
+        from wxbridge.config.codec import account_from_document
+        from wxbridge.config_merge import deep_merge
+        cfg=account_from_document(deep_merge(default_document(),document))
+        self.assertEqual(cfg.db_dir,'')
+        self.assertEqual(cfg.native_api.allowed_chat_ids,('filehelper',))
+        self.assertNotIn('models',document)
+        self.assertNotIn('instances',document)
+        self.assertEqual(Path(cfg.memory_directory),Paths().home/'memory')
 
     def test_existing_installation_is_rejected_before_any_install_action(self):
         args=SimpleNamespace(web_host='127.0.0.1',dry_run=False)

@@ -123,8 +123,8 @@ class ParticipationJournal:
                     continue
                 event = describe(message) if describe else None
                 if accept(message):
-                    total = limits.get('max_pending', 32)
-                    per_sender = limits.get('max_pending_per_sender', 8)
+                    total = limits.max_pending
+                    per_sender = limits.max_pending_per_sender
                     count = len(active)+len(tasks)
                     sender_count = sum(r['sender'] == message['sender'] for r in active)
                     sender_count += sum(t.get('sender') == message['sender'] for t in tasks)

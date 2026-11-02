@@ -1,5 +1,6 @@
 """一次性修复旧版把 SetFocus 当点击的未提交任务；不适用于任何真实点击超时。"""
 from __future__ import annotations
+from wxbridge.config import json_value
 
 from contextlib import ExitStack
 from pathlib import Path
@@ -9,18 +10,22 @@ import time
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'src'))
-from wxbridge.app.bot import GroupSession
+from wxbridge.app.sessions.group import GroupSession
 from wxbridge.config import load_config
-from wxbridge.app.runtime import instance_lock
+from wxbridge.app.execution.locks import instance_lock
 from wxbridge.wechat.ui import A11y
 
 
 def main():
-    cfg = load_config(ROOT/"config.json")
+    from wxbridge.instances import enabled_instances
+    entries = enabled_instances(load_config(ROOT/"config.json"))
+    if len(entries) != 1:
+        raise ValueError("focus recovery requires exactly one enabled instance")
+    cfg = entries[0][1]
     with ExitStack() as stack:
-        for lock in sorted({cfg["queue"]["file"]+".lock", str(Path(cfg["decrypted_dir"])/".listener.lock")}):
+        for lock in sorted({cfg.paths.queue_file+".lock", str(Path(cfg.account.decrypted_dir)/".listener.lock")}):
             stack.enter_context(instance_lock(lock))
-        bot = GroupSession(cfg)
+        bot = GroupSession(cfg, instance_id=cfg.id or None)
         try:
             task = bot.journal.head()
             if not task or not task["intent"]:
@@ -38,7 +43,7 @@ def main():
             if not task["intent"]:
                 print(json.dumps({"recovery": "already_sent_confirmed", "task": task["id"]}))
                 return
-            a = A11y(cfg["ui"])
+            a = A11y(json_value(cfg.account.ui))
             if a.chat_is_selected(bot.chat_title) is not True:
                 raise ValueError("目标群未选中，保留草稿和任务")
             editor, button = a.composer_controls()
