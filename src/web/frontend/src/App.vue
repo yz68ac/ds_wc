@@ -15,6 +15,10 @@ import {
   Clock,
 } from "@element-plus/icons-vue";
 import { api, setCsrf } from "./api";
+import AccountSetup from "./components/AccountSetup.vue";
+import AccountSettings from "./components/AccountSettings.vue";
+import ContactPicker from "./components/ContactPicker.vue";
+import SettingsFields from "./components/SettingsFields.vue";
 
 const componentLabel: Record<string, string> = { bot: "机器人", wechat: "微信会话", sender: "发送组件", recovery: "自动恢复", web: "管理台" };
 
@@ -67,17 +71,9 @@ const providerConnections = computed(() =>
   catalog.value.providers.map((provider: any) => provider.id),
 );
 const catalogError = ref("");
-const accountLogin = ref<any>(null), accountBusy = ref(false);
-async function accountAction(action: 'login' | 'bind') {
-  accountBusy.value = true;
-  try {
-    const result = await api(`/account/${action}`, {method: 'POST', body: '{}'});
-    if (action === 'login') accountLogin.value = result;
-    else ElMessage.success(result.message);
-    await refresh();
-  } catch (e) { fail(e); }
-  finally { accountBusy.value = false; }
-}
+const settingsSchema=ref<any>(null), editorEffective=ref<any>({});
+const accountSettings=ref<InstanceType<typeof AccountSettings> | null>(null);
+let previousEditorTab="basic";
 const selectedProvider = computed(() =>
   catalog.value.providers?.find(
     (provider: any) => provider.id === editor.value.model_clients?.reply,
@@ -334,7 +330,7 @@ async function login() {
   }
 }
 async function logout() {
-  if (!(await discardPrompt())) return;
+  if (!(await discardPrompt()) || accountSettings.value && !(await accountSettings.value.canLeave())) return;
   try {
     await api("/session", { method: "DELETE" });
     source?.close();
@@ -364,6 +360,7 @@ async function discardPrompt() {
 }
 async function navigate(id: string) {
   if (id !== page.value && !(await discardPrompt())) return;
+  if (id !== page.value && accountSettings.value && !(await accountSettings.value.canLeave())) return;
   if (id !== page.value && promptDirty.value)
     promptText.value = promptData.value.text;
   page.value = id;
@@ -441,62 +438,59 @@ async function restorePrompt(id: string) {
 function prepareEditor(config: any, effective: any = {}) {
   const value = structuredClone(config);
   value.model_clients = {
-    reply: "anthropic",
-    image: "openai",
-    background: "deepseek",
+    ...settingsSchema.value?.defaults?.model_clients,
+    ...effective.model_clients,
     ...value.model_clients,
   };
   value.models ||= {};
   value.image_generation = {enabled: false, ...effective.image_generation, ...value.image_generation};
   value.models.image = {
     model: '', ...effective.models?.image, ...value.models.image,
-    options: {timeout_seconds: 180, ...effective.models?.image?.options, ...value.models.image?.options},
+    options: {...settingsSchema.value?.defaults?.models?.image?.options, ...effective.models?.image?.options, ...value.models.image?.options},
   };
   value.models.reply = {
     model: "",
     ...effective.models?.reply,
     ...value.models.reply,
     options: {
-      max_tokens: 1200,
-      timeout_seconds: 60,
-      thinking: "disabled",
+      ...settingsSchema.value?.defaults?.models?.reply?.options,
       ...effective.models?.reply?.options,
       ...value.models.reply?.options,
     },
   };
-  value.participation = { enabled: false, ...value.participation };
+  value.participation = { ...settingsSchema.value?.defaults?.participation, ...value.participation };
   for (const role of backgroundRoles) {
     value.models[role.id] = {
       model: "",
       ...effective.models?.[role.id],
       ...value.models[role.id],
       options: {
-        max_tokens: 1200,
-        timeout_seconds: 60,
-        thinking: "disabled",
+        ...settingsSchema.value?.defaults?.models?.[role.id]?.options,
         ...effective.models?.[role.id]?.options,
         ...value.models[role.id]?.options,
       },
     };
   }
   value.memory = {
-    enabled: false,
+    enabled: effective.memory?.enabled ?? settingsSchema.value?.defaults?.memory?.enabled ?? false,
     ...value.memory,
-    avatar: { enabled: false, ...value.memory?.avatar },
+    avatar: { enabled: effective.memory?.avatar?.enabled ?? settingsSchema.value?.defaults?.memory?.avatar?.enabled ?? false, ...value.memory?.avatar },
   };
-  value.profile = { enabled: false, ...value.profile };
+  value.profile = { enabled: effective.profile?.enabled ?? settingsSchema.value?.defaults?.profile?.enabled ?? false, ...value.profile };
   editor.value = value;
   editorJson.value = JSON.stringify(value, null, 2);
-  editorTab.value = "basic";
 }
 async function editInstance(id?: string) {
   creating.value = !id;
-  editorId.value = id || "";
+  editorId.value = id || "chat-"+Array.from(crypto.getRandomValues(new Uint8Array(4)),v=>v.toString(16).padStart(2,"0")).join("");
   editorRevision.value = "";
   try {
+    settingsSchema.value=await api("/config/schema");
     await loadModels();
+    editorEffective.value={};
     if (id) {
       const item = await api(`/instances/${encodeURIComponent(id)}`);
+      editorEffective.value=item.effective;
       prepareEditor(item.config, item.effective);
       editorRevision.value = item.revision;
     } else
@@ -504,22 +498,23 @@ async function editInstance(id?: string) {
         enabled: false,
         chat: "",
         system_prompt_file: "system.md",
+        memory: {enabled:false,avatar:{enabled:false}},
+        profile: {enabled:false},participation: {enabled:false},
       });
+    editorTab.value="basic"; previousEditorTab="basic";
     editorOpen.value = true;
   } catch (e) {
     fail(e);
   }
 }
 function changeEditorTab(name: string | number) {
-  if (name === "json") editorJson.value = JSON.stringify(editor.value, null, 2);
-  else {
-    try {
-      prepareEditor(JSON.parse(editorJson.value));
-    } catch {
-      editorTab.value = "json";
-      ElMessage.error("JSON 格式有误，请先修正。");
-    }
+  const next=String(name);
+  if(next==='json') editorJson.value=JSON.stringify(editor.value,null,2);
+  else if(previousEditorTab==='json') {
+    try { prepareEditor(JSON.parse(editorJson.value)); }
+    catch { editorTab.value='json'; ElMessage.error('JSON 格式有误，请先修正。'); return; }
   }
+  previousEditorTab=next;
 }
 async function saveInstance(apply = false) {
   editorBusy.value = true;
@@ -586,7 +581,7 @@ async function action(kind: "start" | "stop" | "apply") {
   }
 }
 function beforeUnload(event: BeforeUnloadEvent) {
-  if (promptDirty.value) {
+  if (promptDirty.value || accountSettings.value?.dirty) {
     event.preventDefault();
     event.returnValue = "";
   }
@@ -783,14 +778,6 @@ onBeforeUnmount(() => {
         </div>
 
         <template v-if="page === 'overview'">
-          <el-card v-if="snapshot?.capabilities?.login_actions" style="margin-bottom: 20px">
-            <h3>微信账号设置</h3>
-            <p>首次使用：扫码并完成手机确认 → 在“会话实例”中新建实例、填写会话 ID 并选择模型 → 回到这里绑定账号与会话 → 在“服务管理”启动机器人。</p>
-            <el-button :loading="accountBusy" @click="accountAction('login')">查看 / 刷新登录二维码</el-button>
-            <el-button :loading="accountBusy" :disabled="running" @click="accountAction('bind')">绑定账号与实例会话</el-button>
-            <p v-if="accountLogin">登录状态：{{ accountLogin.phase }}。扫码后请在手机确认；登录完成后可再次点击查看状态。</p>
-            <img v-if="accountLogin?.qr" :src="accountLogin.qr" alt="微信登录二维码" style="width: 240px; max-width: 100%" />
-          </el-card>
           <div class="metrics">
             <article class="metric-card">
               <div class="metric-top">
@@ -841,6 +828,7 @@ onBeforeUnmount(() => {
               <small>回复 · 图片 · 后台三条通道</small>
             </article>
           </div>
+          <AccountSetup v-if="snapshot?.capabilities?.login_actions" :snapshot="snapshot" @navigate="navigate" @refresh="refresh" @error="fail" />
           <div v-if="snapshot?.runtime?.config_pending" class="pending-strip">
             <div>
               <el-icon><Clock /></el-icon><span>存在尚未应用的实例配置</span
@@ -1081,6 +1069,35 @@ onBeforeUnmount(() => {
               </template></el-table-column
             ></el-table
           >
+          <div class="mobile-instances">
+            <div v-if="!filtered.length" class="empty-state">没有匹配的实例</div>
+            <article v-for="row in filtered" :key="row.id" class="mobile-instance">
+              <div class="mobile-instance-heading">
+                <div class="table-instance">
+                  <span :class="['chat-icon', row.kind]"><el-icon><ChatDotRound /></el-icon></span>
+                  <div><b>{{ row.id }}</b><small>{{ row.kind === 'private' ? '私聊' : '群聊' }}</small></div>
+                </div>
+                <span :class="['state-pill', { enabled: row.runtime_state === 'running' }]">{{ instanceLabels[row.runtime_state] || '未知' }}</span>
+              </div>
+              <dl class="mobile-instance-details">
+                <div><dt>会话 ID</dt><dd>{{ row.chat }}</dd></div>
+                <div><dt>回复模型</dt><dd>{{ row.reply_model || '未配置' }}</dd></div>
+                <div><dt>配置状态</dt><dd>{{ row.enabled ? '已启用' : '已关闭' }}<template v-if="row.config_pending"> · 有待应用配置</template></dd></div>
+                <div><dt>队列快照</dt><dd>{{ row.queue_length }}</dd></div>
+              </dl>
+              <small v-if="row.error" class="runtime-error">{{ instanceErrors[row.error] || row.error }}</small>
+              <div class="mobile-instance-actions">
+                <el-button size="small" @click="editInstance(row.id)">模型/配置</el-button>
+                <el-button size="small" @click="showStatus(row.id)">状态</el-button>
+                <el-button size="small" :type="shouldStopInstance(row) ? 'danger' : 'primary'" plain
+                  :disabled="instanceBusy === row.id || !!instanceRequests[row.id] || row.runtime_state === 'stopping' || !snapshot?.capabilities?.instance_control"
+                  @click="instanceAction(row, shouldStopInstance(row) ? 'stop' : 'start')">{{ instanceRequests[row.id] ? '等待确认' : shouldStopInstance(row) ? '停用' : '启用' }}</el-button>
+                <el-button v-if="row.enabled && row.config_pending" size="small" type="primary" plain
+                  :disabled="instanceBusy === row.id || !!instanceRequests[row.id] || row.runtime_state === 'stopping' || !snapshot?.capabilities?.instance_control"
+                  @click="instanceAction(row, 'apply')">应用此实例</el-button>
+              </div>
+            </article>
+          </div>
           <div class="panel-footnote">
             启停与模型应用只作用于选中实例。账号服务已停止时，启用配置会等待下次启动；配置状态与实际运行状态分别显示。
           </div>
@@ -1210,12 +1227,13 @@ onBeforeUnmount(() => {
               >
             </div>
           </section>
+          <AccountSettings ref="accountSettings" @refresh="refresh" @error="fail" />
           <section class="panel">
             <div class="panel-heading">
               <div>
                 <h2>运行组件</h2>
                 <small
-                  >所有组件由 wxbridge.service 统一管理。</small
+                  >所有组件由账号主控统一管理。</small
                 >
               </div>
             </div>
@@ -1277,7 +1295,9 @@ onBeforeUnmount(() => {
   <el-dialog
     v-model="editorOpen"
     :title="creating ? '新建会话实例' : '编辑实例 · ' + editorId"
-    width="680px"
+    width="800px"
+    top="5vh"
+    class="instance-config-dialog"
     :close-on-click-modal="false"
     :close-on-press-escape="false"
     destroy-on-close
@@ -1288,7 +1308,7 @@ onBeforeUnmount(() => {
       ><el-tab-pane label="基本配置" name="basic"
         ><el-form label-position="top" class="instance-form"
           ><div class="form-grid">
-            <el-form-item label="实例 ID"
+            <el-form-item v-if="!creating" label="实例标识"
               ><el-input
                 v-model="editorId"
                 :disabled="!creating"
@@ -1300,15 +1320,9 @@ onBeforeUnmount(() => {
                 inactive-text="关闭"
             /></el-form-item>
           </div>
-          <el-form-item label="会话 ID"
-            ><el-input
-              v-model="editor.chat"
-              :disabled="!creating"
-              placeholder="wxid_... 或 ...@chatroom"
-            /><small class="field-hint"
-              >使用真实微信 ID，不使用昵称。每个会话只能绑定一个实例。</small
-            ></el-form-item
-          >
+          <el-form-item v-if="creating" label="选择联系人或群聊"><ContactPicker v-model="editor.chat" /></el-form-item>
+          <el-collapse v-if="creating" class="contact-advanced"><el-collapse-item title="高级：修改自动生成的实例标识" name="id"><el-input v-model="editorId" aria-label="实例标识" /></el-collapse-item></el-collapse>
+          <el-form-item v-else label="已绑定会话"><el-input v-model="editor.chat" disabled /><small class="field-hint">会话绑定后不直接更换；需要其他会话时新建实例。</small></el-form-item>
           <div class="form-divider">回复模型</div>
           <div class="form-grid">
             <el-form-item label="回复连接"
@@ -1518,6 +1532,8 @@ onBeforeUnmount(() => {
                 </div>
               </div> </el-collapse-item
           ></el-collapse> </el-form></el-tab-pane
+      ><el-tab-pane label="业务参数" name="settings"><SettingsFields v-if="settingsSchema" v-model="editor" :effective="editorEffective" :groups="settingsSchema.groups" /></el-tab-pane
+      ><el-tab-pane label="模型参数" name="model-options"><SettingsFields v-if="settingsSchema" v-model="editor" :effective="editorEffective" :groups="settingsSchema.model_groups" /></el-tab-pane
       ><el-tab-pane label="高级 JSON" name="json"
         ><el-input
           v-model="editorJson"

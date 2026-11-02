@@ -58,6 +58,12 @@ class InstanceActionBody(BaseModel):
     revision: str = Field(min_length=64,max_length=64)
 
 
+class AccountSettingsBody(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    values: dict
+    revision: str = Field(min_length=64,max_length=64)
+
+
 class Sessions:
     def __init__(self, password):
         if not password or len(password) < 12:
@@ -106,6 +112,8 @@ def create_app(root, password, *, services=None, demo=False, static_dir=None, al
     operations = Operations(services,repository)
     sessions = Sessions(password)
     catalog=ModelCatalog(repository,path=catalog_file,demo=demo)
+    from wxbridge.management.contacts import ContactDirectory
+    contacts=ContactDirectory(repository,demo=demo)
 
     @asynccontextmanager
     async def lifespan(app):
@@ -182,6 +190,21 @@ def create_app(root, password, *, services=None, demo=False, static_dir=None, al
     def get_overview():
         return overview(repository,services,operations,demo=demo)
 
+    @app.get('/api/config/schema')
+    def config_schema():
+        from wxbridge.management.settings import instance_schema
+        return instance_schema()
+
+    @app.get('/api/account/settings')
+    def get_account_settings():
+        from wxbridge.management.settings import account_settings
+        return account_settings(repository)
+
+    @app.put('/api/account/settings')
+    def put_account_settings(body: AccountSettingsBody):
+        from wxbridge.management.settings import save_account_settings
+        return save_account_settings(repository,body.values,body.revision)
+
     @app.post('/api/account/{action}')
     def account_onboarding(action: str):
         return services.onboarding(action)
@@ -201,6 +224,10 @@ def create_app(root, password, *, services=None, demo=False, static_dir=None, al
     @app.get('/api/instances')
     def instances():
         return repository.list()
+
+    @app.get('/api/contacts')
+    def contact_directory(q: str='',kind: str='all',refresh: bool=False):
+        return contacts.search(q,kind,refresh)
 
     @app.post('/api/instances',status_code=201)
     def create_instance(body: NewBody):

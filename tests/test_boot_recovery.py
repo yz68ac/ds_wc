@@ -12,6 +12,20 @@ from tests.support.boot import boot
 
 
 class BootRecoveryTests(unittest.TestCase):
+    def test_directory_preparation_needs_no_instance_or_message_probe(self):
+        from contextlib import nullcontext
+        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[1]/'.test-tmp') as name:
+            root=Path(name);settings=root/'settings.json';settings.write_text('{"db_dir":"synthetic"}')
+            (root/'keys.json').write_text('{"contact/contact.db":{},"session/session.db":{}}')
+            (root/'keyscan-session.json').write_text('{"pid":123}')
+            with patch.object(boot,'SETTINGS',settings),patch.object(boot,'RUN',root),patch.object(boot,'SENSITIVE',root), \
+                 patch.object(boot,'validate_runtime'),patch.object(boot,'process_token',return_value={'pid':123}), \
+                 patch.object(boot,'database_locks',return_value=nullcontext()),patch.object(boot,'safe_status',side_effect=lambda phase,**kw:dict(phase=phase,**kw)), \
+                 patch.object(boot,'as_user') as probe,patch.object(boot.subprocess,'run') as scanner:
+                result=boot.prepare(metadata_only=True)
+            probe.assert_not_called();scanner.assert_not_called()
+            self.assertFalse(result['ready']);self.assertEqual(result['phase'],'contacts_prepared')
+
     def setUp(self):
         parent = Path(__file__).resolve().parents[1]/'.test-tmp'
         parent.mkdir(exist_ok=True)

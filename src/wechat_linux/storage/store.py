@@ -329,6 +329,31 @@ class WeChatStore:
             }
         return out
 
+    def contact_directory(self, limit=20000):
+        """Bounded contact/session metadata, without selecting message summaries."""
+        if type(limit) is not int or not 1 <= limit <= 20000:
+            raise ValueError('invalid_directory_limit')
+        conn=self._connect('contact/contact.db')
+        try:rows=conn.execute('SELECT username, nick_name, remark FROM contact LIMIT ?', (limit+1,)).fetchall()
+        finally:conn.close()
+        truncated=len(rows)>limit
+        items={row['username']:dict(id=row['username'],nickname=row['nick_name'] or '',remark=row['remark'] or '',last_active=0)
+               for row in rows[:limit] if row['username']}
+        try:
+            conn=self._connect('session/session.db')
+            try:
+                sessions=conn.execute('SELECT username, last_timestamp FROM SessionTable ORDER BY last_timestamp DESC LIMIT ?', (limit+1,)).fetchall()
+            finally:conn.close()
+            truncated=truncated or len(sessions)>limit
+            for row in sessions[:limit]:
+                uid=row['username']
+                if not uid:continue
+                item=items.setdefault(uid,dict(id=uid,nickname='',remark='',last_active=0))
+                item['last_active']=row['last_timestamp'] or 0
+        except (StoreError,sqlite3.Error):pass
+        result=sorted(items.values(),key=lambda item: -item['last_active'])
+        return dict(items=result[:limit],truncated=truncated or len(result)>limit)
+
     @staticmethod
     def display_name(contacts: dict[str, dict[str, str]], username: str, fallback: str = "") -> str:
         c = contacts.get(username)

@@ -10,6 +10,54 @@ from web.backend.demo import DEMO_PASSWORD,DemoServices,seed
 
 
 class HTTPTests(unittest.TestCase):
+    def test_contacts_search_supports_remarks_groups_and_existing_bindings(self):
+        self.assertEqual(self.client.get('/api/contacts').status_code,401)
+        self.login()
+        rows=self.client.get('/api/contacts',params={'q':'小 林'}).json()['items']
+        self.assertEqual(rows[0]['id'],'wxid_synthetic_friend')
+        self.assertEqual(rows[0]['instance_id'],'private_demo')
+        self.assertNotIn('summary',rows[0])
+        groups=self.client.get('/api/contacts',params={'q':'开发','kind':'group'}).json()['items']
+        self.assertEqual(groups[0]['id'],'123456789@chatroom')
+        self.assertEqual(self.client.get('/api/contacts',params={'q':'x'*129}).status_code,400)
+
+
+    def test_configuration_schema_and_account_edits_require_auth_and_csrf(self):
+        self.assertEqual(self.client.get('/api/config/schema').status_code,401)
+        self.assertEqual(self.client.get('/api/account/settings').status_code,401)
+        headers=self.login()
+        schema=self.client.get('/api/config/schema').json()
+        self.assertGreater(len(schema['groups']),5)
+        settings=self.client.get('/api/account/settings').json()
+        body={'values':{'poll_interval_seconds':4},'revision':settings['revision']}
+        self.assertEqual(self.client.put('/api/account/settings',json=body).status_code,403)
+        saved=self.client.put('/api/account/settings',json=body,headers=headers)
+        self.assertEqual(saved.status_code,200)
+        self.assertEqual(saved.json()['values']['poll_interval_seconds'],4)
+        self.assertFalse(self.app.state.operations.services.active)
+        self.assertEqual(self.client.put('/api/account/settings',json=body,headers=headers).status_code,409)
+        invalid={'values':{'native_api.allowed_chat_ids':['wxid_other']},'revision':saved.json()['revision']}
+        self.assertEqual(self.client.put('/api/account/settings',json=invalid,headers=headers).status_code,400)
+
+    def test_onboarding_overview_reports_only_configured_authorizations(self):
+        self.login()
+        snapshot=self.client.get('/api/overview').json()
+        setup=snapshot['account_setup']
+        self.assertEqual(setup['instance_count'],2)
+        self.assertEqual(set(setup['pending_instances']),{'private_demo','group_demo'})
+        self.assertEqual(setup['authorized_count'],0)
+        self.assertTrue(setup['can_bind'])
+        self.assertNotIn('db_dir',setup)
+
+    def test_demo_binding_updates_authorizations_without_starting_bot(self):
+        headers=self.login()
+        self.assertEqual(self.client.post('/api/account/bind',headers=headers).status_code,200)
+        snapshot=self.client.get('/api/overview').json()
+        self.assertTrue(snapshot['account_setup']['bound'])
+        self.assertEqual(snapshot['account_setup']['pending_instances'],[])
+        self.assertEqual(snapshot['account_setup']['authorized_count'],2)
+        self.assertFalse(self.app.state.operations.services.active)
+
     def test_account_onboarding_requires_session_csrf_and_same_origin(self):
         services=self.app.state.operations.services
         with patch.object(services,'onboarding',create=True,return_value={'phase':'qr_required','qr':'synthetic'}) as action:

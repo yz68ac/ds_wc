@@ -18,6 +18,23 @@ CHAT = 'synthetic@chatroom'
 
 
 class BoundaryTests(unittest.TestCase):
+    def test_directory_does_not_read_session_summaries(self):
+        import sqlite3
+        contacts=sqlite3.connect(':memory:');contacts.row_factory=sqlite3.Row
+        sessions=sqlite3.connect(':memory:');sessions.row_factory=sqlite3.Row
+        contacts.execute('CREATE TABLE contact(username,nick_name,remark)')
+        contacts.execute("INSERT INTO contact VALUES('wxid_test','测试','同事')")
+        sessions.execute('CREATE TABLE SessionTable(username,last_timestamp,summary)')
+        sessions.execute("INSERT INTO SessionTable VALUES('wxid_test',123,'private message')")
+        def guard(action,table,column,*rest):
+            return sqlite3.SQLITE_DENY if action==sqlite3.SQLITE_READ and column=='summary' else sqlite3.SQLITE_OK
+        sessions.set_authorizer(guard)
+        store=WeChatStore.__new__(WeChatStore)
+        with patch.object(store,'_connect',side_effect=[contacts,sessions]):
+            result=store.contact_directory()
+        self.assertEqual(result['items'][0],dict(id='wxid_test',nickname='测试',remark='同事',last_active=123))
+        self.assertFalse(result['truncated'])
+
     def test_sdk_import_does_not_load_application_or_desktop(self):
         code = """
 import sys

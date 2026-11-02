@@ -14,6 +14,7 @@ Runtime=runpy.run_path(str(code_root()/'scripts/login_runtime.py'))['LoginRuntim
 r=Runtime()
 with r.locked():
     status=r.viewer_snapshot()
+    r.save(r.state(),status)
     result=dict(phase=status.phase,qr='')
     if status.phase=='qr_required':
         image=qrcode.make(r.controller.read_qr().payload)
@@ -37,6 +38,8 @@ def bind_configured_account(supervisor):
     from wxbridge.control import BOT, HELPER, RECOVERY
     if supervisor.enabled or any(supervisor.children[n].process is not None for n in (BOT,RECOVERY)):
         raise ValueError('stop_bot_before_account_binding')
+    if supervisor.children[HELPER].stopping:
+        raise ValueError('helper_restarting')
     paths=Paths(app=supervisor.root)
     chats=set()
     for file in (supervisor.root/'instance').glob('*/config.json'):
@@ -55,4 +58,8 @@ def bind_configured_account(supervisor):
         helper['allowed_chat_ids']=allowed
         atomic_json(helper_path,helper)
         supervisor.children[HELPER].stop()
-    return dict(bound=result['bound'],message='账号及已有实例会话已绑定，可启动机器人。')
+    # A fresh account must be searchable before its first business instance exists.
+    supervisor.children[RECOVERY].command[-1]='directory'
+    supervisor.start(RECOVERY,capture=True)
+    return dict(bound=result['bound'],authorized_count=len(chats),
+                message='账号及实例会话授权已保存；实例启停状态保持原样。')

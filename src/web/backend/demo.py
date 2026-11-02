@@ -84,6 +84,21 @@ class DemoServices:
             states={name:('active' if name in {SESSION,HELPER,WEB} or (self.active and name in {BOT,RECOVERY}) else 'inactive') for name in COMPONENTS}
             return {name:dict(state=states[name],pid=os.getpid() if states[name]=='active' and name!=RECOVERY else 0) for name in COMPONENTS}
 
+    def onboarding(self,action):
+        from wxbridge.management.repository import ManagementError
+        if action=='login':return dict(phase='logged_in',qr='')
+        if action!='bind':raise ManagementError('onboarding_disabled','演示不支持此操作。',403)
+        with self.lock:
+            if self.active:raise ManagementError('onboarding_not_ready','请先停止演示机器人。',409)
+            path=self.root/'config.json'
+            value=json.loads(path.read_text(encoding='utf-8'))
+            directory=self.root/'synthetic/db_storage'
+            directory.mkdir(parents=True,exist_ok=True)
+            value['db_dir']=str(directory)
+            value['native_api']={'allowed_chat_ids':[item['chat'] for item in ConfigRepository(self.root).list()]}
+            path.write_text(json.dumps(value),encoding='utf-8')
+            return dict(bound=True,message='演示：账号与会话已绑定，未访问真实微信。')
+
     def perform(self,action):
         with self.lock:
             if action=='apply' and not self.active:

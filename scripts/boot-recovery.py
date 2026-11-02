@@ -236,12 +236,16 @@ def database_locks():
         yield
 
 
-def prepare(*, verify=False):
+def prepare(*, verify=False, metadata_only=False):
     validate_runtime()
     settings = json.loads(SETTINGS.read_text())
     token = process_token(settings)
     marker = RUN/'keyscan-session.json'
     cached = json.loads(marker.read_text()) if marker.exists() else None
+    if not metadata_only and (SENSITIVE/'keys.json').exists():
+        try:
+            if 'message/message_0.db' not in json.loads((SENSITIVE/'keys.json').read_text()):cached=None
+        except (ValueError,OSError):cached=None
     # The supervisor waits for listener exit before entering preparation.
     with database_locks():
         if verify or cached != token or not (SENSITIVE/'keys.json').exists():
@@ -260,7 +264,9 @@ def prepare(*, verify=False):
                 raise ValueError('key_extraction_waiting_or_failed')
             # 校验所有密钥对应文件，至少覆盖联系人、会话与主消息库。
             keys = json.loads(output.read_text())
-            if not {'contact/contact.db','session/session.db','message/message_0.db'} <= set(keys):
+            required={'contact/contact.db','session/session.db'}
+            if not metadata_only:required.add('message/message_0.db')
+            if not required <= set(keys):
                 raise ValueError('required_database_keys_missing')
             account = owner()
             os.chown(output,account.pw_uid,account.pw_gid)
@@ -271,6 +277,8 @@ def prepare(*, verify=False):
                 atomic_json(marker,token,owner=owner())
         else:
             destination = SENSITIVE/'keys.json'
+        if metadata_only:
+            return safe_status('contacts_prepared',ready=False,no_api=True,no_message_sent=True)
         args = ['/usr/bin/python3',str(CODE/'scripts/boot-recovery.py'),'probe','--keys',str(destination)]
         if verify:
             args += ['--verify']
@@ -291,15 +299,15 @@ def prepare(*, verify=False):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('mode',choices=['runtime','prepare','verify','probe','checkpoint','status'])
+    parser.add_argument('mode',choices=['runtime','prepare','directory','verify','probe','checkpoint','status'])
     parser.add_argument('--keys',type=Path)
     parser.add_argument('--verify',action='store_true')
     args = parser.parse_args()
     try:
         if args.mode == 'runtime':
             runtime()
-        elif args.mode in ('prepare','verify'):
-            prepare(verify=args.mode=='verify')
+        elif args.mode in ('prepare','directory','verify'):
+            prepare(verify=args.mode=='verify',metadata_only=args.mode=='directory')
         elif args.mode == 'probe':
             print(json.dumps(probe(args.keys,verify=args.verify)))
         elif args.mode == 'checkpoint':
@@ -308,7 +316,7 @@ def main():
             print((RUN/'boot-status.json').read_text() if (RUN/'boot-status.json').exists() else '{"phase":"not_started"}')
     except Exception as exc:
         # 不打印含路径/账号/密钥/聊天正文的异常内容。
-        if args.mode in ('runtime','prepare','verify'):
+        if args.mode in ('runtime','prepare','directory','verify'):
             category = str(exc) if isinstance(exc,ValueError) else type(exc).__name__
             safe_status('waiting_for_login_or_repair', reason=category)
         else:

@@ -46,7 +46,13 @@ def overview(repository, services, operations, *, demo=False):
             config_pending=item['revision']!=lifecycle.get('applied_revision'),
             request_id=lifecycle.get('request_id'),error=lifecycle.get('error',''),active_models=status.get('models',{})))
     events, event_error = safe_events(cfg.log_file)
+    authorized=set(cfg.native_api.allowed_chat_ids)
+    pending=[item['id'] for item in entries if item['chat'] not in authorized]
+    binding_idle=bot['state']=='inactive' and not states.get('recovery',{}).get('enabled',False)
     return dict(demo=demo, collected_at=now, services=states,
+        account_setup=dict(bound=bool(cfg.db_dir),pending_instances=pending,
+                           authorized_count=len(entries)-len(pending),instance_count=len(entries),
+                           can_bind=binding_idle),
         runtime=dict(state='unavailable' if bot['state']=='unavailable' else ('listening' if live.get('instances') else 'idle') if fresh else 'stopped' if bot['state']=='inactive' else 'stale' if live else 'unavailable',
             control_error=getattr(services,'status_error',''),
             heartbeat_age_seconds=max(0,round(age,1)) if age is not None else None,
@@ -55,6 +61,6 @@ def overview(repository, services, operations, *, demo=False):
             config_pending=bool(desired and desired!=applied), config_valid=desired is not None),
         instances=entries, events=events, event_error=event_error,
         capabilities=dict(service_control=services.allow_control,
-                          login_actions=bool(container() and services.allow_control), queue_actions=False,
+                          login_actions=bool((demo or container()) and services.allow_control), queue_actions=False,
                           instance_control=bool(bot['state']!='active' or fresh and live.get('features',{}).get('instance_control'))),
         operations=operations.snapshot())

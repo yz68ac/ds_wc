@@ -155,7 +155,10 @@ class ConfigRepository:
                 raise ManagementError('duplicate_instance', '实例 ID 或会话 ID 已存在。', 409)
         try:
             effective = resolve_instance(self.account(), data, path=self._directory(identifier)/'config.json')
-        except (ValueError, TypeError, KeyError):
+        except (ValueError, TypeError, KeyError) as exc:
+            field=getattr(exc,'path','')
+            if field and re.fullmatch(r'[a-zA-Z0-9_.]+',field):
+                raise ManagementError('invalid_model_or_settings', '配置项 '+field+' 无效，请检查数值范围和类型。') from None
             raise ManagementError('invalid_model_or_settings', '模型、连接或参数无效。启用的任务必须填写模型 ID，请检查数值范围与连接名称。') from None
         return effective
 
@@ -172,7 +175,7 @@ class ConfigRepository:
             document = _validated(combined, self._directory(identifier)/'config.json', environment=False, validate_role_models=False)
             effective = instance_from_document(document)
             return dict(id=identifier, config=data, revision=version,
-                        effective={key:json_value(getattr(effective,key)) for key in ['models', 'model_clients', 'participation', 'memory', 'profile', 'search', 'vision', 'image_generation']})
+                        effective={key:json_value(getattr(effective,key)) for key in ['models', 'model_clients', 'target', 'queue', 'reply_style', 'participation', 'memory', 'profile', 'search', 'vision', 'image_generation']})
 
     def save(self, identifier, data, expected, *, create=False):
         with self.lock:

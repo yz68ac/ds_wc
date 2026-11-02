@@ -38,10 +38,8 @@ def _validated(document, path, **options):
         raise ConfigError(code) from None
 
 
-def load_account(path='config.json') -> AccountConfig:
+def _validated_account(document, path, *, environment=True):
     from wxbridge.instances import validate_account_fields
-    path = Path(path).resolve()
-    document, revision = _read(path, missing=True)
     validate_account_fields(document)
     account = document.get('account', {})
     if not isinstance(account, dict) or set(account)-{'send_interval_seconds'}:
@@ -49,7 +47,13 @@ def load_account(path='config.json') -> AccountConfig:
     gap = account.get('send_interval_seconds', 1)
     if type(gap) not in (int, float) or not math.isfinite(gap) or not 0 <= gap <= 60:
         raise ConfigError('account.send_interval_seconds must be 0..60', 'account.send_interval_seconds')
-    resolved = _validated(document, path, validate_role_models=False)
+    return _validated(document, path, environment=environment, validate_role_models=False)
+
+
+def load_account(path='config.json') -> AccountConfig:
+    path = Path(path).resolve()
+    document, revision = _read(path, missing=True)
+    resolved = _validated_account(document, path)
     source = ConfigSource(str(path), revision, FrozenMap(tuple(resolved.pop('_config_origins').items())))
     value = account_from_document(resolved, metadata=source)
     return value

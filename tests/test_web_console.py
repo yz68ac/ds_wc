@@ -15,6 +15,86 @@ from web.backend.status import overview
 
 
 class RepositoryTests(unittest.TestCase):
+    def test_contact_search_normalizes_and_tolerates_mistyped_names(self):
+        from wxbridge.management.contacts import match_score
+        self.assertGreater(match_score('开 发', ['开发讨论群']),0)
+        self.assertGreater(match_score('ＡＬＩＣＥ',['Alice']),0)
+        self.assertGreater(match_score('alce',['Alice']),0)
+        self.assertEqual(match_score('zzzz',['Alice']),-1)
+
+    def test_web_schema_covers_business_fields_and_uses_runtime_constraints(self):
+        from wxbridge.management.settings import instance_schema,GROUPS
+        from wxbridge.config.models import InstanceConfig
+        from wxbridge.config.codec import json_value
+        schema=instance_schema()
+        def leaves(value,prefix):
+            for key,item in value.items():
+                path=prefix+'.'+key
+                if isinstance(item,dict):yield from leaves(item,path)
+                else:yield path
+        expected={p for _,_,roots,_ in GROUPS for name in roots for p in leaves(json_value(getattr(InstanceConfig(),name)),name)}-{'memory.system_prompt_file'}
+        actual={field['path']:field for group in schema['groups'] for field in group['fields']}
+        self.assertEqual(set(actual),expected)
+        self.assertEqual(actual['vision.max_images']['max'],4)
+        self.assertEqual(actual['target.context_max_chars']['default'],15000)
+        self.assertNotIn('provider_env',actual)
+        self.assertNotIn('memory.directory',actual)
+
+    def test_account_setting_update_preserves_paths_instances_and_credentials(self):
+        from wxbridge.management.settings import account_settings,save_account_settings
+        before=json.loads((self.root/'config.json').read_text())
+        instance=(self.root/'instance/private_demo/config.json').read_bytes()
+        provider=(self.root/'provider.env').read_bytes()
+        current=account_settings(self.repository)
+        saved=save_account_settings(self.repository,{'poll_interval_seconds':3.5,'account.send_interval_seconds':2,'ui.dry_run':True},current['revision'])
+        self.assertEqual(saved['activation'],'account_apply_required')
+        after=json.loads((self.root/'config.json').read_text())
+        self.assertEqual(after['provider_env'],before['provider_env'])
+        self.assertEqual(after['queue'],before['queue'])
+        self.assertEqual((self.root/'instance/private_demo/config.json').read_bytes(),instance)
+        self.assertEqual((self.root/'provider.env').read_bytes(),provider)
+        with self.assertRaises(ManagementError) as stale:
+            save_account_settings(self.repository,{'poll_interval_seconds':4},current['revision'])
+        self.assertEqual(stale.exception.status,409)
+
+    def test_account_setting_rejects_resource_overrides_and_invalid_values(self):
+        from wxbridge.management.settings import account_settings,save_account_settings
+        current=account_settings(self.repository)
+        for values in ({'db_dir':'/tmp'}, {'native_api.allowed_chat_ids':['wxid_other']}, {'provider_env':'/tmp/private'},
+                       {'poll_interval_seconds':0},{'poll_interval_seconds':True},{'ui.dry_run':'false'},
+                       {'account.send_interval_seconds':float('nan')},{'ui.chat_open_wait':1.5}):
+            with self.assertRaises(ManagementError):save_account_settings(self.repository,values,current['revision'])
+        self.assertEqual(account_settings(self.repository)['revision'],current['revision'])
+
+    def test_account_send_interval_validation_precedes_write(self):
+        from wxbridge.management.settings import ACCOUNT_FIELDS, account_settings, instance_schema, save_account_settings
+        field=next(item for item in instance_schema()['account_fields'] if item['path']=='account.send_interval_seconds')
+        self.assertEqual(field['max'],60)
+        for value in (0,60):
+            current=account_settings(self.repository)
+            saved=save_account_settings(self.repository,{'account.send_interval_seconds':value},current['revision'])
+            self.assertEqual(saved['values']['account.send_interval_seconds'],value)
+        before=(self.root/'config.json').read_bytes()
+        current=account_settings(self.repository)
+        # Runtime validation must still protect the file if the UI schema changes.
+        fields=[{k:v for k,v in item.items() if k!='max'} for item in ACCOUNT_FIELDS]
+        with patch('wxbridge.management.settings.ACCOUNT_FIELDS',fields):
+            with self.assertRaises(ManagementError) as error:
+                save_account_settings(self.repository,{'account.send_interval_seconds':60.1},current['revision'])
+        self.assertEqual(error.exception.code,'invalid_account_settings')
+        self.assertEqual((self.root/'config.json').read_bytes(),before)
+        self.assertEqual(account_settings(self.repository)['revision'],current['revision'])
+
+    def test_read_only_account_directory_reports_a_clear_error(self):
+        from wxbridge.management.settings import account_settings,save_account_settings
+        current=account_settings(self.repository)
+        with patch('wxbridge.management.settings.os.access',return_value=False):
+            self.assertFalse(account_settings(self.repository)['editable'])
+            with self.assertRaises(ManagementError) as error:
+                save_account_settings(self.repository,{'poll_interval_seconds':4},current['revision'])
+        self.assertEqual(error.exception.status,403)
+        self.assertEqual(account_settings(self.repository)['revision'],current['revision'])
+
     def setUp(self):
         root=Path(__file__).resolve().parents[1]/'.test-tmp'
         root.mkdir(exist_ok=True)

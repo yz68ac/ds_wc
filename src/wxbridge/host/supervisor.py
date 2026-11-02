@@ -419,10 +419,17 @@ class Supervisor:
                     self.ready = code == 0 and value.get('ready') is True
                     self.error = '' if self.ready else 'waiting_for_login_or_repair'
                     self.next_prepare = time.monotonic() + (0 if self.ready else 30)
+                if child.command[-1]=='directory':
+                    child.command[-1]='prepare'
+                    self.ready=False
+                    self.next_prepare=time.monotonic()
+                    if code==0:self.error=''
         bot = self.children[BOT]
         if not self.enabled or self.stopping:
             bot.stop(signal.SIGINT)
-            self.children[RECOVERY].stop()
+            recovery = self.children[RECOVERY]
+            if self.stopping or recovery.command[-1] != 'directory':
+                recovery.stop()
         if bot.process is None and self.checkpoint_needed and self.children['checkpoint'].process is None:
             self.start('checkpoint', capture=True)
         if self.stopping:

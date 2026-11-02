@@ -64,6 +64,7 @@ entry.main(['--root',sys.argv[2]])
 
 class FakeChild:
     def __init__(self,name,alive=False):
+        self.command=['python','recovery','prepare']
         self.name,self.process,self.stopping,self.event=name,object() if alive else None,False,None
         self.stops=[]
 
@@ -144,6 +145,25 @@ class SupervisorTests(unittest.TestCase):
         self.assertFalse(s.children[SESSION].stopping)
         self.assertFalse(s.children[WEB].stopping)
         self.assertNotIn(RECOVERY,self.started)
+
+    def test_directory_preparation_runs_while_bot_is_paused_and_resets_after_exit(self):
+        self.desktop();s=self.supervisor;s.enabled=False
+        child=s.children[RECOVERY];child.command[-1]='directory';child.process=object()
+        s.tick()
+        self.assertFalse(child.stopping)
+        self.assertNotIn(BOT,self.started)
+        child.event=(0,b'{"ready":false}',False)
+        s.tick()
+        self.assertEqual(child.command[-1],'prepare')
+        self.assertFalse(s.ready)
+        self.assertEqual(s.error,'')
+        self.assertNotIn(BOT,self.started)
+
+    def test_shutdown_also_stops_directory_preparation(self):
+        s=self.supervisor;s.stopping=True
+        child=s.children[RECOVERY];child.command[-1]='directory';child.process=object()
+        s.tick()
+        self.assertTrue(child.stopping)
 
     def test_apply_does_not_resume_a_paused_bot(self):
         s=self.supervisor;s.enabled=False
