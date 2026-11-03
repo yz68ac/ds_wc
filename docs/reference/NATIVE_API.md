@@ -51,9 +51,9 @@ runuser -u wxbridge -- python3 -m wxbridge native-api info
 客户端不需要 Frida，也不直接读微信数据库。应以运行机器人的 Linux 用户连接私有 socket；Windows 端可以通过 SSH 调用上述 CLI，不开放公网端口。
 
 ```python
-from wxbridge.native.client import NativeClient
+from wxbridge.submission_api.client import SubmissionClient
 
-client = NativeClient()
+client = SubmissionClient()
 accepted = client.send_text(
     chat_id="filehelper",
     text="第一行中文😀\n第二行[偷笑]",

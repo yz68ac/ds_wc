@@ -13,9 +13,9 @@ SUPPORTED_PROTOCOLS = frozenset({
 })
 
 
-def _check_request_size(payload):
+def _check_request_size(payload, *, extra_bytes=0):
     body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
-    if len(body) > MAX_REQUEST_BYTES:
+    if len(body)+extra_bytes > MAX_REQUEST_BYTES:
         raise ModelError('request_too_large')
 
 
@@ -27,5 +27,9 @@ def send(sdk, client, protocol, payload, timeout):
 
 
 def send_images(sdk, client, payload, timeout):
-    _check_request_size(payload)
+    if 'image' in payload:
+        _check_request_size({key: value for key, value in payload.items() if key != 'image'},
+            extra_bytes=sum(len(image[1])+4096 for image in payload['image']))
+    else:
+        _check_request_size(payload)
     return sdk_send_images(sdk, client, payload, timeout)

@@ -7,9 +7,9 @@ from .router import ModelRouter, ProviderClient
 from .config import ProviderConfig, load_config
 from .discovery import DiscoveredModel
 from .catalog import ModelSyncResult
-from .images import ImageRequest, ImageResult, GeneratedImage
+from .images import ImageRequest, ImageResult, GeneratedImage, ImageInput
 
 __all__ = ['Connection', 'ModelClient', 'ModelError', 'ModelRegistry', 'ModelRequest',
            'ModelResult', 'ModelSpec', 'ProviderClient', 'ProviderConfig', 'DiscoveredModel',
            'ModelSyncResult', 'ModelRouter', 'Client', 'create_client', 'capture_metrics', 'load_config',
-           'ImageRequest', 'ImageResult', 'GeneratedImage']
+           'ImageRequest', 'ImageResult', 'GeneratedImage', 'ImageInput']

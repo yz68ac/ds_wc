@@ -9,11 +9,11 @@ import stat
 import struct
 import time
 
-from wxbridge.native.protocol import MAX_FRAME, NativeError, decode, encode, settings
+from wxbridge.submission_api.protocol import MAX_FRAME, NativeError, decode, encode, settings
 from wxbridge.storage.memoryfs import require_runtime_directory as require_memory_directory
 
 
-class NativeServer:
+class SubmissionServer:
     def __init__(self, config, service, *, directory_validator=None):
         self.cfg, self.service = config, service
         if not self.cfg.enabled:raise NativeError('native_api_disabled')

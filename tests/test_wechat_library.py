@@ -42,6 +42,7 @@ import wechat_linux
 from wechat_linux import SessionConfig, WeChatSession, NativeSender, capabilities
 assert not any(n.startswith(('wxbridge', 'provider', 'frida', 'gi')) for n in sys.modules)
 assert not hasattr(wechat_linux, 'NativeClient')
+assert not hasattr(wechat_linux, 'SubmissionClient')
 assert capabilities()['native_profiles'][0]['version'] == '4.1.13.26'
 assert 'wechat_linux.desktop.ui' not in sys.modules
 """

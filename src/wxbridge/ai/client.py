@@ -1,9 +1,9 @@
-"""Request-local views over group-owned provider clients."""
+"""Request-local views over conversation-owned provider clients."""
 from contextvars import ContextVar
 from provider import ModelError, ModelRequest, capture_metrics
 from wxbridge.ai.roles import model_settings
 from wxbridge.config import json_value
-_scope = ContextVar('group_model_scope')
+_scope = ContextVar('conversation_model_scope')
 
 def client_for(role):
     lane, cfg, job, metrics = _scope.get()

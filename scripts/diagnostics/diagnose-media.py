@@ -9,7 +9,7 @@ import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'src'))
-from wxbridge.app.sessions.group import GroupSession
+from wxbridge.app.sessions.conversation import ConversationSession
 from wxbridge.config import load_config
 from wxbridge.instances import select_instance
 from wxbridge.app.execution.locks import instance_lock
@@ -26,7 +26,7 @@ def main(argv=None):
     with ExitStack() as stack:
         for name in sorted({cfg.paths.queue_file+".lock", str(Path(cfg.account.decrypted_dir)/".listener.lock")}):
             stack.enter_context(instance_lock(name))
-        bot = GroupSession(cfg, instance_id=cfg.id or None)
+        bot = ConversationSession(cfg, instance_id=cfg.id or None)
         try:
             rel, table = bot.store.message_table(bot.chat_id)
             conn = bot.store._connect(rel)

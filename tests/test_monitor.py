@@ -62,7 +62,7 @@ class MonitorTests(unittest.TestCase):
     def test_cli_once_reads_only_snapshots_and_never_starts_model_store_or_queue(self):
         before = {p.name:(p.read_bytes(),p.stat().st_mtime_ns) for p in self.root.iterdir()}
         with patch('wxbridge.config.load_config', return_value=self.cfg), patch.object(monitor,'read_services',return_value=({},'')), \
-                patch('wxbridge.app.sessions.group.WeChatStore') as store, patch('wxbridge.ai.client.client_for') as client, \
+                patch('wxbridge.app.sessions.conversation.WeChatStore') as store, patch('wxbridge.ai.client.client_for') as client, \
                 patch('sqlite3.connect',side_effect=AssertionError('must not query databases')), \
                 patch('sys.stdout',new_callable=io.StringIO) as output:
             self.assertEqual(main(['status','--once']),0)

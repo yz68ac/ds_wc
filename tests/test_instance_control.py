@@ -54,7 +54,7 @@ class InstanceControlTests(unittest.TestCase):
         self.b=next(session for session in sessions if session.instance_id=='group_demo')
         self.enterContext(patch.object(self.control,'_inactive'))
         self.enterContext(patch('wxbridge.app.sessions.instance_control.instance_lock',side_effect=lambda value:nullcontext()))
-        self.constructor=self.enterContext(patch('wxbridge.app.sessions.group.GroupSession',side_effect=FakeSession))
+        self.constructor=self.enterContext(patch('wxbridge.app.sessions.conversation.ConversationSession',side_effect=FakeSession))
 
     def request(self,name,action):
         item=self.repo.get(name)
@@ -120,7 +120,7 @@ class InstanceControlTests(unittest.TestCase):
         from wxbridge.app.sessions.coordinator import Coordinator
         coordinator=Coordinator.__new__(Coordinator)
         coordinator.sessions=[];coordinator.instance_control=None
-        coordinator.rotation=coordinator.delivery_rotation=0;coordinator.native_api=None
+        coordinator.rotation=coordinator.delivery_rotation=0;coordinator.submission_api=None
         coordinator.save_status=Mock()
         coordinator.tick()
         coordinator.save_status.assert_called_once()
@@ -130,7 +130,7 @@ class InstanceControlTests(unittest.TestCase):
         from wxbridge.app.sessions.coordinator import Coordinator
         coordinator=Coordinator.__new__(Coordinator)
         coordinator.sessions=self.owner.sessions;coordinator.instance_control=self.control
-        coordinator.rotation=coordinator.delivery_rotation=0;coordinator.native_api=None
+        coordinator.rotation=coordinator.delivery_rotation=0;coordinator.submission_api=None
         coordinator.account=SimpleNamespace(sending=Mock(return_value=None))
         coordinator.save_status=Mock()
         coordinator.tick()
@@ -183,8 +183,8 @@ class RealJournalTransitionTests(unittest.TestCase):
         stopped_snapshot=json.loads(owner.status_path.read_text(encoding='utf-8'))['inactive_queues']['alpha']
         self.assertEqual(stopped_snapshot['cursor'],cursor)
         self.assertGreater(stopped_snapshot['queue_length'],0)
-        from wxbridge.app.status.paths import configured_groups
-        checkpoint_ids={identifier for identifier,_,_ in configured_groups(fixture.root,fixture.root,include_disabled=True)}
+        from wxbridge.app.status.paths import configured_instances
+        checkpoint_ids={identifier for identifier,_,_ in configured_instances(fixture.root,fixture.root,include_disabled=True)}
         self.assertIn('alpha',checkpoint_ids)
         item=repo.get('alpha');repo.request_instance('alpha','start',item['revision'])
         with patch('wxbridge.app.sessions.instance_control.instance_lock',side_effect=lambda value:nullcontext()):

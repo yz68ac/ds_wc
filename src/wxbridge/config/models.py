@@ -146,12 +146,17 @@ class RuntimePolicy:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class NativeAPIConfig(Section):
+class HelperTransportConfig(Section):
     enabled: bool = False
-    socket: str = '/run/wxbridge-trial/native-api.sock'
-    helper_socket: str = '/run/wxbridge-trial/native-helper.sock'
+    socket: str = '/run/wxbridge-trial/native-helper.sock'
     allowed_chat_ids: tuple[str, ...] = ('filehelper',)
     max_text_bytes: int = 4096
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SubmissionAPIConfig(Section):
+    enabled: bool = False
+    socket: str = '/run/wxbridge-trial/native-api.sock'
     max_pending: int = 16
     max_requests: int = 1024
 
@@ -235,6 +240,7 @@ class SearchConfig(Section):
 @dataclass(frozen=True, slots=True, kw_only=True)
 class VisionConfig(Section):
     enabled: bool = True
+    context_images_enabled: bool = False
     detail: str = field(default='original', metadata={'choices': ('original', 'high', 'low', 'auto')})
     max_images: int = field(default=4, metadata={'range': (1, 4), 'error': 'invalid_config_range'})
     max_image_bytes: int = field(default=8388608, metadata={'range': (1, 8388608), 'error': 'invalid_config_range'})
@@ -370,7 +376,8 @@ class AccountConfig(Section):
     memory_directory: str = RuntimePaths().memory_directory
     send_interval_seconds: float = 1
     ui: UIConfig = field(default_factory=UIConfig)
-    native_api: NativeAPIConfig = field(default_factory=NativeAPIConfig)
+    helper_transport: HelperTransportConfig = field(default_factory=HelperTransportConfig)
+    submission_api: SubmissionAPIConfig = field(default_factory=SubmissionAPIConfig)
     metadata: ConfigSource = field(default_factory=ConfigSource)
 
 
@@ -411,7 +418,7 @@ class AppConfig(Section):
 
 __all__ = [
     'ConfigError', 'Missing', 'UNSET', 'FrozenMap', 'Section', 'ConfigSource',
-    'RuntimePaths', 'RuntimePolicy', 'NativeAPIConfig', 'UIConfig', 'TargetConfig',
+    'RuntimePaths', 'RuntimePolicy', 'HelperTransportConfig', 'SubmissionAPIConfig', 'UIConfig', 'TargetConfig',
     'QueueConfig', 'ParticipationConfig', 'ReplyStyleConfig', 'SearchConfig',
     'VisionConfig', 'ProfileConfig', 'ImageGenerationConfig', 'ModelClients',
     'LearningConfig', 'AvatarConfig', 'MemoryConfig', 'TextOptions', 'ImageOptions',

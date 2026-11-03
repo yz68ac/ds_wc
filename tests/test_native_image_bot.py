@@ -20,7 +20,7 @@ class NativeImageBotTests(unittest.TestCase):
         self.case.setUp()
         self.addCleanup(self.case.doCleanups)
         self.case.cfg = update_config(self.case.cfg, 'vision', download_enabled=True, download_backend='native', owner=self)
-        self.case.cfg = update_config(self.case.cfg, 'account.native_api', helper_socket='/run/synthetic/helper.sock', allowed_chat_ids=[native.CHAT], owner=self)
+        self.case.cfg = update_config(self.case.cfg, 'account.helper_transport', socket='/run/synthetic/helper.sock', allowed_chat_ids=[native.CHAT], owner=self)
         self.generation = self.case.generation()
         self.generation['account'] = self.case.binding['account']
         self.generation['images'][0].update(

@@ -51,11 +51,11 @@ def memory_bounds(cfg, trigger):
     return end-cfg.memory.context_window_seconds, end
 
 
-def valid_message(message):
+def valid_message(message, *, images=False):
     return (message_time(message) is not None
             and type(message.get('local_id')) is int and message['local_id'] > 0
             and isinstance(message.get('sender'), str) and bool(message['sender'])
-            and (is_pat(message) or message.get('type', 1) == 1
+            and (images and message.get('type') == 3 or is_pat(message) or message.get('type', 1) == 1
                  and isinstance(message.get('text'), str) and bool(message['text'].strip())))
 
 
@@ -66,7 +66,7 @@ def select_memory_context(cfg, context, trigger):
                    and m['local_id'] != trigger['local_id'] and message_key(m) < key), key=message_key)
 
 
-def select_context(cfg, context, trigger, *, triggers=None, account=''):
+def select_context(cfg, context, trigger, *, triggers=None, account='', images=False):
     sources = triggers or [trigger]
     anchor = source_anchor(sources)
     upper = message_key(anchor)
@@ -75,7 +75,7 @@ def select_context(cfg, context, trigger, *, triggers=None, account=''):
     start = upper[0]-cfg.target.context_max_age_seconds
     rows = {}
     for message in context:
-        if (valid_message(message) and message['local_id'] not in required
+        if (valid_message(message, images=images) and message['local_id'] not in required
                 and message['local_id'] <= watermark and start <= message['time']
                 and message_key(message) < upper):
             identifier = message['local_id']
@@ -97,7 +97,7 @@ def select_context(cfg, context, trigger, *, triggers=None, account=''):
                        recent_ids=[m['local_id'] for m in recent], bot_groups=groups)
 
 
-def read_context(cfg, store, chat_id, triggers, *, account=''):
+def read_context(cfg, store, chat_id, triggers, *, account='', images=False):
     """Reader-thread-only pagination; at most 1000 raw database records."""
     anchor = source_anchor(triggers)
     cursor = message_key(anchor)
@@ -117,13 +117,13 @@ def read_context(cfg, store, chat_id, triggers, *, account=''):
         if page.cursor >= cursor or page.scanned <= 0:
             raise ContextError('invalid_context_cursor')
         cursor = page.cursor
-        eligible = sorted((m for m in rows if valid_message(m) and m['local_id'] not in required), key=message_key)
+        eligible = sorted((m for m in rows if valid_message(m, images=images) and m['local_id'] not in required), key=message_key)
         bots = [i for i,m in enumerate(eligible) if account and m['sender'] == account and not is_pat(m)]
         count = cfg.target.context_bot_messages if account else 0
         if (len(eligible) >= cfg.target.context_recent_messages
                 and (not count or len(bots) >= count and bots[-count] >= 2)):
             break
-    selected = select_context(cfg, rows, anchor, triggers=triggers, account=account)
+    selected = select_context(cfg, rows, anchor, triggers=triggers, account=account, images=images)
     selected.scanned = scanned
     selected.scan_limit_hit = scanned == SCAN_LIMIT and not exhausted
     return selected

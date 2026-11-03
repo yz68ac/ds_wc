@@ -13,7 +13,7 @@ from threading import RLock
 from .adapters import ModelError, ModelRequest, ModelResult, get_protocol_adapter
 from .transport import send, send_images
 from .sdk_transport import create_sdk_client
-from .images import ImageRequest, ImageResult, IMAGE_PROTOCOLS, build_image_payload, parse_image_response
+from .images import ImageRequest, ImageResult, IMAGE_PROTOCOLS, build_image_payload, build_image_edit_payload, parse_image_response, checked_inputs
 
 _metrics = ContextVar('model_metrics', default=None)
 
@@ -126,6 +126,7 @@ class Client:
         started, usage, error = time.monotonic(), {}, ''
         try:
             self._ensure_open()
+            checked_inputs(request.images)
             gemini = self.cfg.get('image_protocol') == 'gemini'
             if not gemini and self.protocol not in IMAGE_PROTOCOLS:
                 raise ModelError('unsupported_image_generation')
@@ -133,7 +134,7 @@ class Client:
                 from .gemini_images import build_gemini_image_payload
                 payload, timeout = build_gemini_image_payload(request)
             else:
-                payload, timeout = build_image_payload(request)
+                payload, timeout = (build_image_edit_payload(request) if request.images else build_image_payload(request))
             if deadline is not None:
                 if type(deadline) not in (int, float) or not math.isfinite(deadline):
                     raise ModelError('invalid_deadline')
@@ -165,7 +166,8 @@ class Client:
             raise
         finally:
             if _metrics.get() is not None:
-                _metrics.get().append(dict(role=self.role, provider='gemini' if self.cfg.get('image_protocol') == 'gemini' else self.protocol, operation='image_generation',
+                _metrics.get().append(dict(role=self.role, provider='gemini' if self.cfg.get('image_protocol') == 'gemini' else self.protocol,
+                    operation='image_edit' if request.images else 'image_generation',
                     elapsed_ms=round((time.monotonic()-started)*1000, 2), finish_reason=None, usage=usage, error=error))
 
     def _generate(self, request, settings, *, deadline=None, require_complete=False):

@@ -1,4 +1,4 @@
-"""群实例拥有模型线程通道；主循环独占数据库，UI 作业使用隔离进程。"""
+"""会话实例拥有模型线程通道；主循环独占数据库，UI 作业使用隔离进程。"""
 from __future__ import annotations
 from wxbridge.config import InstanceConfig
 
@@ -26,13 +26,15 @@ from wxbridge.app.status.build_info import runtime_identity
 log = logging.getLogger("wxbridge")
 
 
-class GroupSession(SessionPhases):
+class ConversationSession(SessionPhases):
     def __init__(self, cfg: InstanceConfig, echo=False, *, store=None, account=None, instance_id=None, start_gateway=True):
         from wxbridge.instances import CHAT_ID, INSTANCE_ID
         if instance_id is not None and (not isinstance(instance_id, str) or not INSTANCE_ID.fullmatch(instance_id)):
             raise ValueError('invalid_instance_id')
-        from wxbridge.native.protocol import settings as native_settings
-        native_options = native_settings(cfg)
+        from wxbridge.submission_api.protocol import settings as submission_settings
+        submission_options = submission_settings(cfg)
+        from wxbridge.native.settings import settings as helper_settings
+        helper_options = helper_settings(cfg)
         self.cfg, self.echo = cfg, echo
         self.account, self.instance_id = account, instance_id
         self.quiescing = False
@@ -42,8 +44,8 @@ class GroupSession(SessionPhases):
         self.chat_id, self.chat_title = self.store.resolve_chat(cfg.chat)
         if not CHAT_ID.fullmatch(self.chat_id) or not self.store.self_wxid:
             raise StoreError("必须确认当前微信账号及目标群聊或用户私聊")
-        if cfg.account.ui.backend=='native_service' and (not native_options.enabled or self.chat_id not in native_options.allowed_chat_ids):
-            raise ValueError('native_service requires enabled native_api and an allowed target chat')
+        if cfg.account.ui.backend=='native_service' and (not helper_options.enabled or self.chat_id not in helper_options.allowed_chat_ids):
+            raise ValueError('native_service requires enabled helper_transport and an allowed target chat')
         baseline = None
         if not cfg.account.ui.dry_run:
             try:
@@ -53,52 +55,52 @@ class GroupSession(SessionPhases):
                 pass
         if baseline is None:
             baseline = self.store.last_local_id(self.chat_id)
-        self.journal = Journal(cfg.paths.queue_file,
-                               {"account": self.store.self_wxid, "chat": self.chat_id}, int(baseline))
-        if instance_id is not None:
-            saved = self.journal.get('instance_id')
-            if saved is not None and saved != instance_id:
-                self.journal.close()
-                raise ValueError('queue_instance_identity_mismatch')
-            with self.journal.db:
-                self.journal.set('instance_id', instance_id)
-        self.journal.recover(time.time())
-        self.delivery = DeliveryController(cfg, self.journal, self.store, self.chat_id, self.chat_title, logger=self.log)
-        self.replies = ReplyController(self)
-        self.ui_job = None
-        self.memory = MemoryController(self)
-        self.started_at = time.time()
-        from wxbridge.app.execution.model_runtime import GroupModels
-        self.models = GroupModels(cfg)
-        from wxbridge.app.tasks.image_generation import ImageGenerationController
-        self.image_generation = ImageGenerationController(self)
-        self.job_factory = self._new_job
-        self.status_path = Path(cfg.paths.state_file).parent / "live-status.json"
-        try:
+        self._closed = False
+        with ExitStack() as rollback:
+            self.journal = Journal(cfg.paths.queue_file,
+                                   {"account": self.store.self_wxid, "chat": self.chat_id}, int(baseline))
+            rollback.callback(self.journal.close)
+            if instance_id is not None:
+                saved = self.journal.get('instance_id')
+                if saved is not None and saved != instance_id:
+                    raise ValueError('queue_instance_identity_mismatch')
+                with self.journal.db:
+                    self.journal.set('instance_id', instance_id)
+            self.journal.recover(time.time())
+            self.delivery = DeliveryController(cfg, self.journal, self.store, self.chat_id, self.chat_title, logger=self.log)
+            self.replies = ReplyController(self)
+            rollback.callback(self.replies.close)
+            self.ui_job = None
+            self.memory = MemoryController(self)
+            rollback.callback(self.memory.close)
+            self.started_at = time.time()
+            from wxbridge.app.execution.model_runtime import ConversationModels
+            self.models = ConversationModels(cfg)
+            rollback.callback(self.models.close)
+            from wxbridge.app.tasks.image_generation import ImageGenerationController
+            self.image_generation = ImageGenerationController(self)
+            rollback.callback(self.image_generation.close)
+            self.job_factory = self._new_job
+            self.status_path = Path(cfg.paths.state_file).parent / "live-status.json"
             self.participation = ParticipationController(self)
-        except BaseException:
-            self.models.close()
-            self.journal.close()
-            raise
-        self.maintenance_at = 0
-        self.metrics, self.build = Metrics(), runtime_identity(cfg)
-        self.status_signature, self.status_written_at = None, 0
-        self.status_write_error = ''
-        self.next_poll_at = 0
-        self.profile = None
-        if cfg.profile.enabled and not cfg.account.ui.dry_run and not echo:
-            from wxbridge.app.tasks.group_profile import ProfileController
-            try:
+            rollback.callback(self.participation.cancel, 'construction_failed')
+            self.maintenance_at = 0
+            self.metrics, self.build = Metrics(), runtime_identity(cfg)
+            self.status_signature, self.status_written_at = None, 0
+            self.status_write_error = ''
+            self.next_poll_at = 0
+            self.profile = None
+            if cfg.profile.enabled and not cfg.account.ui.dry_run and not echo:
+                from wxbridge.app.tasks.group_profile import ProfileController
                 self.profile = ProfileController(self)
-            except Exception:
-                self.models.close()
-                self.journal.close()
-                raise
-        self.native_api = None
-        if start_gateway and native_options.enabled and not cfg.account.ui.dry_run:
-            from wxbridge.native.server import NativeServer
-            from wxbridge.app.delivery.native_gateway import BotNativeService
-            self.native_api = NativeServer(native_options, BotNativeService(self, native_options))
+                rollback.callback(self.profile.close)
+            self.submission_api = None
+            if start_gateway and submission_options.enabled and not cfg.account.ui.dry_run:
+                from wxbridge.submission_api.server import SubmissionServer
+                from wxbridge.app.delivery.submission_gateway import ConversationSubmissionService
+                self.submission_api = SubmissionServer(submission_options, ConversationSubmissionService(self, submission_options))
+                rollback.callback(self.submission_api.close)
+            rollback.pop_all()
 
     _chunk = staticmethod(chunk_text)
 
@@ -173,8 +175,8 @@ class GroupSession(SessionPhases):
             return self.models.submit(kind, payload, timeout=timeout)
         return ProcessJob(kind, payload, timeout=timeout)
 
-    def submit_images(self, request, *, deadline=None):
-        return self.models.submit_images(request, deadline=deadline)
+    def submit_images(self, request, *, deadline=None, source_image=None):
+        return self.models.submit_images(request, deadline=deadline, source_image=source_image)
 
     def profile_snapshot(self, rows):
         return self.profile.snapshot(rows) if self.profile else None
@@ -222,7 +224,7 @@ class GroupSession(SessionPhases):
                 and (task.get('next_chunk', 0) > 0 or now < task.get('reply_expires_at', float('inf'))))
 
     def tick(self):
-        self.run_phases(self.native_api)
+        self.run_phases(self.submission_api)
 
     def maintain(self):
         if time.time()-self.maintenance_at >= 60:
@@ -306,6 +308,8 @@ class GroupSession(SessionPhases):
         return self.ui_job is None and self.models.stopped()
 
     def close(self):
+        if getattr(self, '_closed', False):return
+        self._closed = True
         # A failed child cleanup must stop the runtime, but must not prevent
         # attempts to release the remaining children, gateway and database.
         with ExitStack() as stack:
@@ -322,8 +326,8 @@ class GroupSession(SessionPhases):
             if self.profile:
                 stack.callback(self.profile.close)
             stack.callback(self.participation.cancel, 'stopped')
-            if self.native_api:
-                stack.callback(self.native_api.close)
+            if self.submission_api:
+                stack.callback(self.submission_api.close)
 
     def run(self, once=False):
         try:

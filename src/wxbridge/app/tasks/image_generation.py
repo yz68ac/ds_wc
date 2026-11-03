@@ -3,50 +3,15 @@ from concurrent.futures import CancelledError
 from copy import deepcopy
 import hashlib
 import io
-import os
 from pathlib import Path
-import re
-import stat
 import time
-import uuid
 import warnings
 
-from provider import ImageRequest, ModelError
+from provider import ImageRequest, GeneratedImage, ModelError
 from wxbridge.ai.roles import image_request
+from wxbridge.contracts.image_jobs import ImageProposal, QuotedImageInput, QueuedImageJob
 
-MAX_BYTES = 8 * 1024 * 1024
-FILE_NAME = re.compile(r'[a-f0-9]{32}\.(?:png|jpg)\Z')
-
-
-def artifact_directory(cfg):
-    root = Path(cfg.paths.queue_file).parent/'generated-images'
-    if root.is_symlink():
-        raise ModelError('image_artifact_unavailable')
-    root.mkdir(mode=0o700, exist_ok=True)
-    info = root.stat()
-    if not stat.S_ISDIR(info.st_mode) or (os.name == 'posix' and
-            (info.st_uid != os.geteuid() or info.st_mode & 0o077)):
-        raise ModelError('image_artifact_unavailable')
-    return root
-
-
-def artifact_path(cfg, image):
-    name = image.get('file')
-    if not isinstance(name, str) or not FILE_NAME.fullmatch(name):
-        raise ModelError('image_artifact_unavailable')
-    path = artifact_directory(cfg)/name
-    try:
-        with os.fdopen(os.open(path, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0)), 'rb') as stream:
-            info = os.fstat(stream.fileno())
-            if (not stat.S_ISREG(info.st_mode) or not 1 <= info.st_size <= MAX_BYTES
-                    or (os.name == 'posix' and (info.st_uid != os.geteuid() or info.st_mode & 0o077))):
-                raise ModelError('image_artifact_unavailable')
-            data = stream.read(MAX_BYTES+1)
-        if len(data) != image['bytes'] or hashlib.sha256(data).hexdigest() != image['sha256']:
-            raise ModelError('image_artifact_changed')
-    except (OSError, KeyError):
-        raise ModelError('image_artifact_unavailable') from None
-    return path
+from wxbridge.storage.image_artifacts import MAX_BYTES, FILE_NAME, artifact_directory, write_artifact
 
 
 def checked_image(image):
@@ -95,19 +60,41 @@ class ImageGenerationController:
         self.bot, self.jobs = bot, {}
         self.cleaned_at = 0
 
-    def proposal(self, values):
+    def proposal(self, values, *, triggers=()):
         if not values:
             return None
         if not self.bot.cfg.image_generation.enabled or self.bot.quiescing:
             raise ModelError('image_generation_disabled')
         if self.bot.journal.pending_count() >= self.bot.cfg.queue.max_pending:
             raise ModelError('image_queue_full')
-        if (not isinstance(values, list) or len(values) != 1 or not isinstance(values[0], dict)
-                or set(values[0]) != {'prompt'} or not isinstance(values[0]['prompt'], str)
-                or not 1 <= len(values[0]['prompt'].strip()) <= 4000):
+        if (not isinstance(values, list) or len(values) != 1 or not isinstance(values[0], ImageProposal)
+                or not isinstance(values[0].prompt, str) or not 1 <= len(values[0].prompt.strip()) <= 4000):
             raise ModelError('invalid_image_tool')
-        request = image_request(self.bot.cfg, values[0]['prompt'].strip())
-        return dict(model=request.model, prompt=request.prompt, options=deepcopy(request.options))
+        proposal = values[0]
+        request = image_request(self.bot.cfg, proposal.prompt.strip())
+        source_image = None
+        image = proposal.reference_image
+        if image is not None:
+            from wxbridge.ai.composer import reference_source
+            if (not isinstance(image, QuotedImageInput)
+                    or type(image.trigger_index) is not int or not 0 <= image.trigger_index < len(triggers)
+                    or type(image.depth) is not int or not 0 <= image.depth < 8):
+                raise ModelError('invalid_image_edit_source')
+            reference = triggers[image.trigger_index].get('reference')
+            for _ in range(image.depth):
+                reference = reference.get('reference') if isinstance(reference, dict) else None
+            if (not isinstance(reference, dict) or reference.get('kind') != 'image'
+                    or reference_source(reference) != image.source
+                    or (reference.get('chat_id') and reference['chat_id'] != self.bot.chat_id)):
+                raise ModelError('invalid_image_edit_source')
+            data, metadata = checked_image(GeneratedImage(image.data, mime=image.mime))
+            source_image = write_artifact(self.bot.cfg.paths.queue_file, data, metadata)
+        return QueuedImageJob(request.model, request.prompt, deepcopy(request.options), source_image)
+
+    def discard_proposal(self, proposal):
+        if proposal is not None and proposal.source_image is not None:
+            image = proposal.source_image
+            (Path(self.bot.cfg.paths.queue_file).parent/'generated-images'/image['file']).unlink(missing_ok=True)
 
     def _valid(self, task, now):
         if (not task or task['phase'] == 'done' or self.bot.quiescing
@@ -149,18 +136,14 @@ class ImageGenerationController:
                 if len(result.images) != 1:
                     raise ModelError('unexpected_image_count')
                 data, metadata = checked_image(result.images[0])
-                name = uuid.uuid4().hex+('.png' if metadata['mime'] == 'image/png' else '.jpg')
-                path = artifact_directory(self.bot.cfg)/name
-                with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'wb') as stream:
-                    files.append(path)
-                    stream.write(data)
-                    stream.flush()
-                    os.fsync(stream.fileno())
+                image = write_artifact(self.bot.cfg.paths.queue_file, data, metadata)
+                path = artifact_directory(self.bot.cfg.paths.queue_file)/image['file']
+                files.append(path)
                 # Validation and disk work may consume the remaining deadline.
                 if not self._valid(task, time.time()):
                     raise CancelledError()
                 with journal.db:
-                    task.update(generation='ready', chunks=[''], images=[dict(file=name, **metadata)])
+                    task.update(generation='ready', chunks=[''], images=[image])
                     task.pop('image_request', None)
                     journal.set('last_image_generation', dict(task_id=identifier, state='ready', images=1, at=now,
                                                              usage=result.usage))
@@ -200,26 +183,34 @@ class ImageGenerationController:
                     self._cancel(task, now)
                 continue
             # Durable running marker precedes the external request. Recovery never regenerates it.
-            request = deepcopy(task['image_request'])
+            request = QueuedImageJob.from_document(task['image_request'])
+            source_image = request.source_image
             with journal.db:
                 task['generation'] = 'image_running'
                 journal.put(task)
             try:
-                future = self.bot.submit_images(ImageRequest(**request),
-                    deadline=time.monotonic()+max(0, task['image_deadline']-time.time()))
+                options = dict(source_image=source_image) if source_image else {}
+                future = self.bot.submit_images(ImageRequest(request.model, request.prompt, request.options),
+                    deadline=time.monotonic()+max(0, task['image_deadline']-time.time()), **options)
                 self.jobs[task['id']] = task['version'], future
             except Exception as exc:
                 with journal.db:
                     journal.image_failed(task, getattr(exc, 'code', 'image_generation_failed'), now)
         self.cleanup(now)
 
-    def cleanup(self, now):
-        if now-self.cleaned_at < 30:
+    def cleanup(self, now, *, force=False):
+        if not force and now-self.cleaned_at < 30:
             return
         root = Path(self.bot.cfg.paths.queue_file).parent/'generated-images'
         if not root.exists() or root.is_symlink():
             return
         active = {image['file'] for t in self.bot.journal.image_tasks() for image in t.get('images', [])}
+        active.update(t['image_request']['source_image']['file'] for t in self.bot.journal.image_tasks()
+                      if (t.get('image_request') or {}).get('source_image'))
+        with self.bot.journal.db:
+            active.update(self.bot.journal.retained_image_files(now, enabled=(
+                self.bot.cfg.vision.enabled and (self.bot.cfg.vision.context_images_enabled
+                                                or self.bot.cfg.image_generation.enabled))))
         if self.bot.ui_job:
             sending = self.bot.journal.task(self.bot.ui_job[0])
             active.update(image['file'] for image in (sending or {}).get('images', []))
@@ -236,4 +227,4 @@ class ImageGenerationController:
             for task in self.bot.journal.image_tasks():
                 if not task['intent']:
                     self._cancel(task, time.time())
-        self.cleanup(float('inf'))
+        self.cleanup(time.time(), force=True)

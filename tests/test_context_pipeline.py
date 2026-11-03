@@ -12,7 +12,7 @@ import time
 import unittest
 from unittest.mock import Mock, patch
 
-from wxbridge.app.sessions.group import GroupSession
+from wxbridge.app.sessions.conversation import ConversationSession
 from wxbridge.config import default_document
 from tests.support.configuration import merge_config as _deep_merge
 from tests.support.model_support import ClientFixture
@@ -74,7 +74,7 @@ class PipelineTests(PipelineFixture):
         self.store.image_binding.assert_called_once_with("synthetic@chatroom", item["reference"])
         self.assertEqual(len(self.jobs[0].payload), 4)
         self.assertEqual(self.jobs[0].payload[3]['account'], 'wxid_self')
-        self.assertEqual(self.jobs[0].payload[3]["images"][0]["trigger_index"], 0)
+        self.assertEqual(self.jobs[0].payload[3]["images"][0]["targets"], [dict(trigger_index=0, depth=0)])
         self.jobs[0].result = dict(ok=True, reply="合成看图回答", vision=dict(images=1, references=1, items=[dict(available=True, quality="thumbnail")]))
         self.bot.tick()
         status = self.bot.journal.status()
@@ -573,8 +573,8 @@ class PipelineTests(PipelineFixture):
 
     def test_status_heartbeat_is_limited_but_new_intake_is_published(self):
         from os import replace
-        with patch('wxbridge.app.sessions.group.time.monotonic', return_value=100) as clock, \
-                patch('wxbridge.app.sessions.group.os.replace', wraps=replace) as publish:
+        with patch('wxbridge.app.sessions.conversation.time.monotonic', return_value=100) as clock, \
+                patch('wxbridge.app.sessions.conversation.os.replace', wraps=replace) as publish:
             self.bot.tick()
             self.bot.tick()
             self.assertEqual(publish.call_count, 1)
@@ -733,10 +733,10 @@ class PipelineTests(PipelineFixture):
 
 class WorkerTests(unittest.TestCase):
     def test_search_disabled_still_uses_plain_text_and_output_preferences(self):
-        from wxbridge.app.execution.model_runtime import GroupModels
+        from wxbridge.app.execution.model_runtime import ConversationModels
         from wxbridge.ai.reply.output import reply_rules
         cfg=default_config();cfg = replace_config(cfg, 'search.enabled', False)
-        runtime=GroupModels(cfg)
+        runtime=ConversationModels(cfg)
         try:
             with patch('wxbridge.app.execution.model_runtime.client_for') as client:
                 from tests.support.tool_support import model_result
@@ -751,8 +751,8 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(result['reply'],'简单说，先这样。')
 
     def test_progress_event_does_not_replace_final_result(self):
-        from wxbridge.app.execution.model_runtime import GroupModels
-        cfg=default_config();runtime=GroupModels(cfg)
+        from wxbridge.app.execution.model_runtime import ConversationModels
+        cfg=default_config();runtime=ConversationModels(cfg)
         def answer(cfg, client, prompt, on_search, **kwargs):
             on_search()
             from wxbridge.ai.tools.base import ToolReply
@@ -770,26 +770,26 @@ class WorkerTests(unittest.TestCase):
             runtime.close()
 
     def test_image_proposal_can_finish_without_worker_confirmation_text(self):
-        from wxbridge.app.execution.model_runtime import GroupModels
+        from wxbridge.app.execution.model_runtime import ConversationModels
         from wxbridge.ai.tools.base import ToolReply
         cfg = default_config()
         cfg = replace_config(cfg, 'image_generation.enabled', True)
-        runtime = GroupModels(cfg)
+        runtime = ConversationModels(cfg)
         try:
             with patch('wxbridge.app.execution.model_runtime.client_for'), patch('wxbridge.ai.reply.runner.run_tool_loop',
                     return_value=ToolReply('', {}, (dict(prompt='cat'),))) as loop:
                 result = runtime.submit('generate', (cfg, [], None), timeout=5).future.result(timeout=2)
             self.assertTrue(result['ok'])
             self.assertEqual(result['reply'], '')
-            self.assertEqual(result['image_requests'], [dict(prompt='cat')])
+            self.assertEqual(result['image_proposals'], [dict(prompt='cat')])
             self.assertIsNotNone(loop.call_args.kwargs['deadline'])
             self.assertTrue(callable(loop.call_args.kwargs['check']))
         finally:
             runtime.close()
 
     def test_real_model_lane_echo_without_creating_client(self):
-        from wxbridge.app.execution.model_runtime import GroupModels
-        cfg=default_config();runtime=GroupModels(cfg)
+        from wxbridge.app.execution.model_runtime import ConversationModels
+        cfg=default_config();runtime=ConversationModels(cfg)
         try:
             with patch('wxbridge.app.execution.model_runtime.create_client') as create:
                 result=runtime.submit('generate',(cfg,[],'本地线程测试'),timeout=5).future.result(timeout=2)

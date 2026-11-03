@@ -5,14 +5,14 @@ import json
 from pathlib import Path
 import sys
 
-from wxbridge.native.client import NativeClient
-from wxbridge.native.protocol import NativeError, settings
+from wxbridge.submission_api.client import SubmissionClient
+from wxbridge.submission_api.protocol import NativeError, settings
 
 
 def command(cfg,args):
     options=settings(cfg)
     if not options.enabled:raise NativeError('native_api_disabled')
-    client=NativeClient(options.socket)
+    client=SubmissionClient(options.socket)
     if args.action=='info':value=client.info()
     elif args.action=='status':
         if not args.request_id:raise NativeError('request_id_required')

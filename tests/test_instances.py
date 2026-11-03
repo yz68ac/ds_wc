@@ -16,7 +16,8 @@ from tests.support.synthetic import NOW, msg
 from tests.support.pipeline import FakeJob
 from wxbridge.ai.roles import model_settings
 from wxbridge.app.sessions.coordinator import Coordinator
-from wxbridge.app.delivery.native_gateway import AccountNativeService
+from wxbridge.submission_api.protocol import settings
+from wxbridge.app.delivery.submission_gateway import AccountSubmissionService
 from wxbridge.config import load_config
 from wxbridge.instances import enabled_instances, runtime_locks
 from wechat_linux.errors import NativeError
@@ -149,7 +150,7 @@ class MultiGroupTests(MultiGroupFixture):
         self.assertEqual(self.active('generate')[0].owner, 'beta')
 
     def test_external_request_ids_are_account_wide_and_routed_by_chat(self):
-        service = AccountNativeService(self.coordinator, self.cfg.account.native_api)
+        service = AccountSubmissionService(self.coordinator, settings(self.cfg))
         value = dict(op='send_text', request_id='sample:one', chat_id=CHATS[1], text='合成外部请求')
         accepted = service.handle(value)
         self.assertEqual(self.coordinator.sessions[0].journal.tasks(), [])
@@ -220,7 +221,7 @@ class MultiGroupTests(MultiGroupFixture):
             make.return_value.close.assert_called_once()
 
     def test_disabled_instance_keeps_unknown_send_gate_and_request_history(self):
-        service = AccountNativeService(self.coordinator, self.cfg.account.native_api)
+        service = AccountSubmissionService(self.coordinator, settings(self.cfg))
         value = dict(op='send_text', request_id='disabled:one', chat_id=CHATS[0], text='合成外部请求')
         service.handle(value)
         self.tick()
@@ -229,7 +230,7 @@ class MultiGroupTests(MultiGroupFixture):
         self.cfg = replace_config(self.cfg, '.'.join(map(str, ('instances', 0, 'enabled',))), False, owner=self)
         self.coordinator = self.make()
         self.assertTrue(self.coordinator.account.status()['send_blocked'])
-        service = AccountNativeService(self.coordinator, self.cfg.account.native_api)
+        service = AccountSubmissionService(self.coordinator, settings(self.cfg))
         self.assertTrue(service.handle(value)['duplicate'])
         self.add(1, 1); self.tick(); self.finish('beta')
         self.assertFalse(self.active('native_send'))

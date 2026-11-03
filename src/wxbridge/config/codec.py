@@ -60,7 +60,8 @@ def section_from_document(cls, document, *, path=''):
 
 def account_document(account: AccountConfig):
     return {**json_value(account.extensions), **{name: getattr(account, name) for name in ACCOUNT_FIELDS},
-            'ui': json_value(account.ui), 'native_api': json_value(account.native_api),
+            'ui': json_value(account.ui), 'helper_transport': json_value(account.helper_transport),
+            'submission_api': json_value(account.submission_api),
             'account': {'send_interval_seconds': account.send_interval_seconds},
             'queue': {'file': account.queue_file}, 'memory': {'directory': account.memory_directory}}
 
@@ -89,12 +90,13 @@ def default_document():
 
 
 def account_from_document(document, *, metadata=None):
-    from .models import ConfigSource, NativeAPIConfig, UIConfig
+    from .models import ConfigSource, HelperTransportConfig, SubmissionAPIConfig, UIConfig
     return AccountConfig(**{name: document[name] for name in ACCOUNT_FIELDS},
         queue_file=document['queue']['file'], memory_directory=document['memory']['directory'],
         send_interval_seconds=document.get('account', {}).get('send_interval_seconds', 1),
         ui=section_from_document(UIConfig, document['ui'], path='ui'),
-        native_api=section_from_document(NativeAPIConfig, document['native_api'], path='native_api'),
+        helper_transport=section_from_document(HelperTransportConfig, document['helper_transport'], path='helper_transport'),
+        submission_api=section_from_document(SubmissionAPIConfig, document['submission_api'], path='submission_api'),
         metadata=metadata or ConfigSource())
 
 

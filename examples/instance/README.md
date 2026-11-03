@@ -4,6 +4,6 @@
 
 chat 填稳定的 xxx@chatroom ID；enabled=true 才启动。配置可以省略使用默认值的字段。至少为回复和已启用的后台任务填写模型 ID；连接、密钥、代理仍由 provider 的 .env 管理。
 
-运行发送前还须把群 ID 加入账号配置 native_api.allowed_chat_ids。system_prompt_file 相对实例目录解析；记忆和队列仍存于运行目录，不存入此目录。
+运行发送前还须把群 ID 加入账号配置 helper_transport.allowed_chat_ids。system_prompt_file 相对实例目录解析；记忆和队列仍存于运行目录，不存入此目录。
 
 实际 instance/ 目录不会提交 Git。根 config.json 仅放账号配置，参考 examples/account.config.example.jsonc。

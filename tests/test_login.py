@@ -24,9 +24,8 @@ def script(name):
     return module
 
 
-runtime_module = script('login_runtime')
-with patch.dict(sys.modules, login_runtime=runtime_module):
-    viewer = script('wechat-login')
+from wxbridge.host import login as runtime_module
+viewer = script('wechat-login')
 
 
 BOUNDS = dict(x=10, y=20, width=300, height=400)

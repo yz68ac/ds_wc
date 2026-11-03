@@ -80,9 +80,9 @@ def runtime():
     safe_status('runtime_ready')
 
 
-def configured_groups(*, include_disabled=False):
+def configured_instances(*, include_disabled=False):
     sys.path.insert(0, str(CODE/'src' if (CODE/'src').is_dir() else CODE))
-    from wxbridge.app.status.paths import configured_groups as groups
+    from wxbridge.app.status.paths import configured_instances as groups
     return groups(APP, RUN, include_disabled=include_disabled)
 
 
@@ -110,7 +110,7 @@ def checkpoint_one(path, output):
 def checkpoint():
     if container():
         return dict(saved=False, reason='container_ephemeral_cursor')
-    groups = configured_groups(include_disabled=True)
+    groups = configured_instances(include_disabled=True)
     results = {}
     for identifier, cfg, reuse in groups:
         output = PERSIST/'cursor.json' if reuse else PERSIST/'instances'/identifier/'cursor.json'

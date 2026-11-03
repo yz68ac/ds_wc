@@ -1,9 +1,9 @@
 """Bot adapter for the model-independent local WeChat server."""
 import time
-from wxbridge.native.protocol import NativeError, REQUEST_ID, settings, validate_send
+from wxbridge.submission_api.protocol import NativeError, REQUEST_ID, settings, validate_send
 
 
-class BotNativeService:
+class ConversationSubmissionService:
     def __init__(self,bot,options=None):
         self.bot=bot
         self.cfg=settings(bot.cfg) if options is None else options
@@ -42,7 +42,7 @@ class BotNativeService:
             max_pending=self.cfg.max_pending, max_requests=self.cfg.max_requests)
 
 
-class AccountNativeService:
+class AccountSubmissionService:
     """One socket and account-wide request IDs, routed to each owning journal."""
     def __init__(self, coordinator, options):
         self.sessions, self.cfg = coordinator.sessions, options
@@ -79,4 +79,4 @@ class AccountNativeService:
         count = sum(s.journal.external_request_count() for s in self.account.histories(requests_only=True))
         if count >= self.cfg.max_requests:
             raise NativeError('request_history_full')
-        return BotNativeService(target, self.cfg).handle(value)
+        return ConversationSubmissionService(target, self.cfg).handle(value)

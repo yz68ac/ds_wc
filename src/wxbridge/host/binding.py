@@ -74,7 +74,8 @@ def bind_account(paths, db_dir='auto', *, chat=None, identifier='default', curre
     account = service_account()
     database = checked_database(discover_database(paths, account) if db_dir == 'auto' else db_dir, account)
     config_path, helper_path = paths.app/'config.json', (Path('/etc/wxbridge/helper-config.json') if container() else paths.helper/'helper-config.json')
-    config, helper = private_json(config_path), private_json(helper_path)
+    from wxbridge.config.compatibility import normalize_transport_config
+    config, helper = normalize_transport_config(private_json(config_path)), private_json(helper_path)
     if helper.get('uid') != account.pw_uid:
         raise ValueError('发送 helper 与服务用户绑定不一致。')
     original = {p:p.read_bytes() for p in (config_path, helper_path, paths.boot_settings)}
@@ -88,7 +89,7 @@ def bind_account(paths, db_dir='auto', *, chat=None, identifier='default', curre
         for file in (paths.app/'instance').glob('*/config.json'):
             if file.parent != instance_path and private_json(file).get('chat') == chat:
                 raise ValueError('该会话已绑定其他实例。')
-        for values in (config['native_api']['allowed_chat_ids'], helper['allowed_chat_ids']):
+        for values in (config['helper_transport']['allowed_chat_ids'], helper['allowed_chat_ids']):
             if chat not in values:
                 values.append(chat)
             if len(values) > 16:

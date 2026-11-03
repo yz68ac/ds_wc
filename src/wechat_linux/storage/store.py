@@ -577,7 +577,7 @@ class WeChatStore:
         time_window: tuple[int, int] | None = None,
         server_id: str | None = None,
         *, before: tuple[int, int] | None = None, max_local_id: int | None = None,
-        page: bool = False,
+        page: bool = False, local_id: int | None = None,
     ) -> list[dict[str, Any]] | HistoryPage:
         rel, table = self.message_table(chat_id)
         contacts = self.contacts()
@@ -593,6 +593,9 @@ class WeChatStore:
                 senders = {r['rowid']: r['user_name'] for r in conn.execute("SELECT rowid,user_name FROM Name2Id")}
             where = []
             params: list[Any] = []
+            if local_id is not None:
+                where.append('local_id = ?')
+                params.append(local_id)
             if server_id is not None:
                 if "server_id" not in available:
                     return []
@@ -654,19 +657,31 @@ class WeChatStore:
         try:
             if reference.get("chat_id") and reference["chat_id"] != chat_id:
                 return {**binding, "error": "image_reference_wrong_chat"}
-            if re.fullmatch(r"[1-9][0-9]{0,19}", server_id):
-                originals = self._query_messages(chat_id, 2, server_id=server_id)
+            identifier = reference.get('local_id')
+            direct = type(identifier) is int and identifier > 0
+            if direct or re.fullmatch(r"[1-9][0-9]{0,19}", server_id):
+                originals = self._query_messages(chat_id, 2, **(
+                    dict(local_id=identifier) if direct else dict(server_id=server_id)))
+                if direct and not originals:
+                    return {**binding, 'error': 'image_reference_mismatch'}
                 if originals:
                     if len(originals) != 1:
                         return {**binding, "error": "image_reference_mismatch"}
                     original = originals[0]
                     if (original["type"] != 3 or not original.get("image_md5")
                             or (digest and digest != original["image_md5"])
+                            or (direct and (original.get('local_id') != identifier
+                                or original.get('time') != reference.get('time')))
                             or (reference.get("sender") and original.get("sender") != reference["sender"])):
                         return {**binding, "error": "image_reference_mismatch"}
                     digest, proven = original["image_md5"], True
+                    if type(original.get('local_id')) is int:
+                        binding['source_message'] = {key: original.get(key) for key in
+                            ('local_id', 'time', 'sender', 'server_id', 'image_md5')}
                     cache_key = original.get("image_cache_key") or ""
-                    if reference.get('sender') and original.get('sender') == reference['sender']:
+                    server_id = str(original.get('server_id') or server_id)
+                    if (reference.get('sender') and original.get('sender') == reference['sender']
+                            and re.fullmatch(r'[1-9][0-9]{0,19}', server_id)):
                         binding['download'] = dict(verified=True, server_id=server_id, chat_id=chat_id,
                                                    sender=original['sender'], image_md5=digest)
             if not re.fullmatch(r"[0-9a-f]{32}", digest):

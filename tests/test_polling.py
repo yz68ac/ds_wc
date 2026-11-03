@@ -19,7 +19,7 @@ class PollingTests(unittest.TestCase):
     def setUp(self):
         pipeline.PipelineFixture.setUp(self)
         self.clock = 100.
-        clock = patch('wxbridge.app.sessions.group.time.monotonic', side_effect=lambda: self.clock)
+        clock = patch('wxbridge.app.sessions.conversation.time.monotonic', side_effect=lambda: self.clock)
         clock.start()
         self.addCleanup(clock.stop)
 

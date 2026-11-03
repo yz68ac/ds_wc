@@ -4,6 +4,7 @@ import time
 
 from provider import ModelError
 from wxbridge.config import InstanceConfig
+from wxbridge.contracts.image_jobs import ImageProposal, QuotedImageInput
 
 
 class ToolError(RuntimeError):
@@ -13,14 +14,14 @@ class ToolError(RuntimeError):
 @dataclass(frozen=True)
 class ToolResult:
     output: dict = field(repr=False)
-    image_request: dict | None = field(default=None, repr=False)
+    image_request: ImageProposal | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True)
 class ToolReply:
     text: str = field(repr=False)
     search: dict
-    image_requests: tuple = field(default=(), repr=False)
+    image_proposals: tuple[ImageProposal, ...] = field(default=(), repr=False)
 
 
 @dataclass
@@ -35,7 +36,8 @@ class ToolContext:
     sources: list = field(default_factory=list, repr=False)
     errors: list = field(default_factory=list)
     seen_ids: set = field(default_factory=set, repr=False)
-    image_requests: list = field(default_factory=list, repr=False)
+    image_proposals: list[ImageProposal] = field(default_factory=list, repr=False)
+    edit_images: dict[str, QuotedImageInput] = field(default_factory=dict, repr=False)
     calls: int = 0
     actions: int = 0
     attempted: bool = False

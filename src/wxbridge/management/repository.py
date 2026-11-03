@@ -14,7 +14,7 @@ import uuid
 
 from wxbridge.config import (load_config, load_account, resolve_instance, json_value, configuration_hash)
 from wxbridge.config_merge import deep_merge
-from wxbridge.instances import CHAT_ID, GROUP_FIELDS, INSTANCE_ID, validate_account_fields
+from wxbridge.instances import CHAT_ID, INSTANCE_FIELDS, INSTANCE_ID, validate_account_fields
 from .locking import FileLock
 
 
@@ -125,13 +125,13 @@ class ConfigRepository:
             return result
 
     def _validate(self, identifier, data):
-        if not isinstance(data, dict) or set(data)-GROUP_FIELDS-{'chat', 'enabled'}:
+        if not isinstance(data, dict) or set(data)-INSTANCE_FIELDS-{'chat', 'enabled'}:
             raise ManagementError('invalid_instance_fields', '实例配置含有不支持的字段。')
         no_secrets(data)
         chat = data.get('chat', '')
         if type(data.get('enabled', True)) is not bool or not isinstance(chat, str) or not CHAT_ID.fullmatch(chat):
             raise ManagementError('invalid_chat', '请填写真实 wxid 或以 @chatroom 结尾的群 ID，并使用布尔启用开关。')
-        for section in GROUP_FIELDS-{'system_prompt_file'}:
+        for section in INSTANCE_FIELDS-{'system_prompt_file'}:
             if section in data and not isinstance(data[section], dict):
                 raise ManagementError('invalid_section', '实例各配置段必须是 JSON 对象。')
         for section, forbidden in [('target', {'chat'}), ('queue', {'file'}), ('memory', {'directory'})]:
@@ -170,7 +170,7 @@ class ConfigRepository:
             # Editing a disabled or incomplete configuration does not require an enabled model.
             from wxbridge.config.loader import _validated
             from wxbridge.config.codec import account_document, instance_from_document
-            combined = deep_merge(account_document(self.account()), {k:v for k,v in data.items() if k in GROUP_FIELDS})
+            combined = deep_merge(account_document(self.account()), {k:v for k,v in data.items() if k in INSTANCE_FIELDS})
             combined.setdefault('target', {})['chat'] = data.get('chat', '')
             document = _validated(combined, self._directory(identifier)/'config.json', environment=False, validate_role_models=False)
             effective = instance_from_document(document)

@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from tests.support.model_support import ClientFixture, ModelError, ModelResult
-import tests.support.native_api as native_tests
+import tests.support.submission_api as native_tests
 
 
 class ReviewRecoveryTests(unittest.TestCase):

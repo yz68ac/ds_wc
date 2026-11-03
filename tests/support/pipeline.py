@@ -6,7 +6,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
-from wxbridge.app.sessions.group import GroupSession
+from wxbridge.app.sessions.conversation import ConversationSession
 from tests.support.synthetic import NOW, msg, history_page
 from tests.support.paths import ROOT
 
@@ -47,19 +47,19 @@ class PipelineFixture(unittest.TestCase):
         self.store.messages_after.side_effect = lambda chat, cursor, limit: [m for m in self.rows if m["local_id"] > cursor][:limit]
         self.store.messages_in_window.side_effect = lambda chat, start, end: list(self.rows)
         self.store.messages_before.side_effect = lambda chat, **kw: history_page(self.rows, **kw)
-        for target, value in [("wxbridge.app.sessions.group.WeChatStore", self.store),
+        for target, value in [("wxbridge.app.sessions.conversation.WeChatStore", self.store),
                               ("wxbridge.storage.journal.checked_path", lambda value, **kw: Path(value))]:
             p = patch(target, return_value=value) if target.endswith("WeChatStore") else patch(target, side_effect=value)
             p.start()
             self.addCleanup(p.stop)
-        p = patch("wxbridge.app.sessions.group.time.time", side_effect=lambda: self.now)
+        p = patch("wxbridge.app.sessions.conversation.time.time", side_effect=lambda: self.now)
         p.start()
         self.addCleanup(p.stop)
         self.make_bot()
         self.addCleanup(lambda: self.bot.close())
 
     def make_bot(self):
-        self.bot = GroupSession(self.cfg)
+        self.bot = ConversationSession(self.cfg)
         def make(kind, payload, **kwargs):
             job = FakeJob(kind, payload, **kwargs)
             if kind == 'participation':

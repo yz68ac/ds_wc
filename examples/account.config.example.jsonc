@@ -1,16 +1,5 @@
 // 保存为项目 config.json，仅填写账号级配置。
 {
-  "native_api": {
-    "enabled": false,
-    "socket": "/run/wxbridge-trial/native-api.sock",
-    "helper_socket": "/run/wxbridge-trial/native-helper.sock",
-    "allowed_chat_ids": [
-      "filehelper"
-    ],
-    "max_text_bytes": 4096,
-    "max_pending": 16,
-    "max_requests": 1024
-  },
   "db_dir": "",
   "keys_file": "/run/wxbridge-trial/keys.json",
   "decrypted_dir": "/run/wxbridge-trial/decrypted",
@@ -61,5 +50,19 @@
   },
   "memory": {
     "directory": "memory"
+  },
+  "helper_transport": {
+    "enabled": false,
+    "allowed_chat_ids": [
+      "filehelper"
+    ],
+    "max_text_bytes": 4096,
+    "socket": "/run/wxbridge-trial/native-helper.sock"
+  },
+  "submission_api": {
+    "enabled": false,
+    "socket": "/run/wxbridge-trial/native-api.sock",
+    "max_pending": 16,
+    "max_requests": 1024
   }
 }

@@ -10,7 +10,7 @@ import time
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'src'))
-from wxbridge.app.sessions.group import GroupSession
+from wxbridge.app.sessions.conversation import ConversationSession
 from wxbridge.config import load_config
 from wxbridge.app.execution.locks import instance_lock
 from wxbridge.wechat.ui import A11y
@@ -25,7 +25,7 @@ def main():
     with ExitStack() as stack:
         for lock in sorted({cfg.paths.queue_file+".lock", str(Path(cfg.account.decrypted_dir)/".listener.lock")}):
             stack.enter_context(instance_lock(lock))
-        bot = GroupSession(cfg, instance_id=cfg.id or None)
+        bot = ConversationSession(cfg, instance_id=cfg.id or None)
         try:
             task = bot.journal.head()
             if not task or not task["intent"]:

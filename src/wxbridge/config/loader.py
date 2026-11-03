@@ -60,20 +60,20 @@ def load_account(path='config.json') -> AccountConfig:
 
 
 def resolve_instance(account, document, *, path):
-    from wxbridge.instances import INSTANCE_ID, CHAT_ID, GROUP_FIELDS
+    from wxbridge.instances import INSTANCE_ID, CHAT_ID, INSTANCE_FIELDS
     path = Path(path).resolve()
     identifier = path.parent.name
     if not INSTANCE_ID.fullmatch(identifier):
         raise ConfigError('invalid_instance_id')
-    if not isinstance(document, dict) or set(document)-GROUP_FIELDS-{'chat', 'enabled'}:
+    if not isinstance(document, dict) or set(document)-INSTANCE_FIELDS-{'chat', 'enabled'}:
         raise ConfigError('invalid_instance_fields')
     enabled, chat = document.get('enabled', True), document.get('chat', '')
     if type(enabled) is not bool or not isinstance(chat, str):
         raise ConfigError('invalid_instance_identity')
     if (enabled and not CHAT_ID.fullmatch(chat)) or chat and not CHAT_ID.fullmatch(chat):
         raise ConfigError('instance_chat_requires_unique_stable_id')
-    override = {key: value for key, value in document.items() if key in GROUP_FIELDS}
-    for section in GROUP_FIELDS-{'system_prompt_file'}:
+    override = {key: value for key, value in document.items() if key in INSTANCE_FIELDS}
+    for section in INSTANCE_FIELDS-{'system_prompt_file'}:
         if section in override and not isinstance(override[section], dict):
             raise ConfigError('invalid_instance_section', section)
     for section, forbidden in (('target', {'chat'}), ('queue', {'file'}), ('memory', {'directory'})):

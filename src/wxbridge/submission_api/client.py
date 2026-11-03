@@ -4,7 +4,7 @@ from __future__ import annotations
 from wechat_linux.native.protocol import NativeError, request, validate_send
 
 
-class NativeClient:
+class SubmissionClient:
     def __init__(self, socket_path, *, timeout=5):
         self.socket_path, self.timeout = socket_path, timeout
 

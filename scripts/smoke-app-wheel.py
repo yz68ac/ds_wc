@@ -19,6 +19,10 @@ assert Path(wxbridge.__file__).resolve().is_relative_to(Path(sys.prefix).resolve
 assert SOURCE_ROOT is None
 assert not any(n.split('.')[0] in ('provider','wechat_linux','frida','gi','fastapi') for n in sys.modules)
 renamed = {
+ 'wxbridge.app.sessions.group':'wxbridge.app.sessions.conversation',
+ 'wxbridge.native.client':'wxbridge.submission_api.client',
+ 'wxbridge.native.server':'wxbridge.submission_api.server',
+ 'wxbridge.native.protocol':'wxbridge.submission_api.protocol',
  'wxbridge.ai.images':'wxbridge.ai.reply.images',
  'wxbridge.ai.image_generation':'wxbridge.ai.tools.image',
  'wxbridge.ai.prompts':'wxbridge.ai.reply.prompt',
@@ -41,7 +45,7 @@ renamed = {
  'wxbridge.app.memory':'wxbridge.app.tasks.memory',
  'wxbridge.app.participation':'wxbridge.app.tasks.participation',
  'wxbridge.app.group_profile':'wxbridge.app.tasks.group_profile',
- 'wxbridge.app.bot':'wxbridge.app.sessions.group',
+ 'wxbridge.app.bot':'wxbridge.app.sessions.conversation',
  'wxbridge.app.account':'wxbridge.app.sessions.account',
  'wxbridge.app.coordinator':'wxbridge.app.sessions.coordinator',
  'wxbridge.app.session_phases':'wxbridge.app.sessions.phases',
@@ -57,7 +61,7 @@ renamed = {
  'wxbridge.app.workers':'wxbridge.app.execution.workers',
  'wxbridge.app.locks':'wxbridge.app.execution.locks',
  'wxbridge.app.confirmation':'wxbridge.app.delivery.confirmation',
- 'wxbridge.app.native_gateway':'wxbridge.app.delivery.native_gateway',
+ 'wxbridge.app.native_gateway':'wxbridge.app.delivery.submission_gateway',
  'wxbridge.app.metrics':'wxbridge.app.status.metrics',
  'wxbridge.app.build_info':'wxbridge.app.status.build_info',
  'wxbridge.app.logging_context':'wxbridge.app.status.logging_context',
@@ -83,6 +87,9 @@ assert find_spec('wxbridge_web') is None
 assert find_spec('wxbridge_service') is None
 assert find_spec('wxbridge.cli') is None
 assert find_spec('wxbridge.host.supervisor') is not None
+assert find_spec('wxbridge.host.login') is not None
+assert find_spec('wxbridge.storage.image_artifacts') is not None
+assert find_spec('wxbridge.contracts.image_jobs') is not None
 assert find_spec('wxbridge.management.repository') is not None
 assert find_spec('wxbridge.app.delivery.controller') is not None
 assert not (Path(wxbridge.__file__).parent/'app/delivery.py').exists()
@@ -131,7 +138,7 @@ def main():
         subprocess.run([str(python),'-I','-B','-c',CHECK],cwd=root,env=environment,check=True)
         commands = ([str(python),'-I','-m','wxbridge','--help'],
                     [str(python),'-I','-m','wxbridge_cli','debug','--help'],
-                    [str(python),'-I','-m','wxbridge_cli','debug','native-api','--help'],
+                    [str(python),'-I','-m','wxbridge_cli','debug','submission-api','--help'],
                     [str(python),'-I','-m','wxbridge_cli','--root',str(root),'config'],
                     [str(binary/('wxbridge.exe' if sys.platform=='win32' else 'wxbridge')),'--help'])
         for command in commands:

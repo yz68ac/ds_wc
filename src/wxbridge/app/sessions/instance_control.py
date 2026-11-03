@@ -53,7 +53,7 @@ class InstanceControl:
 
     def _start(self,identifier):
         from wxbridge.config import load_config
-        from wxbridge.app.sessions.group import GroupSession
+        from wxbridge.app.sessions.conversation import ConversationSession
         if self.path.read_bytes()!=self.initial_root:
             raise ValueError('account_config_changed_restart_required')
         current=load_config(self.path)
@@ -68,7 +68,7 @@ class InstanceControl:
         resolved,_=self.owner.account.store.resolve_chat(entry.chat)
         if resolved!=entry.chat:
             raise ValueError('instance_chat_identity_mismatch')
-        if cfg.account.ui.backend=='native_service' and entry.chat not in cfg.account.native_api.allowed_chat_ids:
+        if cfg.account.ui.backend=='native_service' and entry.chat not in cfg.account.helper_transport.allowed_chat_ids:
             raise ValueError('instance_target_not_allowed')
         lock=cfg.paths.queue_file+'.lock'
         if lock not in self.locked:
@@ -79,7 +79,7 @@ class InstanceControl:
             item.journal.close()
             self.owner.account.inactive.remove(item)
         try:
-            session=GroupSession(cfg,echo=self.owner.echo,store=self.owner.account.store,
+            session=ConversationSession(cfg,echo=self.owner.echo,store=self.owner.account.store,
                                  account=self.owner.account,instance_id=identifier,start_gateway=False)
         except BaseException:
             self._inactive(identifier,cfg.paths.queue_file)

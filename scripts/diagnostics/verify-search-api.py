@@ -5,7 +5,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT/'src'))
 from wxbridge.config import load_config
-from wxbridge.app.execution.model_runtime import GroupModels
+from wxbridge.app.execution.model_runtime import ConversationModels
 
 def main():
     parser=argparse.ArgumentParser()
@@ -18,7 +18,7 @@ def main():
     cfg=select_instance(load_config(args.config), args.instance)
     from dataclasses import replace
     cfg=replace(cfg, search=replace(cfg.search, enabled=True))
-    runtime=GroupModels(cfg)
+    runtime=ConversationModels(cfg)
     try:
         job=runtime.submit('generate',(cfg,[dict(role='system',content='请查询必要的公开资料。'),dict(role='user',content='查询 DeepSeek 官方 API 文档地址。')],None),timeout=cfg.search.total_timeout_seconds)
         import time

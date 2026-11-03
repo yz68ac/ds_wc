@@ -4,7 +4,7 @@ import json
 
 from provider import ModelError
 from .base import ToolError, ToolResult
-from .image import IMAGE_TOOL, generate_image, apply_image_instructions
+from .image import IMAGE_TOOL, EDIT_IMAGE_TOOL, generate_image, edit_image, apply_image_instructions
 from .web import WEB_TOOLS, web_fetch, web_search, apply_search_instructions
 
 
@@ -12,15 +12,17 @@ TOOLS = {
     'web_search': (WEB_TOOLS[0], web_search),
     'web_fetch': (WEB_TOOLS[1], web_fetch),
     'generate_image': (IMAGE_TOOL, generate_image),
+    'edit_image': (EDIT_IMAGE_TOOL, edit_image),
 }
 
 
-def get_enabled_tools(settings, *, search_backend):
+def get_enabled_tools(settings, *, search_backend, editable=False):
     names = []
     if settings.search.enabled and search_backend == 'external':
         names.extend(('web_search', 'web_fetch'))
     if settings.image_generation.enabled:
         names.append('generate_image')
+        if editable:names.append('edit_image')
     return [deepcopy(TOOLS[name][0]) for name in names]
 
 
@@ -66,7 +68,7 @@ def dispatch_tool_call(call, context):
         result = TOOLS[name][1](arguments, context)
         context.check_active()
         if result.image_request is not None:
-            context.image_requests.append(result.image_request)
+            context.image_proposals.append(result.image_request)
         return result
     except ToolError as exc:
         context.check_active()

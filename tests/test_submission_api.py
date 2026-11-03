@@ -21,11 +21,11 @@ from unittest.mock import Mock, patch
 from wxbridge.app.delivery.controller import DeliveryController
 from wxbridge.config import default_document
 from wechat_linux.native import helper
-from wxbridge.native.api import NativeAPI
-from wxbridge.native.client import NativeClient
-from wxbridge.native.protocol import NativeError, decode, encode, receive, settings, validate_send
+from wxbridge.submission_api.api import SubmissionAPI
+from wxbridge.submission_api.client import SubmissionClient
+from wxbridge.submission_api.protocol import NativeError, decode, encode, receive, settings, validate_send
 from wxbridge.storage.journal import Journal
-from tests.support.native_api import payload, JournalFixture
+from tests.support.submission_api import payload, JournalFixture
 
 
 class ProtocolTests(unittest.TestCase):
@@ -43,7 +43,7 @@ class ProtocolTests(unittest.TestCase):
                 with self.assertRaisesRegex(NativeError,'text_too_large'):validate_send(payload(text=text))
 
     def test_byte_splits_preserve_wechat_tokens_and_the_complete_body(self):
-        from wxbridge.native.protocol import text_parts
+        from wxbridge.submission_api.protocol import text_parts
         body='x'*4090+'[偷笑]😀\n中文'
         parts=text_parts(body)
         self.assertEqual(''.join(parts),body)
@@ -79,9 +79,9 @@ class ProtocolTests(unittest.TestCase):
         for key,value in [('enabled',1),('max_text_bytes',4097),('max_pending',0),
                           ('allowed_chat_ids',['nickname']),('socket','/tmp/'+'x'*110)]:
             with self.subTest(key=key),self.assertRaises((NativeError,ValueError)):
-                cfg=default_config();cfg=replace_config(cfg,'.'.join(('account','native_api',key)),value)
+                cfg=default_config();cfg=replace_config(cfg,'.'.join(('account', 'helper_transport' if key in ('allowed_chat_ids','max_text_bytes') else 'submission_api',key)),value)
                 settings(cfg)
-        cfg=default_config();cfg = replace_config(cfg, 'account.native_api.helper_socket', cfg.account.native_api.socket)
+        cfg=default_config();cfg = replace_config(cfg, 'account.submission_api.enabled', True);cfg = replace_config(cfg, 'account.helper_transport.socket', cfg.account.submission_api.socket)
         with self.assertRaises(NativeError):settings(cfg)
 
     def test_privileged_helper_revalidates_input_and_allowlist(self):
@@ -137,9 +137,9 @@ class JournalTests(JournalFixture):
         self.assertEqual(self.journal.external_status(payload()['request_id'])['state'],'confirming')
 
     def test_external_ready_task_never_calls_model_generation(self):
-        from wxbridge.app.sessions.group import GroupSession
+        from wxbridge.app.sessions.conversation import ConversationSession
         from wxbridge.app.tasks.reply import ReplyController
-        self.enqueue();bot=GroupSession.__new__(GroupSession)
+        self.enqueue();bot=ConversationSession.__new__(ConversationSession)
         bot.cfg=self.cfg;bot.journal=self.journal;bot.replies=ReplyController(bot);bot.job_factory=Mock()
         bot.replies.collect();bot.replies.start();bot.job_factory.assert_not_called()
 
@@ -205,8 +205,8 @@ class JournalTests(JournalFixture):
         self.assertTrue(self.enqueue()['duplicate'])
 
     def test_main_api_dedupes_before_reading_chat_database(self):
-        self.enqueue();api=NativeAPI.__new__(NativeAPI)
-        api.bot=Mock(journal=self.journal,store=Mock());api.cfg=self.cfg.account.native_api
+        self.enqueue();api=SubmissionAPI.__new__(SubmissionAPI)
+        api.bot=Mock(journal=self.journal,store=Mock());api.cfg=settings(self.cfg)
         self.assertTrue(api.handle(payload())['duplicate']);api.bot.store.last_local_id.assert_not_called()
         with self.assertRaisesRegex(NativeError,'chat_not_allowed'):api.handle(payload(chat='other@chatroom'))
 
@@ -275,7 +275,7 @@ class JournalTests(JournalFixture):
         self.assertEqual(factory.call_args.args[1][2],chunks[0])
 
     def test_unrepresentable_fragment_is_blocked_before_any_submission(self):
-        identifier=self.normal_task(['😀']);self.cfg = replace_config(self.cfg, 'account.native_api.max_text_bytes', 1, owner=self)
+        identifier=self.normal_task(['😀']);self.cfg = replace_config(self.cfg, 'account.helper_transport.max_text_bytes', 1, owner=self)
         factory=Mock();self.delivery.send(factory);factory.assert_not_called()
         task=self.journal.task(identifier)
         self.assertIsNone(task['intent']);self.assertTrue(task['blocked_reason'].startswith('native_text_limit:'))
@@ -286,9 +286,9 @@ class SocketTests(unittest.TestCase):
     def test_real_partial_frames_roundtrip_and_socket_permissions(self):
         parent=Path(__file__).resolve().parents[1]/'.test-tmp';parent.mkdir(exist_ok=True)
         with tempfile.TemporaryDirectory(dir=parent) as directory:
-            cfg=default_config();cfg = update_config(cfg, 'account.native_api', enabled=True, socket=str(Path(directory)/'api.sock'))
+            cfg=default_config();cfg = update_config(cfg, 'account.submission_api', enabled=True, socket=str(Path(directory)/'api.sock'))
             bot=Mock(cfg=cfg);bot.journal.external_duplicate.return_value={'state':'queued','duplicate':True}
-            with patch('wxbridge.native.api.require_memory_directory'):api=NativeAPI(bot)
+            with patch('wxbridge.submission_api.api.require_memory_directory'):api=SubmissionAPI(bot)
             try:
                 self.assertEqual(api.path.stat().st_mode&0o777,0o600)
                 client=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);client.settimeout(1)
@@ -298,12 +298,12 @@ class SocketTests(unittest.TestCase):
                     client.sendall(frame[2:]);api.tick();api.tick()
                     self.assertEqual(receive(client)['result']['state'],'queued')
             finally:api.close()
-            self.assertFalse(Path(cfg.account.native_api.socket).exists())
+            self.assertFalse(Path(cfg.account.submission_api.socket).exists())
 
 
 class SenderTests(unittest.TestCase):
     def setUp(self):
-        self.cfg=default_config();self.cfg = replace_config(self.cfg, 'account.native_api.enabled', True, owner=self);self.cfg = replace_config(self.cfg, 'account.ui.dry_run', False, owner=self)
+        self.cfg=default_config();self.cfg = replace_config(self.cfg, 'account.helper_transport.enabled', True, owner=self);self.cfg = replace_config(self.cfg, 'account.ui.dry_run', False, owner=self)
 
     def test_service_submit_never_constructs_desktop_sender_even_with_a_draft(self):
         from wxbridge.native.sender import submit
@@ -324,7 +324,7 @@ class SenderTests(unittest.TestCase):
     def test_disabled_dry_run_or_wrong_target_cannot_reach_helper(self):
         from wxbridge.native.sender import submit
         for change,target in [({'enabled':False},'filehelper'),({},'unlisted@chatroom')]:
-            cfg=copy.deepcopy(self.cfg);cfg = update_config(cfg, 'account.native_api', values=change)
+            cfg=copy.deepcopy(self.cfg);cfg = update_config(cfg, 'account.helper_transport', values=change)
             with patch('wechat_linux.native.sender.request') as ipc:
                 with self.assertRaises(Exception):submit(cfg, target, '合成', 'test')
                 ipc.assert_not_called()

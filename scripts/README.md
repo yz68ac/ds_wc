@@ -11,7 +11,7 @@
 | run-live.py | 进入 wxbridge CLI 并显式启用发送 |
 | boot-session.py | 启动并监督微信会话，同时持有启动登录子进程 |
 | wechat-login.py | 后台推进一次启动登录；前台通过 SSH TTY 查看二维码，--status 只读检查 |
-| login_runtime.py | GUI 环境、登录操作锁、按进程去重和安全状态记录 |
+| [wxbridge.host.login](../src/wxbridge/host/login.py) | 登录运行策略位于应用包；wechat-login.py 仅作为命令入口 |
 | boot-recovery.py | 登录、密钥、身份与游标核对及监听恢复 |
 | start-headless.sh / stop-headless.sh | 启停专用 Xvfb 会话 |
 | login-vnc.sh | 临时查看登录界面，配合 SSH 隧道 |

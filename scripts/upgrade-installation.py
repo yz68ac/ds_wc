@@ -343,7 +343,7 @@ def prepare(stage, wheels, backup, baseline, max_chars):
     # complete dependency closure without treating unrelated apt metadata as pip packages.
     run(python, '-I', '-c', 'from wxbridge_cli.install import dependency_health;'
         'failures=dependency_health();raise SystemExit(bool(failures))')
-    run(python, '-I', '-c', 'from wxbridge.app.sessions.group import GroupSession;'
+    run(python, '-I', '-c', 'from wxbridge.app.sessions.conversation import ConversationSession;'
         'from wechat_linux.desktop.login import LoginController;from provider import create_client')
     check_installed_release(python, stage)
     sys.path.insert(0, str(stage/'src'))

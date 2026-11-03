@@ -52,14 +52,19 @@ class ReplyController:
                 self._failed(task_id, version, result)
             else:
                 try:
-                    proposal = self.bot.image_generation.proposal(result.get('image_requests'))
+                    proposal = self.bot.image_generation.proposal(result.get('image_proposals'), triggers=current['triggers'])
                 except Exception as exc:
                     self._failed(task_id, version, dict(error=getattr(exc, 'code', 'invalid_image_tool'), retryable=False))
                     continue
                 if proposal is not None:
-                    chunks.extend(reply_chunks('在画了，稍后发给你', int(self.bot.cfg.target.max_reply_chars)))
-                accepted = self.bot.journal.generated(task_id, version, chunks, vision=result.get('vision'),
-                    search=result.get('search'), image_request=proposal, now=time.time())
+                    notice = '在改了，稍后发给你' if proposal.source_image else '在画了，稍后发给你'
+                    chunks.extend(reply_chunks(notice, int(self.bot.cfg.target.max_reply_chars)))
+                accepted = False
+                try:
+                    accepted = self.bot.journal.generated(task_id, version, chunks, vision=result.get('vision'),
+                        search=result.get('search'), image_request=proposal, now=time.time())
+                finally:
+                    if not accepted:self.bot.image_generation.discard_proposal(proposal)
                 if not accepted:
                     continue
                 self.bot.log.info("生成结束 task=%s version=%s chunks=%s images=%s error=%s", task_id, version,
@@ -86,7 +91,9 @@ class ReplyController:
             task = self.bot.journal.task(task_id)
             try:
                 trigger = source_anchor(task['triggers'])
-                context = read_context(self.bot.cfg,self.bot.store,self.bot.chat_id,task['triggers'],account=self.bot.store.self_wxid)
+                context = read_context(self.bot.cfg,self.bot.store,self.bot.chat_id,task['triggers'],
+                    account=self.bot.store.self_wxid, images=(self.bot.cfg.vision.enabled
+                    and self.bot.cfg.vision.context_images_enabled))
                 memory, memory_view = None, None
                 if self.bot.memory.store:
                     try:
@@ -114,15 +121,22 @@ class ReplyController:
                     timeout = float(self.bot.cfg.search.total_timeout_seconds) + 15
                 images = []
                 if self.bot.cfg.vision.enabled and not self.bot.echo:
-                    for index, question in enumerate(task["triggers"]):
-                        reference, depth = question.get("reference"), 0
-                        while isinstance(reference, dict):
-                            if reference.get("kind") == "image":
-                                binding = self.bot.store.image_binding(self.bot.chat_id, reference)
-                                if binding.get('download'):
-                                    binding['download']['chat_title'] = self.bot.chat_title
-                                images.append(dict(trigger_index=index, depth=depth, **binding))
-                            reference, depth = reference.get("reference"), depth+1
+                    from wxbridge.ai.context.images import image_candidates
+                    candidates = image_candidates(self.bot.cfg, context, task['triggers'], prompt, chat_id=self.bot.chat_id)
+                    for candidate in candidates:
+                        source = candidate['source']
+                        generated = self.bot.journal.context_image(source, time.time())
+                        if generated:
+                            binding = dict(generated_image=generated, account=self.bot.store.self_wxid)
+                        else:
+                            binding = self.bot.store.image_binding(self.bot.chat_id, source)
+                            original = binding.get('source_message')
+                            generated = self.bot.journal.context_image(original, time.time()) if original else None
+                            if generated:
+                                binding = dict(generated_image=generated, account=self.bot.store.self_wxid)
+                        if binding.get('download'):
+                            binding['download']['chat_title'] = self.bot.chat_title
+                        images.append(dict(targets=candidate['targets'], **binding))
                 payload = (self.bot.cfg, prompt, echo)
                 if images:
                     if self.bot.cfg.vision.download_enabled:

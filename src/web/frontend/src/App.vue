@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import {
   ChatDotRound,
@@ -14,11 +14,12 @@ import {
   CircleCheck,
   Clock,
 } from "@element-plus/icons-vue";
-import { api, setCsrf } from "./api";
+import { api } from "./api";
+import { useConsoleSession } from "./composables/useConsoleSession";
+import InstanceEditor from "./components/InstanceEditor.vue";
+import PromptEditor from "./components/PromptEditor.vue";
 import AccountSetup from "./components/AccountSetup.vue";
 import AccountSettings from "./components/AccountSettings.vue";
-import ContactPicker from "./components/ContactPicker.vue";
-import SettingsFields from "./components/SettingsFields.vue";
 
 const componentLabel: Record<string, string> = { bot: "机器人", wechat: "微信会话", sender: "发送组件", recovery: "自动恢复", web: "管理台" };
 
@@ -39,55 +40,21 @@ const pages = [
   { id: "prompts", name: "系统提示词", subtitle: "PROMPTS", icon: EditPen },
   { id: "services", name: "服务管理", subtitle: "SERVICES", icon: Setting },
 ];
-const page = ref("overview"),
-  authenticated = ref(false),
-  initialized = ref(false),
-  demo = ref(false);
-const password = ref(""),
-  loginBusy = ref(false),
-  loginError = ref(""),
-  error = ref("");
-const snapshot = ref<any>(null),
-  connected = ref(false),
-  loading = ref(false);
-const promptId = ref(""),
-  promptData = ref<any>(null),
-  promptText = ref(""),
-  promptBusy = ref(false),
-  promptLoading = ref(false);
-const compareOpen = ref(false),
-  filter = ref(""),
+const page = ref("overview");
+const {authenticated, initialized, demo, password, loginBusy, loginError, snapshot,
+       connected, loading, error, refresh, login, logout: closeSession, initialize, expire} = useConsoleSession({
+  afterEnter: () => loadModels(),
+  onPoll: () => { if (catalog.value.refreshing) void loadModels(); },
+  onError: (failure) => ElMessage.error(failure.message),
+});
+const filter = ref(""),
   statusFilter = ref("all");
-const editorOpen = ref(false),
-  editorBusy = ref(false),
-  creating = ref(false),
-  editorId = ref(""),
-  editorRevision = ref("");
-const editor = ref<any>({}),
-  editorTab = ref("basic"),
-  editorJson = ref("");
 const catalog = ref<any>({ providers: [], refreshing: false });
 const providerConnections = computed(() =>
   catalog.value.providers.map((provider: any) => provider.id),
 );
 const catalogError = ref("");
-const settingsSchema=ref<any>(null), editorEffective=ref<any>({});
 const accountSettings=ref<InstanceType<typeof AccountSettings> | null>(null);
-let previousEditorTab="basic";
-const selectedProvider = computed(() =>
-  catalog.value.providers?.find(
-    (provider: any) => provider.id === editor.value.model_clients?.reply,
-  ),
-);
-const imageConnections = computed(() => catalog.value.providers.filter((p: any) => p.image_protocol));
-const imageProvider = computed(() => catalog.value.providers.find((p: any) => p.id === editor.value.model_clients?.image));
-const imageIsGemini = computed(() => imageProvider.value?.image_protocol === 'gemini');
-function changeImageConnection() {
-  const timeout = editor.value.models.image.options.timeout_seconds || 180;
-  editor.value.models.image = {model: '', options: imageIsGemini.value
-    ? {aspect_ratio: '1:1', timeout_seconds: timeout}
-    : {size: '1024x1024', quality: 'low', timeout_seconds: timeout}};
-}
 const instanceBusy = ref("");
 const instanceRequests = ref<Record<string, string>>({});
 const statusId = ref("");
@@ -95,12 +62,6 @@ const statusOpen = ref(false);
 const statusInstance = computed(() =>
   instances.value.find((item) => item.id === statusId.value),
 );
-const backgroundRoles = [
-  { id: "participation", name: "群聊参与判断" },
-  { id: "memory", name: "记忆整理" },
-  { id: "avatar", name: "头像分类" },
-  { id: "group_profile", name: "群资料分析" },
-];
 const instanceLabels: Record<string, string> = {
   running: "运行中",
   stopping: "正在停止",
@@ -120,8 +81,6 @@ const instanceErrors: Record<string, string> = {
   instance_transition_failed:
     "实例切换失败，请检查账号登录、模型配置和运行事件。",
 };
-let source: EventSource | null = null;
-let timer: ReturnType<typeof setInterval> | null = null;
 const title = computed(() => pages.find((p) => p.id === page.value)!);
 const instances = computed<any[]>(() => snapshot.value?.instances || []);
 const enabledCount = computed(
@@ -129,12 +88,6 @@ const enabledCount = computed(
 );
 const running = computed(
   () => snapshot.value?.services?.["bot"]?.state === "active",
-);
-const promptDirty = computed(
-  () => !!promptData.value && promptText.value !== promptData.value.text,
-);
-const selectedPrompt = computed(() =>
-  instances.value.find((i) => i.id === promptId.value),
 );
 const filtered = computed(() =>
   instances.value.filter(
@@ -195,33 +148,17 @@ const formatTime = (value: number | undefined) =>
     ? new Date(value * 1000).toLocaleString("zh-CN", { hour12: false })
     : "暂无记录";
 
-function fail(e: any) {
-  if (e?.status === 401) {
-    authenticated.value = false;
-    source?.close();
-    connected.value = false;
-  }
-  ElMessage.error(e?.message || "操作失败");
+function fail(failure: any) {
+  if (failure?.status === 401) expire();
+  ElMessage.error(failure?.message || "操作失败");
 }
-async function refresh() {
-  loading.value = true;
-  try {
-    snapshot.value = await api("/overview");
-    for (const item of snapshot.value.instances || []) {
-      if (
-        instanceRequests.value[item.id] === item.request_id ||
-        snapshot.value.services?.["bot"]?.state !== "active"
-      )
-        delete instanceRequests.value[item.id];
-    }
-    error.value = "";
-  } catch (e: any) {
-    error.value = e.message;
-    if (e.status === 401) fail(e);
-  } finally {
-    loading.value = false;
+watch(snapshot, (value) => {
+  if (!value) { instanceRequests.value = {}; return; }
+  for (const item of value.instances || []) {
+    if (instanceRequests.value[item.id] === item.request_id || value.services?.bot?.state !== "active")
+      delete instanceRequests.value[item.id];
   }
-}
+});
 async function loadModels() {
   try {
     catalog.value = await api("/models");
@@ -229,12 +166,6 @@ async function loadModels() {
   } catch (e: any) {
     catalogError.value = e.message;
   }
-}
-function modelOptions(connection: string) {
-  return (
-    catalog.value.providers?.find((item: any) => item.id === connection)
-      ?.models || []
-  );
 }
 async function refreshModels() {
   try {
@@ -281,279 +212,23 @@ function showStatus(id: string) {
   statusId.value = id;
   statusOpen.value = true;
 }
-function subscribe() {
-  source?.close();
-  source = new EventSource("/api/events");
-  source.addEventListener("snapshot", (event: MessageEvent) => {
-    snapshot.value = JSON.parse(event.data);
-    for (const item of snapshot.value.instances || []) {
-      if (
-        instanceRequests.value[item.id] === item.request_id ||
-        snapshot.value.services?.["bot"]?.state !== "active"
-      )
-        delete instanceRequests.value[item.id];
-    }
-    connected.value = true;
-    error.value = "";
-  });
-  source.addEventListener("expired", () => {
-    authenticated.value = false;
-    source?.close();
-    connected.value = false;
-  });
-  source.onerror = () => {
-    connected.value = false;
-  };
-}
-async function enter() {
-  await refresh();
-  await loadModels();
-  subscribe();
-}
-async function login() {
-  loginBusy.value = true;
-  loginError.value = "";
-  try {
-    const result = await api("/login", {
-      method: "POST",
-      body: JSON.stringify({ password: password.value }),
-    });
-    authenticated.value = true;
-    demo.value = result.demo;
-    setCsrf(result.csrf);
-    password.value = "";
-    await enter();
-  } catch (e: any) {
-    loginError.value = e.message;
-  } finally {
-    loginBusy.value = false;
-  }
-}
 async function logout() {
-  if (!(await discardPrompt()) || accountSettings.value && !(await accountSettings.value.canLeave())) return;
+  if (promptEditor.value && !(await promptEditor.value.canLeave()) || accountSettings.value && !(await accountSettings.value.canLeave())) return;
   try {
-    await api("/session", { method: "DELETE" });
-    source?.close();
-    authenticated.value = false;
-    connected.value = false;
-    snapshot.value = null;
+    await closeSession();
   } catch (e) {
     fail(e);
   }
 }
-async function discardPrompt() {
-  if (!promptDirty.value) return true;
-  try {
-    await ElMessageBox.confirm(
-      "提示词尚未保存，离开会丢弃本次编辑。",
-      "保留编辑还是离开？",
-      {
-        confirmButtonText: "丢弃并离开",
-        cancelButtonText: "继续编辑",
-        type: "warning",
-      },
-    );
-    return true;
-  } catch {
-    return false;
-  }
-}
+const instanceEditor = ref<InstanceType<typeof InstanceEditor> | null>(null);
+const promptEditor = ref<InstanceType<typeof PromptEditor> | null>(null);
+function editInstance(id?: string) { void instanceEditor.value?.open(id); }
+async function instanceSaved(id: string) { await refresh(); await promptEditor.value?.reload(id); }
 async function navigate(id: string) {
-  if (id !== page.value && !(await discardPrompt())) return;
-  if (id !== page.value && accountSettings.value && !(await accountSettings.value.canLeave())) return;
-  if (id !== page.value && promptDirty.value)
-    promptText.value = promptData.value.text;
+  if (id === page.value) return;
+  if (promptEditor.value && !(await promptEditor.value.canLeave())) return;
+  if (accountSettings.value && !(await accountSettings.value.canLeave())) return;
   page.value = id;
-  if (id === "prompts" && instances.value.length && !promptId.value)
-    await selectPrompt(instances.value[0].id);
-}
-async function selectPrompt(id: string) {
-  if (promptLoading.value) return;
-  if (id !== promptId.value && !(await discardPrompt())) return;
-  promptLoading.value = true;
-  try {
-    const data = await api(`/instances/${encodeURIComponent(id)}/prompt`);
-    promptId.value = id;
-    promptData.value = data;
-    promptText.value = data.text;
-  } catch (e) {
-    fail(e);
-  } finally {
-    promptLoading.value = false;
-  }
-}
-async function savePrompt() {
-  if (!promptData.value || promptBusy.value) return;
-  promptBusy.value = true;
-  try {
-    const data = await api(
-      `/instances/${encodeURIComponent(promptId.value)}/prompt`,
-      {
-        method: "PUT",
-        body: JSON.stringify({
-          text: promptText.value,
-          revision: promptData.value.revision,
-          config_revision: promptData.value.config_revision,
-        }),
-      },
-    );
-    promptData.value = data;
-    promptText.value = data.text;
-    ElMessage.success(
-      data.activation === "restart_required"
-        ? "已创建独立提示词，应用实例配置后生效。"
-        : "提示词已保存，下一次新请求读取。",
-    );
-    await refresh();
-  } catch (e) {
-    fail(e);
-  } finally {
-    promptBusy.value = false;
-  }
-}
-async function restorePrompt(id: string) {
-  try {
-    await ElMessageBox.confirm(
-      "当前版本会先备份，再恢复所选版本。",
-      "恢复提示词",
-      { confirmButtonText: "恢复", cancelButtonText: "取消", type: "warning" },
-    );
-    const data = await api(
-      `/instances/${encodeURIComponent(promptId.value)}/prompt/restore/${id}`,
-      {
-        method: "POST",
-        body: JSON.stringify({
-          revision: promptData.value.revision,
-          config_revision: promptData.value.config_revision,
-        }),
-      },
-    );
-    promptData.value = data;
-    promptText.value = data.text;
-    ElMessage.success("已恢复，下一次新请求读取。");
-  } catch (e: any) {
-    if (e !== "cancel" && e !== "close") fail(e);
-  }
-}
-function prepareEditor(config: any, effective: any = {}) {
-  const value = structuredClone(config);
-  value.model_clients = {
-    ...settingsSchema.value?.defaults?.model_clients,
-    ...effective.model_clients,
-    ...value.model_clients,
-  };
-  value.models ||= {};
-  value.image_generation = {enabled: false, ...effective.image_generation, ...value.image_generation};
-  value.models.image = {
-    model: '', ...effective.models?.image, ...value.models.image,
-    options: {...settingsSchema.value?.defaults?.models?.image?.options, ...effective.models?.image?.options, ...value.models.image?.options},
-  };
-  value.models.reply = {
-    model: "",
-    ...effective.models?.reply,
-    ...value.models.reply,
-    options: {
-      ...settingsSchema.value?.defaults?.models?.reply?.options,
-      ...effective.models?.reply?.options,
-      ...value.models.reply?.options,
-    },
-  };
-  value.participation = { ...settingsSchema.value?.defaults?.participation, ...value.participation };
-  for (const role of backgroundRoles) {
-    value.models[role.id] = {
-      model: "",
-      ...effective.models?.[role.id],
-      ...value.models[role.id],
-      options: {
-        ...settingsSchema.value?.defaults?.models?.[role.id]?.options,
-        ...effective.models?.[role.id]?.options,
-        ...value.models[role.id]?.options,
-      },
-    };
-  }
-  value.memory = {
-    enabled: effective.memory?.enabled ?? settingsSchema.value?.defaults?.memory?.enabled ?? false,
-    ...value.memory,
-    avatar: { enabled: effective.memory?.avatar?.enabled ?? settingsSchema.value?.defaults?.memory?.avatar?.enabled ?? false, ...value.memory?.avatar },
-  };
-  value.profile = { enabled: effective.profile?.enabled ?? settingsSchema.value?.defaults?.profile?.enabled ?? false, ...value.profile };
-  editor.value = value;
-  editorJson.value = JSON.stringify(value, null, 2);
-}
-async function editInstance(id?: string) {
-  creating.value = !id;
-  editorId.value = id || "chat-"+Array.from(crypto.getRandomValues(new Uint8Array(4)),v=>v.toString(16).padStart(2,"0")).join("");
-  editorRevision.value = "";
-  try {
-    settingsSchema.value=await api("/config/schema");
-    await loadModels();
-    editorEffective.value={};
-    if (id) {
-      const item = await api(`/instances/${encodeURIComponent(id)}`);
-      editorEffective.value=item.effective;
-      prepareEditor(item.config, item.effective);
-      editorRevision.value = item.revision;
-    } else
-      prepareEditor({
-        enabled: false,
-        chat: "",
-        system_prompt_file: "system.md",
-        memory: {enabled:false,avatar:{enabled:false}},
-        profile: {enabled:false},participation: {enabled:false},
-      });
-    editorTab.value="basic"; previousEditorTab="basic";
-    editorOpen.value = true;
-  } catch (e) {
-    fail(e);
-  }
-}
-function changeEditorTab(name: string | number) {
-  const next=String(name);
-  if(next==='json') editorJson.value=JSON.stringify(editor.value,null,2);
-  else if(previousEditorTab==='json') {
-    try { prepareEditor(JSON.parse(editorJson.value)); }
-    catch { editorTab.value='json'; ElMessage.error('JSON 格式有误，请先修正。'); return; }
-  }
-  previousEditorTab=next;
-}
-async function saveInstance(apply = false) {
-  editorBusy.value = true;
-  try {
-    const config =
-      editorTab.value === "json" ? JSON.parse(editorJson.value) : editor.value;
-    const path = creating.value
-      ? "/instances"
-      : `/instances/${encodeURIComponent(editorId.value)}`;
-    const saved = await api(path, {
-      method: creating.value ? "POST" : "PUT",
-      body: JSON.stringify(
-        creating.value
-          ? { id: editorId.value, config }
-          : { config, revision: editorRevision.value },
-      ),
-    });
-    editorRevision.value = saved.revision;
-    if (apply) {
-      const result = await api(
-        `/instances/${encodeURIComponent(editorId.value)}/actions/apply`,
-        {
-          method: "POST",
-          body: JSON.stringify({ revision: saved.revision }),
-        },
-      );
-      ElMessage.success(result.message);
-    }
-    editorOpen.value = false;
-    if (!apply) ElMessage.success("实例配置已保存，可点击‘应用此实例’生效。");
-    await refresh();
-    if (promptId.value === editorId.value && !promptDirty.value)
-      await selectPrompt(promptId.value);
-  } catch (e: any) {
-    if (e instanceof SyntaxError) ElMessage.error("JSON 格式有误，请先修正。");
-    else fail(e);
-  } finally {
-    editorBusy.value = false;
-  }
 }
 async function action(kind: "start" | "stop" | "apply") {
   const copy = {
@@ -581,34 +256,16 @@ async function action(kind: "start" | "stop" | "apply") {
   }
 }
 function beforeUnload(event: BeforeUnloadEvent) {
-  if (promptDirty.value || accountSettings.value?.dirty) {
+  if (promptEditor.value?.dirty || accountSettings.value?.dirty) {
     event.preventDefault();
     event.returnValue = "";
   }
 }
-onMounted(async () => {
+onMounted(() => {
   window.addEventListener("beforeunload", beforeUnload);
-  try {
-    const session = await api("/session");
-    demo.value = session.demo;
-    authenticated.value = session.authenticated;
-    setCsrf(session.csrf || "");
-    if (session.authenticated) await enter();
-  } catch (e: any) {
-    loginError.value = e.message;
-  } finally {
-    initialized.value = true;
-  }
-  timer = setInterval(() => {
-    if (authenticated.value && !connected.value) refresh();
-    if (authenticated.value && catalog.value.refreshing) loadModels();
-  }, 5000);
+  void initialize();
 });
-onBeforeUnmount(() => {
-  source?.close();
-  if (timer) clearInterval(timer);
-  window.removeEventListener("beforeunload", beforeUnload);
-});
+onBeforeUnmount(() => window.removeEventListener("beforeunload", beforeUnload));
 </script>
 
 <template>
@@ -1103,95 +760,7 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
-        <div v-else-if="page === 'prompts'" class="prompt-layout">
-          <aside class="panel prompt-picker">
-            <div class="panel-heading"><h2>选择实例</h2></div>
-            <button
-              v-for="item in instances"
-              :key="item.id"
-              :class="{ active: promptId === item.id }"
-              @click="selectPrompt(item.id)"
-            >
-              <span class="chat-icon"
-                ><el-icon><ChatDotRound /></el-icon
-              ></span>
-              <div>
-                <b>{{ item.id }}</b
-                ><small>{{ item.kind === "private" ? "私聊" : "群聊" }}</small>
-              </div>
-            </button>
-            <div v-if="!instances.length" class="empty-state">请先创建实例</div>
-          </aside>
-          <section v-loading="promptLoading" class="panel prompt-editor">
-            <template v-if="promptData"
-              ><div class="panel-heading">
-                <div>
-                  <h2>
-                    {{ selectedPrompt?.id }}
-                    <span class="state-pill">{{ promptData.file }}</span>
-                  </h2>
-                  <small>仅编辑所属实例的系统提示词</small>
-                </div>
-                <span :class="['save-state', { dirty: promptDirty }]">{{
-                  promptDirty ? "有未保存的修改" : "已保存"
-                }}</span>
-              </div>
-              <div class="editor-note">
-                保存后供下一次新请求读取，已在生成的回复继续使用原来的提示词。
-              </div>
-              <el-input
-                v-model="promptText"
-                type="textarea"
-                resize="none"
-                :rows="17"
-                class="prompt-textarea"
-                aria-label="系统提示词正文"
-              />
-              <div class="editor-footer">
-                <small
-                  >{{ promptText.length }} 字符
-                  <span>UTF-8 · 纯文本</span></small
-                >
-                <div>
-                  <el-button
-                    :disabled="!promptDirty"
-                    @click="compareOpen = true"
-                    >对比改动</el-button
-                  ><el-button
-                    type="primary"
-                    :disabled="!promptDirty || !promptText.trim()"
-                    :loading="promptBusy"
-                    @click="savePrompt"
-                    >保存提示词</el-button
-                  >
-                </div>
-              </div>
-              <div class="history-section">
-                <h3>历史版本 <span>每次保存前自动备份</span></h3>
-                <div v-if="!promptData.history.length" class="history-empty">
-                  首次保存后将在这里显示历史版本。
-                </div>
-                <div
-                  v-for="entry in promptData.history.slice(0, 5)"
-                  :key="entry.id"
-                  class="history-row"
-                >
-                  <span>{{ formatTime(entry.created_at) }}</span
-                  ><small>{{ entry.characters }} 字符</small
-                  ><el-button
-                    link
-                    type="primary"
-                    @click="restorePrompt(entry.id)"
-                    >恢复此版本</el-button
-                  >
-                </div>
-              </div></template
-            >
-            <div v-else class="empty-state large">
-              选择一个实例，开始编辑提示词。
-            </div>
-          </section>
-        </div>
+        <PromptEditor v-else-if="page === 'prompts'" ref="promptEditor" :instances="instances" @saved="refresh" @error="fail" />
 
         <template v-else-if="page === 'services'"
           ><section class="panel lifecycle-panel">
@@ -1292,287 +861,8 @@ onBeforeUnmount(() => {
     </div>
   </div>
 
-  <el-dialog
-    v-model="editorOpen"
-    :title="creating ? '新建会话实例' : '编辑实例 · ' + editorId"
-    width="800px"
-    top="5vh"
-    class="instance-config-dialog"
-    :close-on-click-modal="false"
-    :close-on-press-escape="false"
-    destroy-on-close
-    ><div class="dialog-note">
-      配置可以单独保存；“保存并应用”只重建当前实例。正在执行的请求会先结束，其他实例继续运行。
-    </div>
-    <el-tabs v-model="editorTab" @tab-change="changeEditorTab"
-      ><el-tab-pane label="基本配置" name="basic"
-        ><el-form label-position="top" class="instance-form"
-          ><div class="form-grid">
-            <el-form-item v-if="!creating" label="实例标识"
-              ><el-input
-                v-model="editorId"
-                :disabled="!creating"
-                placeholder="例如：friends" /></el-form-item
-            ><el-form-item label="启用实例"
-              ><el-switch
-                v-model="editor.enabled"
-                active-text="启用"
-                inactive-text="关闭"
-            /></el-form-item>
-          </div>
-          <el-form-item v-if="creating" label="选择联系人或群聊"><ContactPicker v-model="editor.chat" /></el-form-item>
-          <el-collapse v-if="creating" class="contact-advanced"><el-collapse-item title="高级：修改自动生成的实例标识" name="id"><el-input v-model="editorId" aria-label="实例标识" /></el-collapse-item></el-collapse>
-          <el-form-item v-else label="已绑定会话"><el-input v-model="editor.chat" disabled /><small class="field-hint">会话绑定后不直接更换；需要其他会话时新建实例。</small></el-form-item>
-          <div class="form-divider">回复模型</div>
-          <div class="form-grid">
-            <el-form-item label="回复连接"
-              ><el-select v-model="editor.model_clients.reply"
-                ><el-option
-                  v-for="v in providerConnections"
-                  :key="v"
-                  :label="v"
-                  :value="v" /></el-select></el-form-item
-            ><el-form-item label="回复模型"
-              ><el-select
-                v-model="editor.models.reply.model"
-                filterable
-                allow-create
-                default-first-option
-                placeholder="选择模型或输入实际模型 ID"
-              >
-                <el-option
-                  v-for="model in modelOptions(editor.model_clients.reply)"
-                  :key="model.id"
-                  :label="model.name"
-                  :value="model.id"
-                /> </el-select
-            ></el-form-item>
-          </div>
-          <div class="form-grid three">
-            <el-form-item label="思考"
-              ><el-select v-model="editor.models.reply.options.thinking"
-                ><el-option label="关闭" value="disabled" /><el-option
-                  label="开启"
-                  value="enabled" /></el-select></el-form-item
-            ><el-form-item label="思考档位"
-              ><el-select
-                v-model="editor.models.reply.options.reasoning_effort"
-                clearable
-                placeholder="使用默认"
-                ><el-option
-                  v-for="v in ['low', 'medium', 'high', 'max']"
-                  :key="v"
-                  :label="v"
-                  :value="v" /></el-select></el-form-item
-            ><el-form-item label="请求超时 / 秒"
-              ><el-input-number
-                v-model="editor.models.reply.options.timeout_seconds"
-                :min="1"
-                :max="300"
-                controls-position="right"
-            /></el-form-item>
-          </div>
-          <div class="form-grid">
-            <el-form-item label="最大输出 token"
-              ><el-input-number
-                v-model="editor.models.reply.options.max_tokens"
-                :min="1"
-                :max="128000"
-                controls-position="right" /></el-form-item
-            ><el-form-item label="自动回复 / 参与"
-              ><el-switch
-                v-model="editor.participation.enabled"
-                active-text="启用"
-            /></el-form-item>
-          </div>
-          <small class="field-hint"
-            >私聊直接回复，无需参与判断；群聊由参与模型决策。列表来自当前连接的模型目录，也可手动输入模型
-            ID。</small
-          >
-          <div class="catalog-toolbar">
-            <small v-if="selectedProvider">{{
-              !selectedProvider.configured
-                ? "当前连接尚未配置 API 密钥"
-                : selectedProvider.state === "stale"
-                  ? "连接配置已变化，需重新拉取模型列表"
-                  : selectedProvider.fetched_at
-                    ? selectedProvider.models.length +
-                      " 个模型 · 更新于 " +
-                      new Date(selectedProvider.fetched_at).toLocaleString(
-                        "zh-CN",
-                      )
-                    : "尚无模型目录，可拉取或直接输入模型 ID"
-            }}</small>
-            <el-button
-              size="small"
-              :loading="catalog.refreshing"
-              @click="refreshModels"
-              >从提供商刷新模型列表</el-button
-            ><small>{{
-              catalog.refreshing
-                ? "正在拉取，旧列表仍可使用"
-                : "仅在点击时访问已配置的模型提供商"
-            }}</small>
-          </div>
-          <el-alert
-            v-if="catalogError || catalog.error"
-            :title="
-              catalogError || '模型目录无效，可重新拉取或手动输入模型 ID。'
-            "
-            type="warning"
-            :closable="false"
-          />
-          <el-alert
-            v-if="
-              catalog.last_refresh &&
-              Object.keys(catalog.last_refresh.errors || {}).length
-            "
-            :title="
-              '部分连接刷新失败：' +
-              Object.entries(catalog.last_refresh.errors)
-                .map(([key, value]) => key + ': ' + value)
-                .join('；')
-            "
-            type="warning"
-            :closable="false"
-          />
-          <el-collapse class="background-settings">
-            <el-collapse-item title="图片生成" name="image">
-              <el-form-item label="允许文生图"><el-switch v-model="editor.image_generation.enabled" active-text="启用" /></el-form-item>
-              <div class="form-grid">
-                <el-form-item label="图片连接"><el-select v-model="editor.model_clients.image" @change="changeImageConnection">
-                  <el-option v-for="p in imageConnections" :key="p.id" :label="p.id" :value="p.id" />
-                </el-select></el-form-item>
-                <el-form-item label="图片模型"><el-select v-model="editor.models.image.model" filterable allow-create default-first-option placeholder="选择或输入实际生图模型 ID">
-                  <el-option v-for="model in modelOptions(editor.model_clients.image)" :key="model.id" :label="model.name" :value="model.id" />
-                </el-select></el-form-item>
-              </div>
-              <div class="form-grid" v-if="imageIsGemini">
-                <el-form-item label="画面比例"><el-select v-model="editor.models.image.options.aspect_ratio" placeholder="默认 1:1">
-                  <el-option v-for="v in ['1:1','2:3','3:2','3:4','4:3','4:5','5:4','9:16','16:9','21:9']" :key="v" :value="v" :label="v" />
-                </el-select></el-form-item>
-                <el-form-item label="分辨率"><el-select v-model="editor.models.image.options.image_size" clearable @clear="delete editor.models.image.options.image_size" placeholder="模型默认">
-                  <el-option v-for="v in ['512','1K','2K','4K']" :key="v" :value="v" :label="v" />
-                </el-select></el-form-item>
-              </div>
-              <div class="form-grid" v-else>
-                <el-form-item label="尺寸"><el-select v-model="editor.models.image.options.size" placeholder="默认 1024x1024">
-                  <el-option v-for="v in ['1024x1024','1024x1536','1536x1024','auto']" :key="v" :value="v" :label="v" />
-                </el-select></el-form-item>
-                <el-form-item label="质量"><el-select v-model="editor.models.image.options.quality" placeholder="默认 low">
-                  <el-option v-for="v in ['low','medium','high','auto']" :key="v" :value="v" :label="v" />
-                </el-select></el-form-item>
-              </div>
-              <el-form-item label="生图超时 / 秒"><el-input-number v-model="editor.models.image.options.timeout_seconds" :min="1" :max="300" controls-position="right" /></el-form-item>
-              <small class="field-hint">用户明确要求绘图时由回复模型调用。任务独立排队，生成后发送到当前会话；每次一个任务，仅支持文生图。模型目录也可能包含文字模型，请选择支持生图的型号。</small>
-              <el-alert v-if="editor.image_generation.enabled && !imageProvider?.image_configured" title="图片连接尚未配齐：请在 provider .env 中填写密钥；Gemini 还需要 GEMINI_IMAGE_BASE_URL。" type="warning" :closable="false" />
-            </el-collapse-item>
-          </el-collapse>
-          <el-collapse class="background-settings"
-            ><el-collapse-item title="后台模型与任务" name="background">
-              <el-form-item label="后台共用连接"
-                ><el-select v-model="editor.model_clients.background"
-                  ><el-option
-                    v-for="value in providerConnections"
-                    :key="value"
-                    :label="value"
-                    :value="value" /></el-select
-              ></el-form-item>
-              <div class="background-toggles">
-                <el-switch
-                  v-model="editor.memory.enabled"
-                  active-text="记忆"
-                /><el-switch
-                  v-model="editor.memory.avatar.enabled"
-                  active-text="头像分类"
-                  :disabled="!editor.memory.enabled"
-                /><el-switch
-                  v-model="editor.profile.enabled"
-                  active-text="群资料分析"
-                />
-              </div>
-              <div
-                v-for="role in backgroundRoles"
-                :key="role.id"
-                class="background-role"
-              >
-                <el-form-item :label="role.name"
-                  ><el-select
-                    v-model="editor.models[role.id].model"
-                    filterable
-                    allow-create
-                    default-first-option
-                    placeholder="选择模型或输入模型 ID"
-                    ><el-option
-                      v-for="model in modelOptions(
-                        editor.model_clients.background,
-                      )"
-                      :key="model.id"
-                      :label="model.name"
-                      :value="model.id" /></el-select
-                ></el-form-item>
-                <div class="form-grid">
-                  <el-form-item label="思考"
-                    ><el-select
-                      v-model="editor.models[role.id].options.thinking"
-                      ><el-option label="关闭" value="disabled" /><el-option
-                        label="开启"
-                        value="enabled" /></el-select></el-form-item
-                  ><el-form-item label="思考档位"
-                    ><el-select
-                      v-model="editor.models[role.id].options.reasoning_effort"
-                      clearable
-                      placeholder="默认"
-                      ><el-option
-                        v-for="value in ['low', 'medium', 'high', 'max']"
-                        :key="value"
-                        :label="value"
-                        :value="value" /></el-select
-                  ></el-form-item>
-                </div>
-              </div> </el-collapse-item
-          ></el-collapse> </el-form></el-tab-pane
-      ><el-tab-pane label="业务参数" name="settings"><SettingsFields v-if="settingsSchema" v-model="editor" :effective="editorEffective" :groups="settingsSchema.groups" /></el-tab-pane
-      ><el-tab-pane label="模型参数" name="model-options"><SettingsFields v-if="settingsSchema" v-model="editor" :effective="editorEffective" :groups="settingsSchema.model_groups" /></el-tab-pane
-      ><el-tab-pane label="高级 JSON" name="json"
-        ><el-input
-          v-model="editorJson"
-          type="textarea"
-          :rows="20"
-          class="json-editor"
-          spellcheck="false"
-          aria-label="实例配置 JSON"
-        /><small class="field-hint"
-          >仅接受实例配置；不接受 API 密钥、账号数据库或运行目录覆盖。</small
-        ></el-tab-pane
-      ></el-tabs
-    ><template #footer
-      ><el-button @click="editorOpen = false">取消</el-button
-      ><el-button :loading="editorBusy" @click="saveInstance(false)"
-        >仅保存</el-button
-      ><el-button
-        type="primary"
-        :loading="editorBusy"
-        @click="saveInstance(true)"
-        >保存并应用此实例</el-button
-      ></template
-    ></el-dialog
-  >
-  <el-dialog v-model="compareOpen" title="提示词修改对比" width="900px"
-    ><div class="diff-grid">
-      <div>
-        <h3>当前已保存</h3>
-        <pre>{{ promptData?.text }}</pre>
-      </div>
-      <div>
-        <h3>本次编辑</h3>
-        <pre>{{ promptText }}</pre>
-      </div>
-    </div>
-    <template #footer
-      ><el-button @click="compareOpen = false">继续编辑</el-button></template
-    ></el-dialog
-  >
+  <InstanceEditor v-if="authenticated" ref="instanceEditor" :catalog="catalog" :reload-models="loadModels" :catalog-error="catalogError" :refresh-models="refreshModels" @saved="instanceSaved" @error="fail" />
+
   <el-drawer
     v-model="statusOpen"
     :title="'实例状态 · ' + statusId"

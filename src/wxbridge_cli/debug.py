@@ -25,7 +25,7 @@ def build_parser(parser=None, *, command_dest='command') -> argparse.ArgumentPar
     status = sub.add_parser('status', help='SSH 只读交互面板：概览、队列、模型、记忆和事件')
     status.add_argument('--once', action='store_true', help='输出一次文本快照，无需交互终端')
     status.add_argument('--interval', type=float, default=1, help='面板刷新秒数，范围0.5–30，默认1')
-    native = sub.add_parser('native-api', help='实验性本机原生发送接口；正文从stdin或文件读取')
+    native = sub.add_parser('submission-api', aliases=['native-api'], help='本机任务提交接口；正文从stdin或文件读取')
     native.add_argument('action', choices=('info','send','status'))
     native.add_argument('--chat-id', help='内部群ID或filehelper，必须在允许清单内')
     native.add_argument('--request-id', help='同一次发送始终复用同一个唯一请求ID')
@@ -76,8 +76,8 @@ def execute(args):
                      if isinstance(cfg, AppConfig) else explain_config(cfg))
             print(json.dumps(value, ensure_ascii=False, indent=2))
             return 0
-        if args.command == 'native-api':
-            from wxbridge.native.command import command
+        if args.command in ('submission-api', 'native-api'):
+            from wxbridge.submission_api.command import command
             return command(cfg,args)
         if args.command == 'status':
             if not 0.5 <= args.interval <= 30:

@@ -179,9 +179,9 @@ def initial_config(paths):
         state_file=str(paths.runtime/'state.json'), log_file=str(paths.runtime/'bot.log'),
         queue=dict(file=str(paths.runtime/'queue.sqlite3')), memory=dict(directory=str(paths.home/'memory')),
         ui=dict(backend='native_service', dry_run=False),
-        native_api=dict(enabled=True, socket=str(paths.runtime/'native-api.sock'),
-            helper_socket=str(paths.runtime/'native-helper.sock'), allowed_chat_ids=['filehelper'],
-            max_text_bytes=4096, max_pending=16, max_requests=1024))
+        helper_transport=dict(enabled=True, socket=str(paths.runtime/'native-helper.sock'),
+            allowed_chat_ids=['filehelper'], max_text_bytes=4096),
+        submission_api=dict(enabled=False, socket=str(paths.runtime/'native-api.sock'), max_pending=16, max_requests=1024))
 
 
 def credential_free_template(raw):

@@ -5,7 +5,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT/'src'))
 from wxbridge.config import load_config
-from wxbridge.app.execution.model_runtime import GroupModels
+from wxbridge.app.execution.model_runtime import ConversationModels
 
 def main():
     parser=argparse.ArgumentParser()
@@ -16,7 +16,7 @@ def main():
     if not args.live_api: parser.error('Explicit --live-api is required')
     from wxbridge.instances import select_instance
     cfg=select_instance(load_config(args.config), args.instance)
-    runtime=GroupModels(cfg)
+    runtime=ConversationModels(cfg)
     try:
         import base64, struct, zlib
         def chunk(kind,data):

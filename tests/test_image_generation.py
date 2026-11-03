@@ -1,4 +1,5 @@
 """Offline SDK wire, queued generation, artifact and delivery contracts."""
+from wxbridge.contracts.image_jobs import ImageProposal
 from tests.support.configuration import replace_config, update_config, snapshot
 import base64
 from concurrent.futures import Future
@@ -20,7 +21,8 @@ from provider.gemini_images import build_gemini_image_payload, parse_gemini_imag
 from tests.support.configuration import validate_models
 from wxbridge.ai.reply.runner import run_tool_loop
 from tests.support.tool_support import model_result
-from wxbridge.app.tasks.image_generation import checked_image, artifact_path
+from wxbridge.app.tasks.image_generation import checked_image
+from wxbridge.storage.image_artifacts import artifact_path
 from tests.support.model_support import default_config
 import tests.support.pipeline as pipeline
 from tests.support.synthetic import msg
@@ -158,7 +160,7 @@ class ImageProviderTests(unittest.TestCase):
             name='generate_image', arguments=json.dumps(dict(prompt='PRIVATE_DRAWING'))))])), model_result(dict(content=''))]
         with patch('wxbridge.ai.tools.web.SearchClient') as search:
             result = run_tool_loop(cfg, client, [dict(role='user',content='画一只猫')])
-        self.assertEqual(result.image_requests, (dict(prompt='PRIVATE_DRAWING'),))
+        self.assertEqual(result.image_proposals, (ImageProposal(prompt='PRIVATE_DRAWING'),))
         self.assertNotIn('成功', result.text)
         self.assertFalse(result.search['attempted'])
         search.assert_not_called()
@@ -175,7 +177,7 @@ class ImageProviderTests(unittest.TestCase):
             name='generate_image', arguments='{"prompt":"synthetic drawing"}'))]), 'tool_calls', {}, {}),
             model_result(dict(content=''))]
         result = run_tool_loop(cfg, client, [dict(role='user', content='画一只猫')])
-        self.assertEqual(result.image_requests, (dict(prompt='synthetic drawing'),))
+        self.assertEqual(result.image_proposals, (ImageProposal(prompt='synthetic drawing'),))
         self.assertEqual(client.request.call_count, 2)
         self.assertIn('native_search', client.request.call_args_list[0].kwargs)
         self.assertEqual(client.request.call_args_list[0].kwargs['tools'][0]['function']['name'], 'generate_image')
@@ -186,17 +188,54 @@ class ImagePipelineTests(unittest.TestCase):
     make_bot = pipeline.PipelineFixture.make_bot
     add = pipeline.PipelineFixture.add
 
+    def test_confirmed_image_reappears_in_later_reply_and_survives_restart(self):
+        from wxbridge.ai.reply.images import prepare_multimodal
+        self.cfg = replace_config(self.cfg, 'vision.context_images_enabled', True, owner=self)
+        task = self.ready_image()
+        self.future.set_result(ImageResult((GeneratedImage(picture(), mime='image/png'),)))
+        self.bot.image_generation.step()
+        image = self.bot.journal.task(task['id'])['images'][0]
+        path = artifact_path(self.cfg.paths.queue_file, image)
+        self.assertEqual(self.bot.journal.context_images(self.now), [])
+        with self.bot.journal.db:
+            parent = self.bot.journal.task(task['parent_task_id'])
+            parent.update(phase='done', chunks=[], triggers=[])
+            self.bot.journal.put(parent)
+        self.bot._send_step()
+        self.jobs[-1].result = dict(ok=True, ui=dict(operation=dict(submitted=True)))
+        self.bot._ui_result_step()
+        self.rows.append(dict(msg(2, int(self.now), '', 'wxid_self'), type=3, image_md5=image['md5']))
+        self.bot._confirm_step()
+        self.assertEqual(len(self.bot.journal.context_images(self.now)), 1)
+        self.now += 31
+        self.bot.image_generation.cleanup(self.now)
+        self.assertTrue(path.exists())
+        self.add(3, text='@DeepSeek 刚才那张图是什么？')
+        self.bot.tick()
+        job = next(j for j in reversed(self.jobs) if j.kind == 'generate')
+        self.assertEqual(job.payload[3]['images'][0]['generated_image'], image)
+        with patch('wechat_linux.media.images.read_local_image', side_effect=AssertionError('no cache read')):
+            _, info = prepare_multimodal(self.cfg, job.payload[1], job.payload[3])
+        self.assertEqual(info['images'], 1)
+        self.bot.close()
+        self.assertTrue(path.exists())
+        with patch('wxbridge.submission_api.server.SubmissionServer'):
+            self.make_bot()
+        self.assertEqual(len(self.bot.journal.context_images(self.now)), 1)
+        self.bot.image_generation.cleanup(self.now+self.cfg.target.context_max_age_seconds+1, force=True)
+        self.assertFalse(path.exists())
+
     def ready_image(self):
         self.cfg = replace_config(self.cfg, 'image_generation.enabled', True, owner=self)
         self.cfg = replace_config(self.cfg, 'account.ui.backend', 'native_service', owner=self)
-        self.cfg = update_config(self.cfg, 'account.native_api', enabled=True, allowed_chat_ids=[self.bot.chat_id], owner=self)
+        self.cfg = update_config(self.cfg, 'account.helper_transport', enabled=True, allowed_chat_ids=[self.bot.chat_id], owner=self)
         self.future = Future()
         self.future.cancel_request = Mock(side_effect=self.future.cancel)
         self.bot.submit_images = Mock(return_value=self.future)
         self.add(1)
         self.bot.tick()
         worker = next(job for job in self.jobs if job.kind == 'generate')
-        worker.result = dict(ok=True, reply='', image_requests=[dict(prompt='PRIVATE_DRAWING')])
+        worker.result = dict(ok=True, reply='', image_proposals=[ImageProposal(prompt='PRIVATE_DRAWING')])
         self.bot.replies.collect()
         image = self.bot.journal.image_tasks()[0]
         self.bot.image_generation.step()
@@ -214,7 +253,7 @@ class ImagePipelineTests(unittest.TestCase):
         self.add(1)
         self.bot.tick()
         worker = next(job for job in self.jobs if job.kind == 'generate')
-        worker.result = dict(ok=True, reply='', image_requests=[dict(prompt='cat')])
+        worker.result = dict(ok=True, reply='', image_proposals=[ImageProposal(prompt='cat')])
         self.bot.replies.collect()
         self.assertEqual(self.bot.journal.image_tasks(), [])
         self.assertNotIn('在画了', json.dumps(self.bot.journal.tasks(), ensure_ascii=False))
@@ -228,7 +267,7 @@ class ImagePipelineTests(unittest.TestCase):
         with self.bot.journal.db:
             parent['version'] += 1
             self.bot.journal.put(parent)
-        worker.result = dict(ok=True, reply='', image_requests=[dict(prompt='cat')])
+        worker.result = dict(ok=True, reply='', image_proposals=[ImageProposal(prompt='cat')])
         self.bot.replies.collect()
         self.assertTrue(worker.closed)
         self.assertEqual(self.bot.journal.image_tasks(), [])
@@ -251,7 +290,7 @@ class ImagePipelineTests(unittest.TestCase):
         self.future.set_result(ImageResult((GeneratedImage(picture(), mime='image/png'),)))
         self.bot.image_generation.step()
         image = self.bot.journal.task(task['id'])['images'][0]
-        path = artifact_path(self.cfg, image)
+        path = artifact_path(self.cfg.paths.queue_file, image)
         self.assertTrue(path.is_file())
         parent = self.bot.journal.task(task['parent_task_id'])
         with self.bot.journal.db:
@@ -287,7 +326,7 @@ class ImagePipelineTests(unittest.TestCase):
         self.future.set_result(ImageResult((GeneratedImage(picture()),)))
         self.bot.image_generation.step()
         task = self.bot.journal.task(task['id'])
-        path = artifact_path(self.cfg, task['images'][0])
+        path = artifact_path(self.cfg.paths.queue_file, task['images'][0])
         self.now = task['reply_expires_at']+1
         self.bot.image_generation.step()
         self.bot.image_generation.cleanup(float('inf'))
@@ -311,7 +350,7 @@ class ImagePipelineTests(unittest.TestCase):
         self.future.set_result(ImageResult((GeneratedImage(picture()),)))
         self.bot.image_generation.step()
         task = self.bot.journal.task(task['id'])
-        path = artifact_path(self.cfg, task['images'][0])
+        path = artifact_path(self.cfg.paths.queue_file, task['images'][0])
         self.cfg = replace_config(self.cfg, 'image_generation.enabled', False, owner=self)
         self.bot.image_generation.step()
         self.bot.image_generation.cleanup(float('inf'))

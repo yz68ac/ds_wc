@@ -79,4 +79,5 @@ def send(sdk, client, protocol, payload, timeout):
 
 
 def send_images(sdk, client, payload, timeout):
-    return _call_sdk(sdk, client.images.generate, payload, timeout)
+    operation = client.images.edit if 'image' in payload else client.images.generate
+    return _call_sdk(sdk, operation, payload, timeout)

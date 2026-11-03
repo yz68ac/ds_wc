@@ -13,16 +13,16 @@ MAX_MODELS = 10000
 
 @dataclass(frozen=True)
 class DiscoveredModel:
-    provider: str
+    connection: str
     id: str
     display_name: str | None = None
 
     @property
     def alias(self) -> str:
-        return self.provider + '/' + self.id
+        return self.connection + '/' + self.id
 
 
-def fetch_models(sdk, client, provider: str, *, timeout=30, protocol=None) -> tuple[DiscoveredModel, ...]:
+def fetch_models(sdk, client, connection_name: str, *, timeout=30, protocol=None) -> tuple[DiscoveredModel, ...]:
     """Fetch using an existing SDK client; ownership stays with its creator."""
     if type(timeout) not in (int, float) or not math.isfinite(timeout) or not 1 <= timeout <= 300:
         raise ModelError('invalid_timeout')
@@ -45,7 +45,7 @@ def fetch_models(sdk, client, provider: str, *, timeout=30, protocol=None) -> tu
                 if identifier not in seen:
                     seen.add(identifier)
                     display = getattr(model, 'display_name', None)
-                    found.append(DiscoveredModel(provider, identifier,
+                    found.append(DiscoveredModel(connection_name, identifier,
                                   display if isinstance(display, str) else None))
                     if len(found) > MAX_MODELS:
                         raise ModelError('model_list_too_large')

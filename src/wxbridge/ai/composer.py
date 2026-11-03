@@ -72,6 +72,7 @@ class PromptLayout:
     aliases: dict | None = field(default=None, repr=False)
     # 历史选择结果及分组、优先级和扫描统计，供预算裁剪和 context_stats 更新使用。
     selection: object = field(default=None, repr=False)
+    images: tuple = field(default=(), repr=False)
 
 
 class PromptMessages(list):
@@ -111,7 +112,7 @@ class PromptComposer:
         return result
 
     @staticmethod
-    def references(messages, triggers, *, account):
+    def references(messages, triggers, *, account, media=()):
         """Patch only verified quote slots; never rebuild history or memory.
 
         Return None for pre-contract callers. The image adapter retains its
@@ -152,6 +153,15 @@ class PromptComposer:
             if row is None or row.get('reference') != slot.original:
                 raise ContextError('引用媒体内容与登记布局不匹配')
             row['reference'] = compact_reference(reference,account=account,aliases=layout.aliases)
+        sources = dict(layout.images)
+        for update in media:
+            identifier = update['message_id']
+            if identifier not in sources or sources[identifier] != update['source']:
+                raise ContextError('上下文图片来源与登记来源不匹配')
+            row = next((r for r in payload['messages'] if r['id']==identifier), None)
+            if row is None or row.get('kind') != 'image':
+                raise ContextError('上下文图片槽位失效')
+            row['media'] = deepcopy(update['media'])
         outside_before, outside_after = text[:offset], text[offset+len(layout.user_text):]
         payload = fit_payload(payload,layout.max_chars,strategy=layout.budget_strategy,
                               external_chars=len(outside_before)+len(outside_after),plan=layout.selection)
@@ -162,4 +172,12 @@ class PromptComposer:
             result.context_stats['chars'] += len(outside_before)+len(outside_after)
         result.layout = None  # One binding pass; no accidental second patch.
         result.references_bound = True
+        labels = set()
+        def collect(item):
+            if not isinstance(item, dict):return
+            if item.get('available') and item.get('image_label'):labels.add(item['image_label'])
+            collect(item.get('media'))
+            collect(item.get('reference'))
+        for row in payload['messages']:collect(row)
+        result.media_labels = labels
         return result

@@ -55,7 +55,7 @@ def replace_config(config, path, value, *, owner=None):
                          ('state_file','paths.state_file')):
         if path==before:path=after
     if path.split('.')[0] in {'db_dir','keys_file','decrypted_dir','log_file','wechat_process',
-                              'source','poll_interval_seconds','provider_env','ui','native_api'}:
+                              'source','poll_interval_seconds','provider_env','ui','helper_transport','submission_api'}:
         path='account.'+path
     if path in {'queue','memory','target'} and isinstance(value,dict):
         key,destination={'queue':('file','paths.queue_file'),'memory':('directory','paths.memory_directory'),

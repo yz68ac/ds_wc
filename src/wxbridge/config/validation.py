@@ -21,6 +21,8 @@ def validate_document(data: dict, path, *, environment=True, origins=None, valid
     from .codec import account_from_document, instance_from_document
     if not isinstance(data,dict):
         raise ValueError('配置必须为 JSON 对象')
+    from .compatibility import normalize_transport_config
+    data = normalize_transport_config(data)
     p=Path(path)
     for section in ('queue','target'):
         if not isinstance(data.get(section,{}),dict):

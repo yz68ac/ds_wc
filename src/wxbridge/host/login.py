@@ -6,12 +6,8 @@ import json
 import os
 from pathlib import Path
 import stat
-import sys
 import tempfile
 import time
-
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / 'src'))
 
 from wechat_linux.desktop.login import LoginController, LoginError, LoginStatus
 

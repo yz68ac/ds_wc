@@ -1,4 +1,5 @@
 """Mixed tools, request isolation and hosted-search replay; no network or UI."""
+from wxbridge.contracts.image_jobs import ImageProposal
 from tests.support.configuration import replace_config, update_config, snapshot
 from concurrent.futures import CancelledError
 from copy import deepcopy
@@ -90,7 +91,7 @@ class ToolLoopTests(unittest.TestCase):
                  call('fetch', 'web_fetch', url='https://example.com/source')]
         self.client.request.side_effect = [model_result(dict(tool_calls=calls)), model_result(dict(content='核实后的回答'))]
         reply = self.run_reply()
-        self.assertEqual(reply.image_requests, (dict(prompt='PRIVATE_DRAWING'),))
+        self.assertEqual(reply.image_proposals, (ImageProposal(prompt='PRIVATE_DRAWING'),))
         self.assertEqual(reply.search['calls'], 2)
         self.backend.search.assert_called_once()
         self.backend.fetch.assert_called_once()
@@ -107,7 +108,7 @@ class ToolLoopTests(unittest.TestCase):
         reply = self.run_reply()
         offered = self.client.request.call_args_list[1].kwargs['tools']
         self.assertEqual([tool['function']['name'] for tool in offered], ['generate_image'])
-        self.assertEqual(reply.image_requests, (dict(prompt='cat'),))
+        self.assertEqual(reply.image_proposals, (ImageProposal(prompt='cat'),))
         self.assertEqual(reply.text, '')
 
     def test_invalid_batch_has_no_partial_execution(self):
@@ -137,7 +138,7 @@ class ToolLoopTests(unittest.TestCase):
         outputs = [json.loads(message['content']) for message in self.client.request.call_args.args[0]
                    if message['role'] == 'tool']
         self.assertEqual([output['error'] for output in outputs], ['invalid_tool_arguments', 'invalid_tool', 'invalid_tool'])
-        self.assertFalse(reply.image_requests)
+        self.assertFalse(reply.image_proposals)
         self.assertNotIn('PRIVATE', json.dumps(reply.search))
         self.backend.search.assert_not_called()
 
@@ -145,7 +146,7 @@ class ToolLoopTests(unittest.TestCase):
         self.client.request.side_effect = [model_result(dict(tool_calls=[call('a', 'generate_image', prompt='cat'),
             call('b', 'generate_image', prompt='dog')])), model_result(dict(content=''))]
         reply = self.run_reply()
-        self.assertEqual(reply.image_requests, (dict(prompt='cat'),))
+        self.assertEqual(reply.image_proposals, (ImageProposal(prompt='cat'),))
         self.assertIn('image_tool_limit', reply.search['errors'])
 
     def test_deadline_and_cancellation_stop_between_tools(self):
@@ -205,8 +206,8 @@ class ToolLoopTests(unittest.TestCase):
         self.client.request.side_effect = [model_result(dict(tool_calls=[call('i', 'generate_image', prompt='cat')])),
             model_result(dict(content='')), model_result(dict(tool_calls=[call('i', 'generate_image', prompt='dog')])),
             model_result(dict(content=''))]
-        self.assertEqual(self.run_reply().image_requests, (dict(prompt='cat'),))
-        self.assertEqual(self.run_reply().image_requests, (dict(prompt='dog'),))
+        self.assertEqual(self.run_reply().image_proposals, (ImageProposal(prompt='cat'),))
+        self.assertEqual(self.run_reply().image_proposals, (ImageProposal(prompt='dog'),))
         self.assertEqual(self.cfg, snapshot)
         self.assertEqual(self.messages, [dict(role='user', content='PRIVATE_CHAT')])
 
@@ -240,7 +241,7 @@ class HostedToolCombinationTests(unittest.TestCase):
                                  base_url='https://example.invalid/v1'), api_key='synthetic') as client:
                     with patch.object(client, '_post', side_effect=[wire, final]) as post, capture_metrics() as metrics:
                         reply = run_tool_loop(cfg, client, [dict(role='user', content='draw')])
-                self.assertEqual(reply.image_requests, (dict(prompt='cat'),))
+                self.assertEqual(reply.image_proposals, (ImageProposal(prompt='cat'),))
                 self.assertTrue(all(not entry['error'] for entry in metrics))
                 tools = post.call_args_list[0].args[0]['tools']
                 self.assertEqual(len(tools), 2)

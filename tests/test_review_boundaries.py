@@ -19,7 +19,7 @@ from wxbridge.ai.background.participation import evaluate
 from wxbridge.storage.journal import Journal
 import tests.support.memory as memories
 import tests.support.media as media
-import tests.support.native_api as native
+import tests.support.submission_api as native
 import tests.support.pipeline as pipeline
 from tests.support.synthetic import NOW, msg
 

@@ -11,11 +11,11 @@ class ChatContext:
     payload: dict
 
     @classmethod
-    def build(cls, cfg, rows, triggers, title, *, account='', profile=None, memory=None):
-        history = select_context(cfg, rows, source_anchor(triggers), triggers=triggers, account=account)
+    def build(cls, cfg, rows, triggers, title, *, account='', profile=None, memory=None, images=False):
+        history = select_context(cfg, rows, source_anchor(triggers), triggers=triggers, account=account, images=images)
         memory_enabled = cfg.memory.enabled
         payload = chat_payload([*history, *triggers], title, [m['local_id'] for m in triggers],
-                               account=account, profile=profile, memory_enabled=memory_enabled)
+                               account=account, profile=profile, memory_enabled=memory_enabled, images=images)
         if memory_enabled and (memory or {}).get('text'):
             payload['memory'] = memory['text'].splitlines()
         return cls(history, payload)

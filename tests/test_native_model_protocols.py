@@ -279,20 +279,20 @@ class ProfileTests(unittest.TestCase):
         original=deepcopy(cfg);validate_models(cfg)
         self.assertEqual(model_settings(cfg,'reply').model,'synthetic-openai')
         self.assertEqual(model_settings(cfg,'participation').options.thinking,'disabled')
-        self.assertEqual(model_settings(cfg,'memory').provider,'anthropic_messages')
+        self.assertEqual(model_settings(cfg,'memory').protocol,'anthropic_messages')
         self.assertEqual(model_settings(cfg,'memory').options.reasoning_effort,'high')
         self.assertEqual(cfg,original)
 
     def test_role_token_limit_is_taken_from_explicit_model_options(self):
         cfg=default_config();validate_models(cfg)
-        self.assertEqual(model_settings(cfg).provider,'deepseek')
+        self.assertEqual(model_settings(cfg).protocol,'deepseek')
         self.assertEqual(model_settings(cfg,'memory').options.max_tokens,cfg.models.memory.options.max_tokens)
 
     def test_resolver_accepts_explicit_clients_and_rejects_removed_profiles(self):
         from tests.support.configuration import resolve_fixture as resolve_config
         cfg=self.profile_cfg()
         loaded=resolve_config(cfg, Path('synthetic-missing.json'), environment=False)
-        self.assertEqual(model_settings(loaded).provider,'openai_responses')
+        self.assertEqual(model_settings(loaded).protocol,'openai_responses')
         for key in ('model_profile', 'model_profiles', 'deepseek', 'persona'):
             with self.subTest(key=key), self.assertRaisesRegex(ValueError, 'obsolete_model_configuration'):
                 resolve_config(dict(effective_document(cfg), **{key:{}}), Path('synthetic-missing.json'), environment=False)

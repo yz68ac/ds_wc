@@ -9,6 +9,20 @@ from tests.support.synthetic import NOW
 
 
 class QueryTests(unittest.TestCase):
+    def test_exact_local_image_query_excludes_other_messages(self):
+        conn = sqlite3.connect(':memory:')
+        conn.row_factory = sqlite3.Row
+        conn.execute('CREATE TABLE Msg_test (local_id INTEGER,local_type INTEGER,create_time INTEGER,message_content TEXT)')
+        conn.executemany('INSERT INTO Msg_test VALUES (?,3,?,?)',
+            [(i,NOW,'<msg><img md5="'+f'{i:032x}'+'"/></msg>') for i in (1,2)])
+        store = WeChatStore.__new__(WeChatStore)
+        store.message_table = Mock(return_value=('test.db','Msg_test'))
+        store.contacts = Mock(return_value={})
+        store._connect = Mock(return_value=conn)
+        rows = store._query_messages('synthetic@chatroom',2,local_id=2)
+        self.assertEqual([m['local_id'] for m in rows],[2])
+        self.assertEqual(rows[0]['image_md5'],f'{2:032x}')
+
     def test_image_query_preserves_validated_local_cache_key(self):
         conn = sqlite3.connect(":memory:")
         conn.row_factory = sqlite3.Row

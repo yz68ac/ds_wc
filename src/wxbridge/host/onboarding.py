@@ -8,10 +8,9 @@ from .system import Paths, as_user, atomic_json, private_json
 
 def login_snapshot(root):
     paths=Paths(app=Path(root))
-    code = '''import base64,io,json,runpy,qrcode
-from wxbridge.host.layout import code_root
-Runtime=runpy.run_path(str(code_root()/'scripts/login_runtime.py'))['LoginRuntime']
-r=Runtime()
+    code = '''import base64,io,json,qrcode
+from wxbridge.host.login import LoginRuntime
+r=LoginRuntime()
 with r.locked():
     status=r.viewer_snapshot()
     r.save(r.state(),status)
@@ -51,8 +50,9 @@ def bind_configured_account(supervisor):
     allowed=sorted(set(helper['allowed_chat_ids'])|chats)
     if len(allowed)>16:raise ValueError('too_many_authorized_chats')
     result=bind_account(paths,current_state=supervisor.status())
-    config=private_json(supervisor.root/'config.json')
-    config['native_api']['allowed_chat_ids']=allowed
+    from wxbridge.config.compatibility import normalize_transport_config
+    config=normalize_transport_config(private_json(supervisor.root/'config.json'))
+    config['helper_transport']['allowed_chat_ids']=allowed
     atomic_json(supervisor.root/'config.json',config,uid=supervisor.account.pw_uid,gid=supervisor.account.pw_gid)
     if helper['allowed_chat_ids']!=allowed:
         helper['allowed_chat_ids']=allowed

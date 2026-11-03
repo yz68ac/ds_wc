@@ -46,7 +46,7 @@ def overview(repository, services, operations, *, demo=False):
             config_pending=item['revision']!=lifecycle.get('applied_revision'),
             request_id=lifecycle.get('request_id'),error=lifecycle.get('error',''),active_models=status.get('models',{})))
     events, event_error = safe_events(cfg.log_file)
-    authorized=set(cfg.native_api.allowed_chat_ids)
+    authorized=set(cfg.helper_transport.allowed_chat_ids)
     pending=[item['id'] for item in entries if item['chat'] not in authorized]
     binding_idle=bot['state']=='inactive' and not states.get('recovery',{}).get('enabled',False)
     return dict(demo=demo, collected_at=now, services=states,

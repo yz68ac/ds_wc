@@ -263,7 +263,7 @@ class InstallerTests(unittest.TestCase):
         from wxbridge.config_merge import deep_merge
         cfg=account_from_document(deep_merge(default_document(),document))
         self.assertEqual(cfg.db_dir,'')
-        self.assertEqual(cfg.native_api.allowed_chat_ids,('filehelper',))
+        self.assertEqual(cfg.helper_transport.allowed_chat_ids,('filehelper',))
         self.assertNotIn('models',document)
         self.assertNotIn('instances',document)
         self.assertEqual(Path(cfg.memory_directory),Paths().home/'memory')

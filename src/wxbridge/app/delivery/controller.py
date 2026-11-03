@@ -91,7 +91,10 @@ class DeliveryController:
         ack = scan_confirmation(self.store, task.get('delivery_chat_id', self.chat_id),
                                 self.store.self_wxid, text, intent, now, blocked=bool(task['blocked_reason']), image=image)
         if ack is not None:
-            self.journal.acknowledge(task['id'], ack, now, memory=memory)
+            options = {}
+            if image and self.cfg.vision.enabled and (self.cfg.vision.context_images_enabled or self.cfg.image_generation.enabled):
+                options['image_context_seconds'] = self.cfg.target.context_max_age_seconds
+            self.journal.acknowledge(task['id'], ack, now, memory=memory, **options)
             self.log.info('发送确认 task=%s part=%s local_id=%s', task['id'], intent['part'], ack)
             return
         if intent["deadline"] is not None and time.time() >= intent["deadline"]:
@@ -162,7 +165,7 @@ class DeliveryController:
             with self.journal.db:
                 start=task['next_chunk']
                 try:
-                    parts=[part for chunk in task['chunks'][start:] for part in text_parts(chunk,self.cfg.account.native_api.max_text_bytes)]
+                    parts=[part for chunk in task['chunks'][start:] for part in text_parts(chunk,self.cfg.account.helper_transport.max_text_bytes)]
                 except (NativeError,UnicodeError) as exc:
                     task['blocked_reason']='native_text_limit:'+getattr(exc,'code','invalid_text')
                     self.journal.put(task)

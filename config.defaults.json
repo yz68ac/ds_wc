@@ -41,14 +41,17 @@
     "chat_open_wait": 1,
     "dry_run": true
   },
-  "native_api": {
+  "helper_transport": {
     "enabled": false,
-    "socket": "/run/wxbridge-trial/native-api.sock",
-    "helper_socket": "/run/wxbridge-trial/native-helper.sock",
+    "socket": "/run/wxbridge-trial/native-helper.sock",
     "allowed_chat_ids": [
       "filehelper"
     ],
-    "max_text_bytes": 4096,
+    "max_text_bytes": 4096
+  },
+  "submission_api": {
+    "enabled": false,
+    "socket": "/run/wxbridge-trial/native-api.sock",
     "max_pending": 16,
     "max_requests": 1024
   },
@@ -191,6 +194,7 @@
   },
   "vision": {
     "enabled": true,
+    "context_images_enabled": false,
     "detail": "original",
     "max_images": 4,
     "max_image_bytes": 8388608,

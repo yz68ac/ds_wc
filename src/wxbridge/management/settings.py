@@ -36,7 +36,8 @@ LABELS = {
     'search.max_tool_rounds':'工具调用轮数上限', 'search.max_requests':'搜索请求数上限',
     'search.max_results':'搜索结果数上限', 'search.feedback_enabled':'发送搜索进度提示',
     'search.feedback_phrases':'搜索进度提示语',
-    'vision.enabled':'图片理解', 'vision.detail':'图片细节级别', 'vision.max_images':'每次图片上限',
+    'vision.enabled':'图片理解', 'vision.context_images_enabled':'自动将图片加入上下文',
+    'vision.detail':'图片细节级别', 'vision.max_images':'每次图片上限',
     'vision.max_image_bytes':'单张图片大小上限 / 字节', 'vision.cache_wait_seconds':'等待媒体缓存 / 秒',
     'vision.download_enabled':'主动下载图片', 'vision.download_backend':'图片下载方式',
     'vision.download_timeout_seconds':'图片下载超时 / 秒',
@@ -51,7 +52,7 @@ GROUPS = (
     ('memory','记忆与学习',('memory',),'记忆整理、被动关系学习和头像分类。相关模型在基本配置中选择。'),
     ('profile','群资料',('profile',),'群资料分析的采样与频率。触发消息数不能大于批次大小。'),
     ('search','联网搜索',('search',),'按需启用搜索及进度提示。连接密钥使用 Provider 文件配置。'),
-    ('vision','图片理解',('vision',),'控制收到的图片如何读取、下载并交给模型，与文生图功能独立。'),
+    ('vision','图片理解',('vision',),'自动加入开启后，回复模型可读取上下文中的聊天图片和机器人已发送图片。需要支持图片输入的回复模型；引用图片优先，共用每次图片上限。主动下载仍由下载开关控制。'),
     ('queue','队列与重试',('queue',),'限制当前实例的任务积压和重试。每位发言者上限不能大于实例上限。'),
 )
 

@@ -11,10 +11,11 @@ from typing import Any, Callable
 
 from wxbridge.storage.memoryfs import require_runtime_directory as require_memory_directory
 from wechat_linux.messages.pats import is_pat
-from wxbridge.native.protocol import NativeError, REQUEST_ID, task_status
+from wxbridge.submission_api.protocol import NativeError, REQUEST_ID, task_status
 from wxbridge.storage.task_state import validate_task, validate_task_states
 from wxbridge.storage.participation import ParticipationJournal
 from wxbridge.storage.image_generation_journal import ImageGenerationJournal
+from wxbridge.storage.image_context import ImageContextJournal
 
 
 def checked_path(value: str, *, existing: bool = False) -> Path:
@@ -31,7 +32,7 @@ def checked_path(value: str, *, existing: bool = False) -> Path:
     return path
 
 
-class Journal(ParticipationJournal, ImageGenerationJournal):
+class Journal(ParticipationJournal, ImageGenerationJournal, ImageContextJournal):
     def __init__(self, path: str, identity: dict[str, str], baseline: int):
         target = checked_path(path)
         fd = os.open(target, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
@@ -419,7 +420,7 @@ class Journal(ParticipationJournal, ImageGenerationJournal):
                 task.update(first_submit_at=now, queue_wait_seconds=max(0, now-task.get('accepted_at', now)))
             self.put(task)
 
-    def acknowledge(self, task_id: int, local_id: int, now: float, *, memory=False):
+    def acknowledge(self, task_id: int, local_id: int, now: float, *, memory=False, image_context_seconds=0):
         with self.db:
             task = self.task(task_id)
             if not task["intent"]:
@@ -437,6 +438,9 @@ class Journal(ParticipationJournal, ImageGenerationJournal):
                 self.set("last_success", now)
                 self.put(task)
                 return
+            if (task.get('images') and image_context_seconds > 0
+                    and task.get('delivery_chat_id', self.get('identity')['chat']) == self.get('identity')['chat']):
+                self.remember_image(local_id, task['images'][task['intent']['part']], now, image_context_seconds)
             task["next_chunk"] += 1
             if task.get('external_request_id'):
                 task.setdefault('external_ack_ids',[]).append(local_id)

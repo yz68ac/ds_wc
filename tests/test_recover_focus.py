@@ -30,7 +30,7 @@ class FocusRecoveryTests(unittest.TestCase):
         for target, opts in [
             ("load_config", dict(return_value=application(default_config()))),
             ("instance_lock", dict(side_effect=lambda path: nullcontext())),
-            ("GroupSession", dict(return_value=self.bot)),
+            ("ConversationSession", dict(return_value=self.bot)),
             ("A11y", dict(return_value=self.a)),
         ]:
             p = patch.object(recovery, target, **opts)

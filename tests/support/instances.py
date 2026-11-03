@@ -38,10 +38,10 @@ class InstanceFixture(unittest.TestCase):
         p = patch.dict(os.environ, {}, clear=True); p.start(); self.addCleanup(p.stop)
 
     def load(self, data=None):
-        from wxbridge.instances import GROUP_FIELDS
+        from wxbridge.instances import INSTANCE_FIELDS
         from wxbridge.config_merge import deep_merge
         root = deepcopy(self.data if data is None else data)
-        common = {key:root.pop(key) for key in list(root) if key in GROUP_FIELDS and key not in ('queue','memory')}
+        common = {key:root.pop(key) for key in list(root) if key in INSTANCE_FIELDS and key not in ('queue','memory')}
         for section,key in (('queue','file'),('memory','directory')):
             value=root.get(section,{})
             common[section]={k:v for k,v in value.items() if k!=key}
@@ -60,7 +60,7 @@ class MultiGroupFixture(InstanceFixture):
     def setUp(self):
         super().setUp()
         self.data.update(memory=dict(enabled=False, directory=str(self.root/'memory')),
-                         native_api=dict(enabled=True, allowed_chat_ids=list(CHATS)), ui=dict(backend='native_service', dry_run=False),
+                         helper_transport=dict(enabled=True, allowed_chat_ids=list(CHATS)), submission_api=dict(enabled=True), ui=dict(backend='native_service', dry_run=False),
                          participation=dict(enabled=True, debounce_seconds=0), target=dict(cooldown_seconds=0),
                          queue=dict(file=str(self.root/'queue.sqlite3')),
                          account=dict(send_interval_seconds=0))
@@ -78,8 +78,8 @@ class MultiGroupFixture(InstanceFixture):
         from tests.support.synthetic import history_page
         self.store.messages_before.side_effect = lambda chat, **kw: history_page(self.rows[chat], **kw)
         for target, opts in [('wxbridge.storage.journal.checked_path', dict(side_effect=lambda v, **kw: Path(v))),
-                             ('wxbridge.app.sessions.group.time.time', dict(side_effect=lambda: self.now)),
-                             ('wxbridge.native.server.NativeServer', {})]:
+                             ('wxbridge.app.sessions.conversation.time.time', dict(side_effect=lambda: self.now)),
+                             ('wxbridge.submission_api.server.SubmissionServer', {})]:
             p = patch(target, **opts); p.start(); self.addCleanup(p.stop)
         self.coordinator = self.make()
         self.addCleanup(lambda: self.coordinator.close())

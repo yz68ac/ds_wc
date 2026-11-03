@@ -5,7 +5,7 @@ from copy import deepcopy
 import math
 
 from .adapters import ModelError
-from .images import GeneratedImage, ImageResult
+from .images import GeneratedImage, ImageResult, checked_inputs
 
 MAX_IMAGE_BYTES = 16 * 1024 * 1024
 
@@ -29,7 +29,12 @@ def build_gemini_image_payload(request):
         if options['image_size'] not in ('512', '1K', '2K', '4K'):
             raise ModelError('invalid_image_options')
         image['image_size'] = options['image_size']
-    return dict(model=request.model, contents=request.prompt,
+    images = checked_inputs(request.images)
+    contents = request.prompt
+    if images:
+        contents = [dict(role='user', parts=[dict(text=request.prompt), *[
+            dict(inline_data=dict(data=image.data, mime_type=image.mime)) for image in images]])]
+    return dict(model=request.model, contents=contents,
                 config=dict(response_modalities=['TEXT', 'IMAGE'], image_config=image)), float(timeout)
 
 

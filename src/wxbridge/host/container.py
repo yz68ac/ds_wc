@@ -84,10 +84,10 @@ def prepare():
                         queue=dict(file='/run/wxbridge-trial/queue.sqlite3'),
                         memory=dict(directory='/var/lib/wxbridge/memory'),
                         ui=dict(backend='native_service',dry_run=False),
-                        native_api=dict(enabled=True,socket='/run/wxbridge-trial/native-api.sock',
-                                        helper_socket='/run/wxbridge-trial/native-helper.sock',
-                                        allowed_chat_ids=['filehelper'],max_text_bytes=4096,
-                                        max_pending=16,max_requests=1024))
+                        helper_transport=dict(enabled=True,socket='/run/wxbridge-trial/native-helper.sock',
+                                              allowed_chat_ids=['filehelper'],max_text_bytes=4096),
+                        submission_api=dict(enabled=False,socket='/run/wxbridge-trial/native-api.sock',
+                                            max_pending=16,max_requests=1024))
         document.update(provider_env='/run/secrets/wxbridge/provider.env',
                         keys_file=str(sensitive/'keys.json'), decrypted_dir=str(sensitive/'decrypted'))
         atomic_json(config, document, uid=account.pw_uid, gid=account.pw_gid)

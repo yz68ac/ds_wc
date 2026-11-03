@@ -168,7 +168,7 @@ deb 是安装包容器；解开后才能分别看程序、资源和安装元数�
 | `mentioned_users=[]` | 当前解析结果明确没有列出的 @ 对象 |
 | `mentioned_users=None` | 缺少或无法解析这类元数据，不能当成可靠的“没有 @” |
 
-群聊中的 ds 关键词是另一个产品触发规则，不应与真实 @ 混写成一种判断。[元数据解析](../../src/wechat_linux/storage/store.py) · [机器人触发入口](../../src/wxbridge/app/sessions/group.py)
+群聊中的 ds 关键词是另一个产品触发规则，不应与真实 @ 混写成一种判断。[元数据解析](../../src/wechat_linux/storage/store.py) · [机器人触发入口](../../src/wxbridge/app/sessions/conversation.py)
 
 ### 5.5 引用消息的外层类型可能不是普通文本
 
@@ -182,7 +182,7 @@ deb 是安装包容器；解开后才能分别看程序、资源和安装元数�
 
 当前配置默认每 2 秒查询新消息，调度循环可按不超过 1 秒的节拍处理工作结果，消息查询另行限流。发送前补读仍由主进程执行，用于刷新入站状态、确认水位和待发送任务是否仍有效；不会因此额外请求一次模型。
 
-端到端耗时还包括客户端同步、查询、模型排队与生成、冷却、提交和数据库确认。不能把“2 秒轮询”写成“2 秒内必回”，也不能只按轮询次数推算整机功耗。[运行循环](../../src/wxbridge/app/sessions/group.py)
+端到端耗时还包括客户端同步、查询、模型排队与生成、冷却、提交和数据库确认。不能把“2 秒轮询”写成“2 秒内必回”，也不能只按轮询次数推算整机功耗。[运行循环](../../src/wxbridge/app/sessions/conversation.py)
 
 <a id="desktop-failures"></a>
 ## 6. 桌面发送阶段：几个失败为什么值得保留下来
@@ -604,10 +604,10 @@ SHA-256: e58facbc7c94ef06733bbeaf3d9a4bad4f898bb8e179fd107d562a9b866138dc
 | 引用和真实事件 | [references.py](../../src/wechat_linux/messages/references.py)、[pats.py](../../src/wechat_linux/messages/pats.py) |
 | 后台提交的三个位置 | [sender.py](../../src/wechat_linux/native/sender.py)、[helper.py](../../src/wechat_linux/native/helper.py)、[agent.js](../../src/wechat_linux/native/agent.js) |
 | 固定版本指纹 | [profile.json](../../src/wechat_linux/native/profile.json)、[能力声明](../../src/wechat_linux/profiles.py) |
-| 接口、锁与确认 | [本地 server](../../src/wxbridge/native/server.py)、[锁](../../src/wechat_linux/runtime/locking.py)、[发出确认](../../src/wxbridge/app/delivery/confirmation.py)、独立 outbox（历史路径：`src/wechat_linux/sending/outbox.py`） |
+| 接口、锁与确认 | [本地 server](../../src/wxbridge/submission_api/server.py)、[锁](../../src/wechat_linux/runtime/locking.py)、[发出确认](../../src/wxbridge/app/delivery/confirmation.py)、独立 outbox（历史路径：`src/wechat_linux/sending/outbox.py`） |
 | 图片链路 | [images.py](../../src/wechat_linux/media/images.py)、[wxgf.py](../../src/wechat_linux/media/wxgf.py)、[桌面兼容下载](../../src/wechat_linux/desktop/image_download.py)、[原生下载 SDK](../../src/wechat_linux/native/image_download.py)、[图片 agent](../../src/wechat_linux/native/image_agent.js) |
-| 机器人如何消费库 | [bot.py](../../src/wxbridge/app/sessions/group.py)、[delivery.py](../../src/wxbridge/app/delivery/controller.py)、[本地服务业务适配](../../src/wxbridge/app/delivery/native_gateway.py) |
-| 实际故障条件 | [SDK 回归](../../tests/test_wechat_library.py)、[native 回归](../../tests/test_native_api.py)、[桌面图片回归](../../tests/test_image_download.py)、[原生图片回归](../../tests/test_native_images.py) |
+| 机器人如何消费库 | [bot.py](../../src/wxbridge/app/sessions/conversation.py)、[delivery.py](../../src/wxbridge/app/delivery/controller.py)、[本地服务业务适配](../../src/wxbridge/app/delivery/submission_gateway.py) |
+| 实际故障条件 | [SDK 回归](../../tests/test_wechat_library.py)、[native 回归](../../tests/test_submission_api.py)、[桌面图片回归](../../tests/test_image_download.py)、[原生图片回归](../../tests/test_native_images.py) |
 
 ### 16.2 本机研究档案
 

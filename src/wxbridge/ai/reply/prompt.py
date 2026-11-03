@@ -4,13 +4,15 @@ from copy import deepcopy
 
 from wxbridge.ai.context.chat import ChatContext
 from wxbridge.ai.context.payload import CHAT_DATA_RULES
+from wxbridge.ai.context.images import image_source
 from wxbridge.ai.composer import PromptLayout, PromptMessages, ReferenceSlot, reference_source, system_prompt
 
 
 def build_prompt(cfg: InstanceConfig, context, trigger, chat_title, triggers=None, *, system_text=None, memory=None, account='', profile=None):
     triggers = triggers or [trigger]
     chat = ChatContext.build(cfg, context, triggers, chat_title,
-                             account=account, profile=profile, memory=memory).fit(cfg)
+                             account=account, profile=profile, memory=memory,
+                             images=cfg.vision.enabled and cfg.vision.context_images_enabled).fit(cfg)
     history, value = chat.selection, chat.payload
     limit = cfg.target.context_max_chars
     strategy = cfg.target.context_budget_strategy
@@ -23,7 +25,9 @@ def build_prompt(cfg: InstanceConfig, context, trigger, chat_title, triggers=Non
         dict(role='user',content=text)],
         layout=PromptLayout(account,text,deepcopy(value),slots,
             tuple((m.get('local_id'),m.get('sender')) for m in triggers),limit,strategy,
-            deepcopy(profile.get('members',{})) if profile is not None else None, history))
+            deepcopy(profile.get('members',{})) if profile is not None else None, history,
+            tuple((m['local_id'], image_source(m)) for m in history
+                  if m.get('type') == 3 and any(row['id']==m['local_id'] for row in value['messages']))))
     prompt.context_stats = chat.stats
     chat_kind = '群聊' if cfg.chat.endswith('@chatroom') else '私聊'
     prompt.context_rules = '本轮是微信'+chat_kind+'。'+CHAT_DATA_RULES+(

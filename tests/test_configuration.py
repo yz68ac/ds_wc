@@ -46,6 +46,7 @@ class ConfigurationTests(unittest.TestCase):
     def test_reference_matches_class_defaults_and_returns_detached_documents(self):
         expected=json.loads((ROOT/'config.defaults.json').read_text())
         self.assertEqual(default_document(),expected)
+        self.assertFalse(expected['vision']['context_images_enabled'])
         changed=default_document();changed['participation']['address_names'].append('changed')
         self.assertEqual(default_document(),expected)
 
@@ -63,7 +64,7 @@ class ConfigurationTests(unittest.TestCase):
                        lambda:setattr(value.account.ui,'dry_run',False)):
             with self.assertRaises(FrozenInstanceError):action()
         with self.assertRaises(TypeError):app.instances['extra']=value
-        self.assertIsInstance(value.account.native_api.allowed_chat_ids,tuple)
+        self.assertIsInstance(value.account.helper_transport.allowed_chat_ids,tuple)
 
     def test_account_is_shared_readonly_and_instance_replacement_is_independent(self):
         self.instance();self.instance('beta');app=load_config(self.path)

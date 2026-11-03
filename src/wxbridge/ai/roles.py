@@ -11,7 +11,7 @@ OPTIONS = {'max_tokens', 'temperature', 'timeout_seconds', 'thinking', 'reasonin
 class ResolvedModel:
     model: str
     options: TextOptions | ImageOptions
-    provider: str
+    protocol: str
     base_url: str
     connection: str
 
@@ -30,7 +30,7 @@ def model_settings(cfg: InstanceConfig, role='reply', *, provider_config=None):
 
 
 def provider_settings(settings):
-    return dict(json_value(settings.options), model=settings.model, provider=settings.provider,
+    return dict(json_value(settings.options), model=settings.model, provider=settings.protocol,
                 base_url=settings.base_url, connection=settings.connection)
 
 

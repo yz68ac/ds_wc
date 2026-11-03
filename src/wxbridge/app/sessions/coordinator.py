@@ -10,10 +10,10 @@ from contextlib import ExitStack
 from pathlib import Path
 import time
 
-from wxbridge.native.protocol import settings as native_settings
+from wxbridge.submission_api.protocol import settings as submission_settings
 from wechat_linux.storage.store import StoreError
 from wxbridge.app.sessions.account import AccountRuntime
-from wxbridge.app.sessions.group import GroupSession
+from wxbridge.app.sessions.conversation import ConversationSession
 from wxbridge.instances import enabled_instances
 from wxbridge.app.status.build_info import runtime_identity
 
@@ -25,7 +25,7 @@ class Coordinator:
         self.cfg, self.echo = cfg, echo
         self.account = AccountRuntime(cfg, store=store)
         self.sessions = self.account.sessions
-        self.native_api = None
+        self.submission_api = None
         self.instance_control = None
         self.closed = False
         self.rotation, self.generation_rotation, self.delivery_rotation = 0, 0, 0
@@ -45,14 +45,14 @@ class Coordinator:
                 if resolved != entry.chat or not self.account.store.self_wxid:
                     raise StoreError('instance_chat_identity_mismatch')
             for identifier, active in configs:
-                session = GroupSession(active, echo=echo, store=self.account.store, account=self.account,
+                session = ConversationSession(active, echo=echo, store=self.account.store, account=self.account,
                                        instance_id=identifier, start_gateway=False)
                 self.sessions.append(session)
-            options = native_settings(cfg)
+            options = submission_settings(cfg)
             if options.enabled and not cfg.account.ui.dry_run:
-                from wxbridge.native.server import NativeServer
-                from wxbridge.app.delivery.native_gateway import AccountNativeService
-                self.native_api = NativeServer(options, AccountNativeService(self, options))
+                from wxbridge.submission_api.server import SubmissionServer
+                from wxbridge.app.delivery.submission_gateway import AccountSubmissionService
+                self.submission_api = SubmissionServer(options, AccountSubmissionService(self, options))
             if cfg.metadata.path:
                 from wxbridge.app.sessions.instance_control import InstanceControl
                 self.instance_control = InstanceControl(self)
@@ -69,8 +69,8 @@ class Coordinator:
         # Intake all groups before giving foreground work any API slots.
         for session in order:
             session.intake()
-        if self.native_api:
-            self.native_api.tick()
+        if self.submission_api:
+            self.submission_api.tick()
         for session in order:
             session.collect_results()
         for session in order:
@@ -162,6 +162,6 @@ class Coordinator:
             stack.callback(self.account.close)
             for session in self.sessions:
                 stack.callback(session.close)
-            if self.native_api:
-                stack.callback(self.native_api.close)
+            if self.submission_api:
+                stack.callback(self.submission_api.close)
             self.save_status(stopped=True)

@@ -14,6 +14,7 @@ CHAT_DATA_RULES = (
     'messages按真实发送时间和消息ID排序，source_ids指定本轮新消息，每条消息只列一次。'
     'reference是该条消息明确引用的原话或媒体，sender是被引用消息的作者，不是提问者。'
     '引用可早于当前历史窗口；媒体available=false表示尚未读取，不要猜测图片、语音或网页全文。'
+    'kind=image表示图片消息，其media记录图片是否随请求附送；按消息ID、发送者和时间理解图片所属对话。'
     'kind=pat是拍一拍事件，target是被拍者，不是用户说出的文字。'
     '当前列表是选取的上下文，不是完整聊天记录；history_omitted仅统计已选中后因预算移除的历史条数。'
     '先按本轮消息、明确引用和最近连续对话理解指代，summary和memory只是弱背景。'
@@ -45,7 +46,7 @@ def compact_reference(reference, *, account='', aliases=None, remember=None):
     return compact(value)
 
 
-def chat_payload(rows, title, source_ids, *, account='', profile=None, memory_enabled=False):
+def chat_payload(rows, title, source_ids, *, account='', profile=None, memory_enabled=False, images=False):
     if (not isinstance(source_ids, (list, tuple)) or not source_ids
             or any(type(i) is not int or i < 1 for i in source_ids)
             or len(set(source_ids)) != len(source_ids)):
@@ -68,7 +69,8 @@ def chat_payload(rows, title, source_ids, *, account='', profile=None, memory_en
         if type(identifier) is not int or identifier < 1:continue
         sender, sent = row.get('sender'), message_time(row)
         pat = is_pat(row)
-        supported = pat or (row.get('type', 1) == 1 and isinstance(row.get('text'), str) and row['text'].strip())
+        picture = images and row.get('type') == 3
+        supported = picture or pat or (row.get('type', 1) == 1 and isinstance(row.get('text'), str) and row['text'].strip())
         if not supported or not isinstance(sender, str) or not sender or sent is None:
             if identifier in required:raise ContextError('invalid_chat_context_source')
             continue
@@ -76,7 +78,9 @@ def chat_payload(rows, title, source_ids, *, account='', profile=None, memory_en
             raise ContextError('invalid_chat_context_source')
         remember(sender, member_alias(row, aliases if profile is not None else None))
         item = dict(id=identifier, sender=sender, time=sent)
-        if pat:
+        if picture:
+            item.update(kind='image', media=dict(available=False, reason='图片尚未读取'))
+        elif pat:
             item.update(kind='pat', target=row['pat']['target'])
             remember(item['target'], member_alias(dict(sender=item['target'], sender_name=row.get('pat_target_name','')),
                                                 aliases if profile is not None else None))

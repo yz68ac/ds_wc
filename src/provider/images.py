@@ -14,10 +14,17 @@ IMAGE_PROTOCOLS = frozenset({'openai', 'openai_responses', 'openai_compatible'})
 
 
 @dataclass(frozen=True)
+class ImageInput:
+    data: bytes = field(repr=False)
+    mime: str = 'image/png'
+
+
+@dataclass(frozen=True)
 class ImageRequest:
     model: str
     prompt: str = field(repr=False)
     options: dict = field(default_factory=dict, repr=False)
+    images: tuple[ImageInput, ...] = field(default=(), repr=False)
 
 
 @dataclass(frozen=True)
@@ -38,6 +45,39 @@ class ImageResult:
     quality: str | None = None
     background: str | None = None
     text: str = field(default='', repr=False)
+
+
+def checked_inputs(images):
+    if not isinstance(images, (tuple, list)) or len(images) > 16:
+        raise ModelError('invalid_image_inputs')
+    total = 0
+    for image in images:
+        if not isinstance(image, ImageInput) or not isinstance(image.data, bytes):
+            raise ModelError('invalid_image_inputs')
+        if not 1 <= len(image.data) <= 8*1024*1024:
+            raise ModelError('image_size_limit')
+        data = image.data
+        mime = ('image/png' if data.startswith(b'\x89PNG\r\n\x1a\n') else 'image/jpeg'
+                if data.startswith(b'\xff\xd8\xff') else 'image/webp'
+                if data.startswith(b'RIFF') and data[8:12] == b'WEBP' else None)
+        if mime is None or mime != image.mime:raise ModelError('invalid_image_inputs')
+        total += len(data)
+    if total > 32*1024*1024:raise ModelError('image_size_limit')
+    return images
+
+
+def build_image_edit_payload(request):
+    images = checked_inputs(request.images)
+    if not images:raise ModelError('image_input_required')
+    payload, timeout = build_image_payload(request)
+    if set(payload) & {'style', 'response_format'}:
+        raise ModelError('invalid_image_options')
+    # SDK images.edit sends multipart bytes; the transport chooses edits only
+    # when actual source images are present, never a text-only approximation.
+    payload['image'] = [(f'source-{i}.png' if image.mime == 'image/png' else
+                         f'source-{i}.jpg' if image.mime == 'image/jpeg' else f'source-{i}.webp',
+                         image.data, image.mime) for i, image in enumerate(images)]
+    return payload, timeout
 
 
 def build_image_payload(request: ImageRequest):

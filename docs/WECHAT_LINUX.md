@@ -66,7 +66,7 @@ python -m pip install ".[analysis]"
 | Python 读库 | `WeChatStore` | 联系人、会话、消息窗口、头像和附件绑定 |
 | Python 能力查询 | `capabilities()` | 查看内置档案和声明能力 |
 | 命令行离线分析 | `python -m wechat_linux analysis ...` | 查看 ELF、检查版本指纹、比较与搜索候选 |
-| 机器人本地 API | `wxbridge.native.client.NativeClient` | 接入已运行的 wxbridge 队列及状态查询，属于上层应用 |
+| 机器人本地 API | `wxbridge.submission_api.client.SubmissionClient` | 接入已运行的 wxbridge 队列及状态查询，属于上层应用 |
 
 库自身没有 HTTP / TCP 服务，也不导出旧的 `wechat_linux.NativeClient`。不创建机器人队列、不提供自动发送重试或 `session.confirm()`。0.2.0 的确认与本地 API 服务器职责已迁入 wxbridge。
 

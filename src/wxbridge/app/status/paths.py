@@ -4,7 +4,7 @@ from pathlib import Path
 from wxbridge.config import load_config
 
 
-def configured_groups(app, runtime, *, include_disabled=False):
+def configured_instances(app, runtime, *, include_disabled=False):
     app, runtime = Path(app), Path(runtime)
     cfg = load_config(app/'config.json')
     return [(e.id, e, False) for e in cfg.instances.values()
@@ -18,7 +18,7 @@ def live_status_path(app, runtime):
 
 def queue_paths(app, runtime):
     from wxbridge.instances import queue_candidates
-    groups = configured_groups(app, runtime)
+    groups = configured_instances(app, runtime)
     active = {Path(cfg.paths.queue_file): identifier for identifier, cfg, _ in groups}
     cfg = load_config(Path(app)/'config.json')
     for path in queue_candidates(cfg):

@@ -9,7 +9,10 @@ import signal
 import sys
 import time
 
-from login_runtime import LoginError, LoginRuntime, background
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'src'))
+
+from wxbridge.host.login import LoginError, LoginRuntime, background
 
 
 MESSAGES = {

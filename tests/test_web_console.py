@@ -36,6 +36,8 @@ class RepositoryTests(unittest.TestCase):
         actual={field['path']:field for group in schema['groups'] for field in group['fields']}
         self.assertEqual(set(actual),expected)
         self.assertEqual(actual['vision.max_images']['max'],4)
+        self.assertFalse(actual['vision.context_images_enabled']['default'])
+        self.assertEqual(actual['vision.context_images_enabled']['type'],'boolean')
         self.assertEqual(actual['target.context_max_chars']['default'],15000)
         self.assertNotIn('provider_env',actual)
         self.assertNotIn('memory.directory',actual)
@@ -178,12 +180,14 @@ else:
     def test_image_config_is_editable_and_mixed_protocol_options_are_rejected(self):
         item = self.item()
         item['config']['image_generation'] = dict(enabled=True)
+        item['config']['vision'] = dict(context_images_enabled=True)
         item['config']['models']['image'] = dict(model='gpt-image-1',
             options=dict(size='1024x1024', quality='low', timeout_seconds=180))
         with patch('provider.client.create_sdk_client', side_effect=AssertionError('configuration is offline')):
             saved = self.repository.save('private_demo', item['config'], item['revision'])
         self.assertEqual(saved['effective']['models']['image']['model'], 'gpt-image-1')
         self.assertTrue(saved['effective']['image_generation']['enabled'])
+        self.assertTrue(saved['effective']['vision']['context_images_enabled'])
         wrong = deepcopy(saved['config'])
         wrong['models']['image']['options']['aspect_ratio'] = '1:1'
         with self.assertRaises(ManagementError) as error:

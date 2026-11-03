@@ -8,10 +8,10 @@ from unittest.mock import Mock, patch
 
 from provider import ImageRequest, ModelResult
 from tests.support.model_support import default_config
-from wxbridge.app.execution.model_runtime import GroupModels, ModelLane
+from wxbridge.app.execution.model_runtime import ConversationModels, ModelLane
 
 
-class GroupModelRuntimeTests(TestCase):
+class ConversationModelRuntimeTests(TestCase):
     def test_cancelling_queued_job_never_executes_it(self):
         lane = ModelLane('background', 'deepseek', None)
         started, release, called = Event(), Event(), Mock()
@@ -95,7 +95,7 @@ class GroupModelRuntimeTests(TestCase):
         cfg = replace_config(cfg, 'models.participation.model', 'judge-model')
         saved = deepcopy(cfg)
         with patch('wxbridge.app.execution.model_runtime.create_client', side_effect=create):
-            runtime = GroupModels(cfg)
+            runtime = ConversationModels(cfg)
             try:
                 jobs = [runtime.submit('request', (cfg, role, []), timeout=5)
                         for role in ('reply', 'participation')]
@@ -142,7 +142,7 @@ class GroupModelRuntimeTests(TestCase):
             clients.append(client)
             return client
         with patch('wxbridge.app.execution.model_runtime.create_client', side_effect=create):
-            first, second = GroupModels(cfg), GroupModels(cfg)
+            first, second = ConversationModels(cfg), ConversationModels(cfg)
             try:
                 for role in ('memory', 'avatar', 'group_profile'):
                     first.submit('request', (cfg, role, []), timeout=5).future.result(timeout=2)
@@ -158,7 +158,7 @@ class GroupModelRuntimeTests(TestCase):
                 client.close.assert_called_once()
 
     def test_expired_image_request_never_creates_a_client(self):
-        runtime = GroupModels(default_config())
+        runtime = ConversationModels(default_config())
         try:
             with patch('wxbridge.app.execution.model_runtime.create_client') as create:
                 result = runtime.submit_images(ImageRequest('image-model', 'synthetic'), deadline=0)
@@ -190,7 +190,7 @@ class GroupModelRuntimeTests(TestCase):
             return client
         prompt = [dict(role='system', content='合成规则'), dict(role='user', content='合成上下文')]
         with patch('wxbridge.app.execution.model_runtime.create_client', side_effect=create):
-            runtime = GroupModels(cfg)
+            runtime = ConversationModels(cfg)
             try:
                 decision = runtime.submit('participation', (cfg, prompt, dict(source_ids=[1,2])),
                                           timeout=5).future.result(timeout=2)

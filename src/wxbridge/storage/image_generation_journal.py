@@ -8,14 +8,14 @@ class ImageGenerationJournal:
         if parent.get('image_task_id'):
             return parent['image_task_id']
         identifier = self._next_task_id()
-        timeout = request['options'].get('timeout_seconds', 180)
+        timeout = request.options.get('timeout_seconds', 180)
         task = dict(id=identifier, version=1, phase='queued', trigger_kind='image_generation',
                     sender=parent['sender'], triggers=[], trigger_ids=[], generation='image_pending',
                     chunks=[], next_chunk=0, intent=None, blocked_reason='',
                     deadline=now, accepted_at=now, closed_at=now,
                     image_deadline=now+timeout, reply_expires_at=now+timeout+90,
                     parent_task_id=parent['id'], parent_version=parent['version'],
-                    image_identity=self.get('identity'), image_request=deepcopy(request))
+                    image_identity=self.get('identity'), image_request=request.to_document())
         parent['image_task_id'] = identifier
         self.put(task)
         return identifier
@@ -24,8 +24,9 @@ class ImageGenerationJournal:
         return [t for t in self.tasks() if t.get('trigger_kind') == 'image_generation']
 
     def image_failed(self, task, code, now):
+        editing = bool((task.get('image_request') or {}).get('source_image'))
         task.update(generation='ready', generation_failed=True, image_error=code,
-                    chunks=['这次没画出来，稍后再试吧'], next_chunk=0)
+                    chunks=['这次没改好，稍后再试吧' if editing else '这次没画出来，稍后再试吧'], next_chunk=0)
         task.pop('image_request', None)
         self.set('last_image_generation', dict(task_id=task['id'], state='failed', error=code, at=now))
         self.put(task)

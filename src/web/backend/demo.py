@@ -95,7 +95,7 @@ class DemoServices:
             directory=self.root/'synthetic/db_storage'
             directory.mkdir(parents=True,exist_ok=True)
             value['db_dir']=str(directory)
-            value['native_api']={'allowed_chat_ids':[item['chat'] for item in ConfigRepository(self.root).list()]}
+            value['helper_transport']={'allowed_chat_ids':[item['chat'] for item in ConfigRepository(self.root).list()]}
             path.write_text(json.dumps(value),encoding='utf-8')
             return dict(bound=True,message='演示：账号与会话已绑定，未访问真实微信。')
 

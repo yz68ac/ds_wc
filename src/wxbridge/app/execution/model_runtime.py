@@ -113,7 +113,7 @@ class ModelLane:
         if self.client:
             self.client.close()
 
-class GroupModels:
+class ConversationModels:
 
     def __init__(self, cfg: InstanceConfig):
         self.cfg = cfg
@@ -156,7 +156,7 @@ class GroupModels:
                     prompt, vision = (value['prompt'], value['vision'])
                 finally:
                     prep.close()
-            image_requests = []
+            image_proposals = []
             if echo is not None:
                 answer = echo
             else:
@@ -165,10 +165,10 @@ class GroupModels:
                     on_search=lambda: job.events.put(dict(event='search_started')),
                     deadline=job.deadline, check=job.check)
                 answer, search = result.text, result.search
-                image_requests = list(result.image_requests)
-            if not answer.strip() and not image_requests:
+                image_proposals = list(result.image_proposals)
+            if not answer.strip() and not image_proposals:
                 raise ModelError('empty_reply', retryable=True)
-            return dict(reply=answer, vision=vision, search=search, image_requests=image_requests,
+            return dict(reply=answer, vision=vision, search=search, image_proposals=image_proposals,
                         context_stats=getattr(prompt,'context_stats',{}))
         if kind == 'request':
             return dict(result=client_for(payload[1]).request(payload[2]))
@@ -183,9 +183,10 @@ class GroupModels:
             return dict(decision=evaluate(cfg, payload[1], **payload[2]))
         raise ValueError('unknown_model_job')
 
-    def submit_images(self, request, *, deadline=None):
+    def submit_images(self, request, *, deadline=None, source_image=None):
         lane = self.lanes['image']
         request = deepcopy(request)
+        source_image = deepcopy(source_image)
         timeout = request.options.get('timeout_seconds', 300)
         if deadline is not None:
             timeout = min(timeout, deadline - time.monotonic())
@@ -198,7 +199,18 @@ class GroupModels:
             metrics = []
             try:
                 with capture_metrics() as metrics:
-                    value = lane.get_client().generate_images(request, deadline=job.deadline)
+                    prepared = request
+                    if source_image:
+                        from dataclasses import replace
+                        from provider import ImageInput
+                        from wxbridge.storage.image_artifacts import read_artifact, ImageArtifactError
+                        try:
+                            _, data = read_artifact(self.cfg.paths.queue_file, source_image)
+                        except ImageArtifactError as exc:
+                            raise ModelError(exc.code) from None
+                        prepared = replace(request, images=(ImageInput(data, source_image['mime']),))
+                        job.check()
+                    value = lane.get_client().generate_images(prepared, deadline=job.deadline)
                     job.check()
             except Exception as exc:
                 failure = exc if isinstance(exc, ModelError) else ModelError('image_generation_failed')

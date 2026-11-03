@@ -21,26 +21,27 @@ def run_tool_loop(cfg: InstanceConfig, client, messages, on_search=None, *, sear
     if deadline is not None:
         end = min(end, deadline)
     backend = resolve_search_backend(settings, client)
-    definitions = get_enabled_tools(settings, search_backend=backend)
+    edit_images = getattr(messages, 'edit_images', {})
+    definitions = get_enabled_tools(settings, search_backend=backend, editable=bool(edit_images))
     context = ToolContext(settings=settings, backend=backend, deadline=end,
         allowed_tools=frozenset(tool['function']['name'] for tool in definitions),
-        search_client=search_client, on_search=on_search, check=check)
+        search_client=search_client, on_search=on_search, check=check, edit_images=edit_images)
     conversation = apply_tool_instructions(settings, response_prompt(messages, settings), tools=definitions)
 
     def finish(text, annotations=()):
         context.check_active()
         text = format_reply(without_citations(text, context.sources, annotations), settings).strip()
-        if not text and not context.image_requests:
+        if not text and not context.image_proposals:
             raise ModelError('empty_reply', retryable=True)
-        return ToolReply(text, context.metadata(), tuple(deepcopy(context.image_requests)))
+        return ToolReply(text, context.metadata(), tuple(deepcopy(context.image_proposals)))
 
     maximum_rounds = int(search.max_tool_rounds)
     for turn in range(maximum_rounds + 1):
         context.check_active()
         exhausted = turn >= maximum_rounds
         tools = [] if exhausted else [tool for tool in definitions
-            if ((tool['function']['name'] == 'generate_image' and not context.image_requests)
-                or (tool['function']['name'] != 'generate_image' and context.remaining_search_calls > 0))]
+            if ((tool['function']['name'] in ('generate_image', 'edit_image') and not context.image_proposals)
+                or (tool['function']['name'] not in ('generate_image', 'edit_image') and context.remaining_search_calls > 0))]
         native = native_search_options(context, exhausted=exhausted)
         try:
             result = client.request(conversation, tools=tools or None, native_search=native,
@@ -56,7 +57,7 @@ def run_tool_loop(cfg: InstanceConfig, client, messages, on_search=None, *, sear
                     return finish('这次查询到上限了，暂时还没能整理完整')
                 conversation.append(client.assistant_message(result.message))
                 continue
-            prepared_only = (context.image_requests and result.finish_reason == 'stop'
+            prepared_only = (context.image_proposals and result.finish_reason == 'stop'
                              and not result.message.get('content') and not result.message.get('tool_calls'))
             if not prepared_only:
                 client.check_complete(result)
@@ -67,10 +68,10 @@ def run_tool_loop(cfg: InstanceConfig, client, messages, on_search=None, *, sear
                             'continuation_provider_mismatch'):
                 raise
             if exc.code == 'empty_reply':
-                if context.image_requests:
+                if context.image_proposals:
                     return finish('')
                 raise
-            if not context.attempted and not context.image_requests:
+            if not context.attempted and not context.image_proposals:
                 raise
             context.errors.append('answer_generation_failed')
             return finish('刚才查到了一些资料，但整理回答超时了，稍后再试。' if context.sources
@@ -82,7 +83,7 @@ def run_tool_loop(cfg: InstanceConfig, client, messages, on_search=None, *, sear
         validate_tool_calls(calls, context)
         if not calls:
             text = result.message.get('content') or ''
-            if not format_reply(text, settings).strip() and not context.image_requests:
+            if not format_reply(text, settings).strip() and not context.image_proposals:
                 return finish('')
             if context.attempted and ('native_search_failed' in context.errors or not context.sources):
                 text = ('这次联网查询没有完成，暂时核实不了，稍后再试。' if context.errors

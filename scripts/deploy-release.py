@@ -135,9 +135,9 @@ def wait_native_ready():
             time.sleep(.25)
 
 
-def configured_groups():
+def configured_instances():
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
-    from wxbridge.app.status.paths import configured_groups as groups
+    from wxbridge.app.status.paths import configured_instances as groups
     return groups(APP, RUN)
 
 
@@ -154,7 +154,7 @@ def queue_one(path):
 
 
 def queue():
-    groups = configured_groups()
+    groups = configured_instances()
     from wxbridge.app.status.paths import queue_paths
     paths = queue_paths(APP, RUN)
     values = {identifier: queue_one(path) for path, identifier in paths.items()}
@@ -286,7 +286,7 @@ def deploy(stage, backup, *, apply=False, update_helper=False, allow_pending_mem
         stop_helper(images_enabled=images_before)
         with ExitStack() as locks:
             lock_paths = {RUN/'queue.sqlite3.lock', RUN/'decrypted/.listener.lock'}
-            lock_paths.update(Path(cfg.paths.queue_file+'.lock') for _, cfg, _ in configured_groups())
+            lock_paths.update(Path(cfg.paths.queue_file+'.lock') for _, cfg, _ in configured_instances())
             for path in sorted(lock_paths):
                 fd = os.open(path, os.O_RDWR | os.O_NOFOLLOW);locks.callback(os.close, fd)
                 if os.fstat(fd).st_uid != user.pw_uid:

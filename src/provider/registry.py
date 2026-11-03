@@ -82,8 +82,8 @@ class ModelRegistry:
     def from_discovered(cls, config, discovered):
         models, by_id = {}, {}
         for model in discovered:
-            spec = ModelSpec(config.protocols[model.provider], model.id, model.provider,
-                             {**config.options[model.provider], 'thinking': 'disabled'})
+            spec = ModelSpec(config.protocols[model.connection], model.id, model.connection,
+                             {**config.options[model.connection], 'thinking': 'disabled'})
             if model.alias in models:
                 raise ValueError('duplicate_model_alias')
             models[model.alias] = spec

@@ -7,7 +7,7 @@ import re
 
 INSTANCE_ID = re.compile(r'[a-zA-Z0-9][a-zA-Z0-9_-]{0,47}\Z')
 CHAT_ID = re.compile(r'(?:[a-zA-Z0-9_-]{1,128}@chatroom|wxid_[a-zA-Z0-9_-]{1,120})\Z')
-GROUP_FIELDS = {'system_prompt_file', 'target', 'model_clients', 'models', 'profile',
+INSTANCE_FIELDS = {'system_prompt_file', 'target', 'model_clients', 'models', 'profile',
                 'reply_style', 'participation', 'memory', 'search', 'vision', 'queue', 'image_generation'}
 
 
@@ -15,7 +15,7 @@ def validate_account_fields(data):
     """Root JSON contains account resources only, never group overrides."""
     allowed = {'db_dir', 'keys_file', 'decrypted_dir', 'state_file', 'log_file',
                'wechat_process', 'source', 'account', 'poll_interval_seconds',
-               'ui', 'native_api', 'provider_env', 'queue', 'memory'}
+               'ui', 'native_api', 'helper_transport', 'submission_api', 'provider_env', 'queue', 'memory'}
     if not isinstance(data, dict) or set(data)-allowed:
         raise ValueError('root_config_requires_account_fields_only; put group settings in instance/<id>/config.json')
     for section, keys in (('queue', {'file'}), ('memory', {'directory'})):
