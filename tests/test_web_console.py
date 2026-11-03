@@ -162,6 +162,48 @@ else:
         self.assertEqual(result['activation'],'restart_required')
         self.assertEqual(result['config']['chat'],item['config']['chat'])
 
+    def test_legacy_tool_rounds_are_editable_without_writing_until_save(self):
+        path=self.root/'instance/private_demo/config.json'
+        original=json.loads(path.read_text(encoding='utf-8'))
+        original['search']={'enabled':False,'max_tool_rounds':3}
+        path.write_text(json.dumps(original),encoding='utf-8')
+        raw=path.read_bytes()
+        item=self.item()
+        self.assertEqual(path.read_bytes(),raw)
+        self.assertEqual(item['config']['tools']['max_rounds'],3)
+        self.assertNotIn('max_tool_rounds',item['config']['search'])
+        self.assertEqual(item['effective']['tools']['max_rounds'],3)
+        saved=self.repository.save('private_demo',item['config'],item['revision'])
+        self.assertEqual(saved['config']['tools']['max_rounds'],3)
+        self.assertEqual(json.loads(path.read_text(encoding='utf-8'))['search'],{'enabled':False})
+        changed=deepcopy(saved['config'])
+        changed['tools']['max_rounds']=1
+        saved=self.repository.save('private_demo',changed,saved['revision'])
+        self.assertEqual(saved['effective']['tools']['max_rounds'],1)
+        reset=deepcopy(saved['config'])
+        del reset['tools']['max_rounds']
+        saved=self.repository.save('private_demo',reset,saved['revision'])
+        self.assertEqual(saved['effective']['tools']['max_rounds'],2)
+        self.assertNotIn('max_tool_rounds',json.loads(path.read_text(encoding='utf-8'))['search'])
+
+    def test_new_tool_rounds_win_over_legacy_on_read_and_save(self):
+        path=self.root/'instance/private_demo/config.json'
+        document=json.loads(path.read_text(encoding='utf-8'))
+        document['search']={'max_tool_rounds':3}
+        document['tools']={'max_rounds':1}
+        path.write_text(json.dumps(document),encoding='utf-8')
+        item=self.item()
+        self.assertEqual(item['config']['tools']['max_rounds'],1)
+        self.assertEqual(item['effective']['tools']['max_rounds'],1)
+        saved=self.repository.save('private_demo',document,item['revision'])
+        self.assertEqual(saved['effective']['tools']['max_rounds'],1)
+        self.assertNotIn('max_tool_rounds',json.loads(path.read_text(encoding='utf-8'))['search'])
+
+    def test_new_instance_rejects_non_object_config(self):
+        with self.assertRaises(ManagementError) as error:
+            self.repository.save('another',[],None,create=True)
+        self.assertEqual(error.exception.code,'invalid_instance_fields')
+
     def test_stale_config_revision_does_not_overwrite_external_edit(self):
         item=self.item(); path=self.root/'instance/private_demo/config.json'
         changed=dict(item['config'],enabled=False)

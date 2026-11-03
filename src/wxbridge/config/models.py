@@ -229,12 +229,18 @@ class SearchConfig(Section):
     backend: str = field(default='external', metadata={'choices': ('external', 'native', 'auto'), 'error': 'invalid_search_backend'})
     timeout_seconds: int = field(default=15, metadata={'range': (1, 60), 'error': 'invalid_config_range'})
     total_timeout_seconds: int = field(default=120, metadata={'range': (15, 300), 'error': 'invalid_config_range'})
-    max_tool_rounds: int = field(default=2, metadata={'range': (1, 3), 'error': 'invalid_config_range'})
     max_requests: int = field(default=3, metadata={'range': (1, 5), 'error': 'invalid_config_range'})
     max_results: int = field(default=5, metadata={'range': (1, 10), 'error': 'invalid_config_range'})
     feedback_enabled: bool = False
     feedback_phrases: tuple[str, ...] = field(default=('我上网搜搜，核实一下。', '我去看看。'), metadata={'strings': (1, 80, 0, False)})
     connection: str = 'deepseek'
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ToolConfig(Section):
+    strict_fields: ClassVar[bool] = True
+    max_rounds: int = field(default=2, metadata={'range': (1, 3), 'error': 'invalid_config_range'})
+    total_timeout_seconds: int = field(default=120, metadata={'range': (1, 300), 'error': 'invalid_config_range'})
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -397,6 +403,7 @@ class InstanceConfig(Section):
     participation: ParticipationConfig = field(default_factory=ParticipationConfig)
     reply_style: ReplyStyleConfig = field(default_factory=ReplyStyleConfig)
     search: SearchConfig = field(default_factory=SearchConfig)
+    tools: ToolConfig = field(default_factory=ToolConfig)
     vision: VisionConfig = field(default_factory=VisionConfig)
     profile: ProfileConfig = field(default_factory=ProfileConfig)
     image_generation: ImageGenerationConfig = field(default_factory=ImageGenerationConfig)
@@ -419,7 +426,7 @@ class AppConfig(Section):
 __all__ = [
     'ConfigError', 'Missing', 'UNSET', 'FrozenMap', 'Section', 'ConfigSource',
     'RuntimePaths', 'RuntimePolicy', 'HelperTransportConfig', 'SubmissionAPIConfig', 'UIConfig', 'TargetConfig',
-    'QueueConfig', 'ParticipationConfig', 'ReplyStyleConfig', 'SearchConfig',
+    'QueueConfig', 'ParticipationConfig', 'ReplyStyleConfig', 'SearchConfig', 'ToolConfig',
     'VisionConfig', 'ProfileConfig', 'ImageGenerationConfig', 'ModelClients',
     'LearningConfig', 'AvatarConfig', 'MemoryConfig', 'TextOptions', 'ImageOptions',
     'TextModelConfig', 'ImageModelConfig', 'ModelsConfig', 'AccountConfig',

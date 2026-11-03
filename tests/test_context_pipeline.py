@@ -25,10 +25,11 @@ from tests.support.pipeline import FakeJob, PipelineFixture
 
 class PipelineTests(PipelineFixture):
 
-    def test_image_tool_does_not_replace_reply_worker_timeout_with_disabled_search_budget(self):
+    def test_image_tool_uses_general_worker_timeout_with_search_disabled(self):
         self.cfg = update_config(self.cfg, 'search', enabled=False, total_timeout_seconds=1, owner=self)
         self.cfg = replace_config(self.cfg, 'image_generation.enabled', True, owner=self)
         self.cfg = replace_config(self.cfg, 'models.reply.options.timeout_seconds', 240, owner=self)
+        self.cfg = replace_config(self.cfg, 'tools.total_timeout_seconds', 240, owner=self)
         factory=Mock(side_effect=self.bot.job_factory)
         self.bot.job_factory=factory
         self.add(1)

@@ -93,7 +93,8 @@ def web_search(arguments, context):
     query = arguments.get('query')
     if set(arguments) != {'query'} or not isinstance(query, str) or not 1 <= len(query.strip()) <= 128:
         raise ToolError('invalid_query')
-    raw = _backend(context).search(query.strip(), context.deadline)
+    with context.search_operation() as deadline:
+        raw = _backend(context).search(query.strip(), deadline)
     context.check_active()
     rows = raw.get('results') if isinstance(raw, dict) else None
     if not isinstance(rows, list):
@@ -115,7 +116,8 @@ def web_fetch(arguments, context):
     if (set(arguments) != {'url'} or not is_public_url_candidate(url)
             or url not in {source['url'] for source in context.sources}):
         raise ToolError('unverified_fetch_url')
-    raw = _backend(context).fetch(url, context.deadline)
+    with context.search_operation() as deadline:
+        raw = _backend(context).fetch(url, deadline)
     context.check_active()
     if not isinstance(raw, dict):
         raise ToolError('invalid_search_response')

@@ -1,5 +1,6 @@
 """Request-local tool state and explicit results; no queues or durable writes."""
 from dataclasses import dataclass, field
+from contextlib import contextmanager
 import time
 
 from provider import ModelError
@@ -15,6 +16,8 @@ class ToolError(RuntimeError):
 class ToolResult:
     output: dict = field(repr=False)
     image_request: ImageProposal | None = field(default=None, repr=False)
+    # Explicitly authored by the tool, not inferred from model or network output.
+    user_notice: str | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True)
@@ -42,6 +45,8 @@ class ToolContext:
     actions: int = 0
     attempted: bool = False
     notified: bool = False
+    search_elapsed: float = 0
+    tool_notices: list[str] = field(default_factory=list, repr=False)
 
     def check_active(self):
         if self.check is not None:
@@ -53,6 +58,26 @@ class ToolContext:
     def remaining_search_calls(self):
         return max(0, int(self.settings.search.max_requests)
                    - (self.actions if self.backend == 'native' else self.calls))
+
+    @property
+    def remaining_search_seconds(self):
+        return max(0.0, float(self.settings.search.total_timeout_seconds) - self.search_elapsed)
+
+    @contextmanager
+    def search_operation(self):
+        self.check_active()
+        remaining = self.remaining_search_seconds
+        if remaining <= 0:
+            raise ToolError('search_timeout')
+        started = time.monotonic()
+        deadline = min(self.deadline, started + remaining)
+        try:
+            yield deadline
+            self.check_active()
+            if time.monotonic() >= deadline:
+                raise ToolError('search_timeout')
+        finally:
+            self.search_elapsed += max(0.0, time.monotonic() - started)
 
     def search_started(self):
         self.attempted = True

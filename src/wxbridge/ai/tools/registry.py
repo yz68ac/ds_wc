@@ -15,6 +15,19 @@ TOOLS = {
     'edit_image': (EDIT_IMAGE_TOOL, edit_image),
 }
 
+# Tool-specific budgets belong here; tools without a special budget only use
+# the common round and deadline limits.
+SEARCH_TOOLS = frozenset(('web_search', 'web_fetch'))
+IMAGE_TOOLS = frozenset(('generate_image', 'edit_image'))
+
+
+def tool_available(name, context):
+    if name in SEARCH_TOOLS:
+        return context.remaining_search_calls > 0 and context.remaining_search_seconds > 0
+    if name in IMAGE_TOOLS:
+        return not context.image_proposals
+    return True
+
 
 def get_enabled_tools(settings, *, search_backend, editable=False):
     names = []
@@ -67,6 +80,10 @@ def dispatch_tool_call(call, context):
             raise ToolError('invalid_tool_arguments')
         result = TOOLS[name][1](arguments, context)
         context.check_active()
+        if name not in SEARCH_TOOLS and result.output.get('ok') is True and result.user_notice is not None:
+            if not isinstance(result.user_notice, str) or not 1 <= len(result.user_notice.strip()) <= 500:
+                raise ToolError('invalid_tool_notice')
+            context.tool_notices.append(result.user_notice.strip())
         if result.image_request is not None:
             context.image_proposals.append(result.image_request)
         return result

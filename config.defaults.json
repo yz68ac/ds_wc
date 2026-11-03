@@ -182,7 +182,6 @@
     "backend": "external",
     "timeout_seconds": 15,
     "total_timeout_seconds": 120,
-    "max_tool_rounds": 2,
     "max_requests": 3,
     "max_results": 5,
     "feedback_enabled": false,
@@ -191,6 +190,10 @@
       "我去看看。"
     ],
     "connection": "deepseek"
+  },
+  "tools": {
+    "max_rounds": 2,
+    "total_timeout_seconds": 120
   },
   "vision": {
     "enabled": true,

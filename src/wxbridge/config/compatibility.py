@@ -1,6 +1,19 @@
-"""Read legacy transport documents without modifying the caller's files."""
+"""Normalize legacy configuration without modifying the caller's files."""
 from copy import deepcopy
 from .models import ConfigError
+
+
+def normalize_tool_rounds(document):
+    """Read the old search-scoped tool limit without changing the input."""
+    search = document.get('search')
+    if not isinstance(search, dict) or 'max_tool_rounds' not in search:
+        return document
+    value = deepcopy(document)
+    legacy = value['search'].pop('max_tool_rounds')
+    tools = value.setdefault('tools', {})
+    if isinstance(tools, dict):
+        tools.setdefault('max_rounds', legacy)
+    return value
 
 
 def normalize_transport_config(document):

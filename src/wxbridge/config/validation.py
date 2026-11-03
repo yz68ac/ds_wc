@@ -16,13 +16,18 @@ def provider_load(path):
     from provider import load_config
     return load_config(path)
 
+
 def validate_document(data: dict, path, *, environment=True, origins=None, validate_role_models=True):
     """Only the file boundary handles mutable JSON; classes own field constraints."""
     from .codec import account_from_document, instance_from_document
     if not isinstance(data,dict):
         raise ValueError('配置必须为 JSON 对象')
-    from .compatibility import normalize_transport_config
-    data = normalize_transport_config(data)
+    from .compatibility import normalize_tool_rounds, normalize_transport_config
+    old_search = data.get('search')
+    old_rounds = isinstance(old_search, dict) and 'max_tool_rounds' in old_search
+    new_tools = data.get('tools')
+    explicit_rounds = isinstance(new_tools, dict) and 'max_rounds' in new_tools
+    data = normalize_tool_rounds(normalize_transport_config(data))
     p=Path(path)
     for section in ('queue','target'):
         if not isinstance(data.get(section,{}),dict):
@@ -36,6 +41,10 @@ def validate_document(data: dict, path, *, environment=True, origins=None, valid
         raise ValueError('obsolete_model_configuration:'+','.join(sorted(obsolete)))
     cfg=_deep_merge(default_document(),data)
     provenance=dict(origins) if origins is not None else {**field_origins(default_document(),'defaults'),**field_origins(data,'config')}
+    if origins is not None and old_rounds:
+        legacy_origin = provenance.pop('search.max_tool_rounds', None)
+        if not explicit_rounds and legacy_origin:
+            provenance['tools.max_rounds'] = legacy_origin
     if environment and os.environ.get('WX_DB_DIR'):
         cfg['db_dir']=os.environ['WX_DB_DIR']
     base=p.resolve().parent

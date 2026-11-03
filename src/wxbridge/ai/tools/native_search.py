@@ -22,12 +22,12 @@ def resolve_search_backend(settings, client):
 def native_search_options(context, *, exhausted):
     if (context.backend != 'native' or exhausted
             or not context.settings.search.enabled
-            or context.remaining_search_calls == 0):
+            or context.remaining_search_calls == 0 or context.remaining_search_seconds <= 0):
         return None
     return dict(max_calls=min(5, context.remaining_search_calls))
 
 
-def record_native_search(context, result, limit):
+def record_native_search(context, result, limit, *, elapsed=0):
     info = result.search
     if not isinstance(info, dict):
         raise ModelError('invalid_native_search_result')
@@ -46,5 +46,8 @@ def record_native_search(context, result, limit):
                 and not any(source['url'] == row['url'] for source in context.sources)):
             context.sources.append(dict(url=row['url']))
     if used or info.get('attempted'):
+        # The provider combines model generation and hosted search in one call;
+        # only the complete call's elapsed time can be attributed here.
+        context.search_elapsed += max(0.0, elapsed)
         context.search_started()
     return citations

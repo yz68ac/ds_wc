@@ -50,9 +50,8 @@ class ParticipationController:
 
     def _reply_deadline(self, now):
         cfg = self.bot.cfg
-        timeout = model_settings(cfg, 'reply').options.timeout_seconds
-        if cfg.search.enabled:
-            timeout = max(timeout, cfg.search.total_timeout_seconds)
+        timeout = (model_settings(cfg, 'reply').options.timeout_seconds
+                   if self.bot.echo else cfg.tools.total_timeout_seconds)
         if cfg.vision.enabled and cfg.vision.download_enabled:
             timeout += cfg.vision.download_timeout_seconds
         return now+timeout+30+cfg.account.ui.send_confirm_timeout_seconds

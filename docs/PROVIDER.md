@@ -1,6 +1,6 @@
 # provider 用法
 
-更新：2026-10-29。对应 `model-provider 0.3.1`，以仓库当前实现为准。
+更新：2026-11-03。对应 `model-provider 0.3.1`，以仓库当前实现为准。
 
 `provider` 是独立的同步 Python 模型调用库，要求 Python 3.11+。它负责连接配置、协议适配、SDK 请求和统一结果；调用方负责 client 生命周期、任务队列、并发、重试与工具执行。
 
@@ -14,7 +14,7 @@ python -m pip install ./src/provider
 python -m pip install -e ./src/provider
 ```
 
-发行包名是 `model-provider`，导入名是 `provider`。安装会带上 OpenAI 和 Anthropic SDK。直接使用源码时，将仓库的 `src` 加入 `PYTHONPATH`。
+发行包名是 `model-provider`，导入名是 `provider`。安装会带上 OpenAI、Anthropic 和 Google Gen AI SDK。直接使用源码时，将仓库的 `src` 加入 `PYTHONPATH`。wxbridge 账号容器通过根目录 `provider.env` 指定连接配置；下文默认路径描述的是独立使用本库的行为。
 
 配置位置：
 
@@ -41,9 +41,17 @@ DEEPSEEK_API_KEY=填写密钥
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_PROTOCOL=deepseek
 DEEPSEEK_PROXY_URL=
+
+GEMINI_API_KEY=填写密钥
+GEMINI_BASE_URL=https://generativelanguage.googleapis.com
+GEMINI_PROTOCOL=gemini
+GEMINI_IMAGE_BASE_URL=
+GEMINI_PROXY_URL=
 ```
 
-这里的代理地址只是本机代理示例，使用前确认对应服务已存在。非空 `*_PROXY_URL` 会显式交给 SDK；留空时沿用 SDK 的默认网络环境。需要保证某个连接直连时，还应清理进程继承的 `HTTP_PROXY/HTTPS_PROXY/ALL_PROXY` 及其小写变量。
+这里的代理地址只是本机代理示例，使用前确认对应服务已存在。非空 `*_PROXY_URL` 会显式交给 SDK。OpenAI / Anthropic SDK 在留空时沿用默认网络环境；需要保证直连时，还应清理进程继承的 `HTTP_PROXY/HTTPS_PROXY/ALL_PROXY` 及其小写变量。原生 Gemini SDK 设置了 `trust_env=False`，代理仅通过 `GEMINI_PROXY_URL` 显式传入。
+
+原生 `GEMINI_PROTOCOL=gemini` 的地址填写服务根地址，不附加 `/v1`、`/v1beta` 或 `/v1beta/openai`，SDK 自行添加原生 API 路径。图片地址默认沿用 `GEMINI_BASE_URL`。如果文字通过 `GEMINI_PROTOCOL=openai/openai_compatible` 走兼容接口，`GEMINI_BASE_URL` 填兼容地址，`GEMINI_IMAGE_BASE_URL` 必须另填支持原生 Gemini 的服务根地址；图片不会经 OpenAI 兼容接口发送。
 
 进程环境变量优先于文件，包括空值。读取配置不修改进程环境；文件仅支持 `KEY=value` 和成对引号，不做变量插值。修改配置后重新创建 client。密钥、真实 `.env` 和 `models.json` 不提交到 Git。
 
@@ -57,13 +65,15 @@ Anthropic 的版本和认证默认交给 SDK；特殊网关才需要 `ANTHROPIC_
 | `openai / openai` | OpenAI SDK `chat.completions.create` | 文本、图片输入、函数工具 |
 | `anthropic / anthropic_messages` | Anthropic SDK `messages.create` | 文本、图片输入、函数工具、原生搜索、思考参数 |
 | `deepseek / deepseek` | OpenAI SDK `chat.completions.create` | 文本、函数工具、DeepSeek 思考参数 |
-| OpenAI Images | OpenAI SDK `images.generate` | 文生图，默认 `low / 1024x1024` |
+| `gemini / gemini` | Google Gen AI SDK `models.generate_content` | 文本、图片输入、函数工具、思考参数 |
+| OpenAI Images | OpenAI SDK `images.generate / images.edit` | 文生图、原图编辑，默认 `low / 1024x1024` |
+| Gemini 图片 | Google Gen AI SDK `models.generate_content` | 文生图、带原图的编辑，支持宽高比及图片尺寸参数 |
 
-实际模型能力由服务端决定；兼容地址不保证支持表中所有功能。`.env` 当前固定使用 `openai/anthropic/deepseek` 三个连接名，协议按各自允许的值配置。低层 `Client` / `ModelRegistry` 还可用于程序内显式连接配置。
+实际模型能力由服务端决定；兼容地址不保证支持表中所有功能。`.env` 当前固定使用 `openai/anthropic/deepseek/gemini` 四个连接名，协议按各自允许的值配置。连接名用于选择地址和凭据，协议用于选择请求格式；例如 `gemini` 连接的文字请求可以选择兼容协议，图片仍使用原生 Gemini。低层 `Client` / `ModelRegistry` 还可用于程序内显式连接配置。
 
-当前没有异步 client、流式生成、图片编辑、音频、视频、Realtime 或 HTTP 网关。`Client.stream()` 和 `ModelRouter.stream()` 返回 `unsupported_stream`。官方 SDK 提供的其他接口不会自动成为本库的公共接口。
+当前没有异步 client、流式生成、音频、视频、Realtime 或 HTTP 网关。`Client.stream()` 和 `ModelRouter.stream()` 返回 `unsupported_stream`。官方 SDK 提供的其他接口不会自动成为本库的公共接口。
 
-OpenAI 上游参考：[Responses](https://developers.openai.com/api/docs/guides/migrate-to-responses)、[Images generate](https://developers.openai.com/api/reference/python/resources/images/methods/generate)。本库只封装上表列出的部分能力，图片生成当前使用独立的 Images 接口。
+OpenAI 上游参考：[Responses](https://developers.openai.com/api/docs/guides/migrate-to-responses)、[Images generate](https://developers.openai.com/api/reference/python/resources/images/methods/generate)。本库只封装上表列出的部分能力，OpenAI 图片请求使用独立的 Images 接口；Gemini 图片请求使用原生 `generate_content`。
 
 ## 3. 单连接调用：推荐入口
 
@@ -168,9 +178,13 @@ with ExitStack() as stack:
 
 把 assistant 消息加入后续请求时使用 `client.assistant_message(result.message)`；通过 router 调用时使用 `router.assistant_message(model_alias, result.message)`。这会保留协议所需的思考签名和工具续接信息；续接状态不能跨连接或模型复用。
 
-图片输入通过消息中的 `image_url` 内容块交给适配器，格式和来源需满足适配器限制。`native_search` 用于 Responses / Anthropic 的原生搜索；Chat Completions 和 DeepSeek 适配器不提供原生搜索。wxbridge 的外部搜索、联网抓取和工具循环属于上层业务。
+图片理解通过消息中的 `image_url` 内容块交给适配器，格式和来源需满足适配器限制；原生 Gemini 将 Base64 data URL 转为内联图片，不自动下载远程 URL。生图和改图使用下节独立的 `ImageRequest` 接口。
 
-## 6. OpenAI 文生图
+`native_search` 用于 Responses / Anthropic 的原生搜索；Chat Completions、DeepSeek 和 Gemini 适配器不提供原生搜索。wxbridge 的外部搜索、联网抓取和工具循环属于上层业务。
+
+## 6. 文生图与原图编辑
+
+### OpenAI Images
 
 ```python
 from pathlib import Path
@@ -193,7 +207,52 @@ elif image.url:
 
 默认 `quality=low`、`size=1024x1024`、超时 300 秒。可配置 `n/size/quality/background/output_format/output_compression/moderation/safety_identifier` 等选项；模型支持范围以服务端为准。
 
-`ImageResult.images` 中的 `GeneratedImage.data` 是已做 Base64 解码的字节，也可能只有 `url`；库不写文件、不自动下载 URL。Anthropic 和 DeepSeek 连接不支持这个接口。
+编辑图片时传入原图字节，仍调用同一个方法：
+
+```python
+from pathlib import Path
+from provider import ImageInput, ImageRequest, create_client, load_config
+
+config = load_config("/path/to/.env")
+with create_client("openai", config=config) as client:
+    result = client.generate_images(ImageRequest(
+        model="YOUR_IMAGE_MODEL_ID",  # 模型需支持图片编辑
+        prompt="保持主体不变，把背景改成雪山",
+        images=(ImageInput(Path("source.png").read_bytes(), mime="image/png"),),
+        options={"output_format": "png"},
+    ))
+```
+
+`images` 为空时调用 `images.generate`，有原图时调用 `images.edit` 并通过 multipart 上传图片字节。编辑不接受仅适用于生成的 `style/response_format` 参数，当前请求没有蒙版字段；编辑失败不会自动改成纯文字生图。
+
+### Gemini 图片
+
+Gemini 通过原生 `generate_content` 发送文字和内联原图，不复用 OpenAI 的 `size/quality` 参数：
+
+```python
+from pathlib import Path
+from provider import ImageInput, ImageRequest, create_client, load_config
+
+config = load_config("/path/to/.env")
+with create_client("gemini", config=config) as client:
+    result = client.generate_images(ImageRequest(
+        model="YOUR_GEMINI_IMAGE_MODEL_ID",
+        prompt="保持主体不变，把背景改成雪山",
+        images=(ImageInput(Path("source.png").read_bytes(), mime="image/png"),),
+        options={"aspect_ratio": "1:1", "timeout_seconds": 180},
+    ))
+    # 文生图时省略 images；可按模型能力另设 image_size="512"/"1K"/"2K"/"4K"。
+```
+
+默认宽高比 `1:1`、超时 180 秒。Gemini 只接受 `aspect_ratio/image_size/timeout_seconds` 图片选项，文字使用兼容协议时也保持这套图片参数；地址配置见第 1 节。
+
+### 原图、结果与上层用法
+
+`ImageInput` 支持 PNG/JPEG/WebP 字节，`mime` 须与实际格式一致。本库最多接受 16 张原图，每张最多 8 MiB、合计最多 32 MiB；模型或网关可能另有限制。调用方负责文件读取、来源验证及请求前的图片解码检查。
+
+`ImageResult.images` 中的 `GeneratedImage.data` 是已做 Base64 解码的字节，也可能只有 `url`；库不写文件、不自动下载 URL。Gemini 返回的附加文字位于 `ImageResult.text`。`ImageResult.usage` 保留服务端返回的用量，不能用文件大小或提示词字符数代替。Anthropic 和 DeepSeek 连接不支持这个图片生成接口。
+
+wxbridge 在此接口上组合了用户授权、图片排队、来源绑定和微信发送确认，每轮最多一个图片任务；引用改图只使用本轮实际读取到的引用原图。开启自动图片上下文不会自动选择历史图片改图，具体开关见[根 README](../README.md)和[实例配置示例](../examples/instance/config.example.jsonc)。
 
 ## 7. 公共接口与错误处理
 
@@ -202,7 +261,8 @@ elif image.url:
 | `load_config(path=None)` | 读取连接及凭据 |
 | `create_client(connection, config=...)` | 创建调用方持有的 client |
 | `Client.generate(ModelRequest, ...)` | 指定模型的文本、多模态和工具请求 |
-| `Client.generate_images(ImageRequest, ...)` | OpenAI 文生图 |
+| `Client.generate_images(ImageRequest, ...)` | OpenAI / Gemini 文生图及原图编辑 |
+| `ImageInput(data, mime=...)` | 传递图片字节；通过 `ImageRequest.images` 用作编辑原图 |
 | `Client.fetch_models(timeout=30)` | 获取远端模型列表 |
 | `Client.assistant_message(message)` | 构造协议兼容的 assistant 续接消息 |
 | `Client.close()` / 上下文管理器 | 关闭 SDK 连接 |

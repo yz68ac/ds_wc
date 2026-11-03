@@ -43,7 +43,7 @@
     // 前台完整回复、联网及工具调用使用的连接。
     "reply": "deepseek",
 
-    // 图片生成连接：openai 使用 OpenAI Images；gemini 使用原生 generateContent。
+    // 生图与改图连接：openai 使用 OpenAI Images；gemini 使用原生 generateContent。
     "image": "openai",
 
     // 参与判断、个人记忆、头像分类和群概况共用的连接，可分别使用不同模型。
@@ -56,7 +56,8 @@
     // 图片角色使用 model_clients.image；image_generation.enabled=true 时必须填写模型 ID。
     // 此处示例为 GPT。改用 Gemini 时，把连接改为 gemini，模型填 gemini-3.1-flash-image，
     // options 换成 {"aspect_ratio":"1:1","timeout_seconds":180}，可另加 image_size。
-    // Gemini 需在 provider .env 配置 GEMINI_IMAGE_BASE_URL（例如 http://127.0.0.1:8317）。
+    // Gemini 文字使用兼容协议时，需在 provider .env 另设 GEMINI_IMAGE_BASE_URL，填原生服务根地址。
+    // 文字使用原生 gemini 协议时，图片地址默认沿用 GEMINI_BASE_URL；原生地址不附加 /v1 或 /v1beta。
     // size/quality 为 OpenAI 参数，aspect_ratio/image_size 为 Gemini 参数，不可混用。
     "image": {
       "model": "",
@@ -128,9 +129,26 @@
     }
   },
 
-  // 当前仅支持用户明确要求的文生图，每轮一个任务；使用原生发送接口并核对发出记录。
+  // 支持用户明确要求的文生图及引用改图，每轮最多一个任务；使用原生发送接口并核对发出记录。
+  // 改图需 vision.enabled=true、回复模型支持图片和工具，并在本轮实际读取到引用原图。
+  // 普通上下文图片不是改图来源；缺少原图或编辑失败时不会自动改用文生图。
   // 生图独立排队，不占用文字回复线程；请求结果不确定时不会自动再生成一遍。
   "image_generation": {"enabled": false},
+
+  "vision": {
+    // 图片理解总开关；需要 models.reply.model 支持图片输入。
+    "enabled": true,
+    // 默认 false：只处理明确引用的图片；true：额外附带当前会话上下文内的图片。
+    // 不扩大 target 的回看窗口；引用优先，其余按最近图片补充。
+    "context_images_enabled": false,
+    // 引用与自动上下文共用每次张数上限，范围 1–4；字节上限最大为 8 MiB。
+    "max_images": 4,
+    "max_image_bytes": 8388608,
+    // 这是附送给模型的细节提示；图片用量不包含在 target.context_max_chars 中。
+    "detail": "original",
+    // 默认仅读取本地缓存；开启清晰图片下载前需完成相应 helper/桌面后端配置。
+    "download_enabled": false
+  },
 
   "memory": {
     // 记忆整理仍参考5分钟，不随聊天回看范围扩大；被动学习另有自己的窗口。

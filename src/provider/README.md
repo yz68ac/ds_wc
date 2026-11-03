@@ -1,6 +1,6 @@
 # model-provider
 
-独立同步模型调用库，Python 导入名 provider，版本 0.3.1，要求 Python 3.11+。依赖 OpenAI 和 Anthropic SDK，不依赖微信或 wxbridge。
+独立同步模型调用库，Python 导入名 provider，版本 0.3.1，要求 Python 3.11+。依赖 OpenAI、Anthropic 和 Google Gen AI SDK，不依赖微信或 wxbridge。
 
 从仓库根目录安装：python -m pip install ./src/provider。
 
@@ -10,12 +10,16 @@
 | --- | --- |
 | create_client(connection, config=...) | 创建并复用一个连接的 SDK client |
 | Client.generate(ModelRequest(...)) | 指定模型、消息和请求参数 |
-| Client.generate_images(ImageRequest(...)) | OpenAI 文生图，默认 low / 1024x1024 |
+| Client.generate_images(ImageRequest(...)) | OpenAI Images / Gemini 文生图与改图；传 images 时使用原图 |
 | Client.fetch_models() | 获取远端模型列表 |
 | ModelRouter | 使用本地目录和显式传入的 clients 按模型路由 |
 | Client.close() / with | 调用方关闭 client |
 
 源码/editable 安装读取 src/provider/.env；普通 wheel 安装读取调用方当前目录的 .env；load_config(path) 可显式指定。统一同步模型列表使用 python -m provider models。
+
+内置连接名为 openai / anthropic / deepseek / gemini。OpenAI 图片默认 low / 1024x1024；Gemini 图片使用 aspect_ratio / image_size，不能混用两套参数。Gemini 文字采用兼容协议时，图片仍走原生接口，需另设 GEMINI_IMAGE_BASE_URL。
+
+改图使用 ImageRequest.images 传入 ImageInput 字节，支持 PNG/JPEG/WebP；本库不从文件或 URL 自动读取原图。OpenAI 使用 images.edit，Gemini 使用带图片内容的 generate_content。上游模型须支持相应能力。
 
 调用方负责并发、排队、工具执行、重试，以及等待请求结束后关闭资源。流式生成尚未实现。
 

@@ -50,6 +50,55 @@ class ConfigurationTests(unittest.TestCase):
         changed=default_document();changed['participation']['address_names'].append('changed')
         self.assertEqual(default_document(),expected)
 
+    def test_legacy_tool_rounds_are_migrated_when_loading_instances_without_rewriting(self):
+        path=self.instance(search={'max_tool_rounds':3})
+        before=path.read_bytes()
+        value=load_config(self.path).instances['alpha']
+        self.assertEqual(value.tools.max_rounds,3)
+        self.assertNotIn('max_tool_rounds',json_value(value.search))
+        self.assertEqual(value.metadata.origins['tools.max_rounds'],'instance.alpha:search.max_tool_rounds')
+        self.assertNotIn('search.max_tool_rounds',value.metadata.origins)
+        self.assertEqual(path.read_bytes(),before)
+
+    def test_tool_and_search_timeouts_are_independent_when_loading_instances(self):
+        path=self.instance(search={'enabled': True, 'total_timeout_seconds': 35},
+                           tools={'total_timeout_seconds': 200})
+        before=path.read_bytes()
+        value=load_config(self.path).instances['alpha']
+        self.assertEqual(value.search.total_timeout_seconds,35)
+        self.assertEqual(value.tools.total_timeout_seconds,200)
+        self.assertEqual(path.read_bytes(),before)
+        self.instance(search={'enabled': False, 'total_timeout_seconds': 40})
+        value=load_config(self.path).instances['alpha']
+        self.assertEqual(value.search.total_timeout_seconds,40)
+        self.assertEqual(value.tools.total_timeout_seconds,120)
+
+    def test_tool_timeout_uses_default_and_rejects_invalid_values(self):
+        path=self.instance(search={'total_timeout_seconds': 35})
+        before=path.read_bytes()
+        value=load_config(self.path).instances['alpha']
+        self.assertEqual(value.search.total_timeout_seconds,35)
+        self.assertEqual(value.tools.total_timeout_seconds,120)
+        self.assertEqual(path.read_bytes(),before)
+        for timeout in (0,301,True,'120'):
+            with self.subTest(timeout=timeout):
+                self.instance(tools={'total_timeout_seconds': timeout})
+                with self.assertRaises(ConfigError):load_config(self.path)
+
+    def test_explicit_tool_rounds_override_legacy_and_validate_bounds(self):
+        self.instance(search={'max_tool_rounds':3},tools={'max_rounds':1})
+        self.assertEqual(load_config(self.path).instances['alpha'].tools.max_rounds,1)
+        for value in (0,4,True,'2'):
+            with self.subTest(value=value):
+                self.instance(search={'max_tool_rounds':3},tools={'max_rounds':value})
+                with self.assertRaises(ConfigError):load_config(self.path)
+
+    def test_legacy_tool_rounds_still_validate_bounds(self):
+        for value in (0,4,True,'2'):
+            with self.subTest(value=value):
+                self.instance(search={'max_tool_rounds':value})
+                with self.assertRaises(ConfigError):load_config(self.path)
+
     def test_load_does_not_read_default_reference(self):
         original=Path.read_text
         def checked(path,*args,**kwargs):

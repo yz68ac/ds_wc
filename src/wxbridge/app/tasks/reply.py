@@ -117,8 +117,8 @@ class ReplyController:
                     self.bot.journal.set('context', {**self.bot.journal.get('context', {}), 'reply':prompt.context_stats})
                 echo = "[echo] " + "\n".join(m["text"] for m in task["triggers"]) if self.bot.echo else None
                 timeout = float(model_settings(self.bot.cfg).options.timeout_seconds) + 15
-                if self.bot.cfg.search.enabled and not self.bot.echo:
-                    timeout = float(self.bot.cfg.search.total_timeout_seconds) + 15
+                if not self.bot.echo:
+                    timeout = float(self.bot.cfg.tools.total_timeout_seconds) + 15
                 images = []
                 if self.bot.cfg.vision.enabled and not self.bot.echo:
                     from wxbridge.ai.context.images import image_candidates

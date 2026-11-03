@@ -180,8 +180,9 @@ class NativeSearchTests(unittest.TestCase):
                     self.assertEqual(wire['messages'][-2]['content'][0]['signature'],'PRIVATE_SIGNATURE')
 
 
-    def run_search(self,provider,responses,**options):
+    def run_search(self,provider,responses,*,tool_rounds=None,**options):
         cfg=config(provider);cfg = replace_config(cfg, 'search.backend', 'native');cfg = update_config(cfg, 'search', values=options)
+        if tool_rounds is not None:cfg = replace_config(cfg, 'tools.max_rounds', tool_rounds)
         c=client(cfg)
         self.http=patch.object(c,'_post',side_effect=responses).start()
         self.addCleanup(patch.stopall)
@@ -224,7 +225,7 @@ class NativeSearchTests(unittest.TestCase):
 
     def test_pause_without_search_is_bounded_by_rounds(self):
         data=claude([dict(type='thinking',thinking='',signature='PRIVATE_SIG')],'pause_turn')
-        text,meta=self.run_search('anthropic',[data,data],max_tool_rounds=1)
+        text,meta=self.run_search('anthropic',[data,data],tool_rounds=1)
         self.assertEqual(self.http.call_count,2);self.assertIn('tool_limit',meta['errors']);self.assertNotIn('PRIVATE',text)
 
     def test_no_search_smalltalk_keeps_normal_reply_and_no_sources(self):

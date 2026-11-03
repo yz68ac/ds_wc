@@ -8,7 +8,7 @@ import re
 INSTANCE_ID = re.compile(r'[a-zA-Z0-9][a-zA-Z0-9_-]{0,47}\Z')
 CHAT_ID = re.compile(r'(?:[a-zA-Z0-9_-]{1,128}@chatroom|wxid_[a-zA-Z0-9_-]{1,120})\Z')
 INSTANCE_FIELDS = {'system_prompt_file', 'target', 'model_clients', 'models', 'profile',
-                'reply_style', 'participation', 'memory', 'search', 'vision', 'queue', 'image_generation'}
+                'reply_style', 'participation', 'memory', 'search', 'tools', 'vision', 'queue', 'image_generation'}
 
 
 def validate_account_fields(data):

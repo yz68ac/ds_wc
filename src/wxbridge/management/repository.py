@@ -166,6 +166,10 @@ class ConfigRepository:
         with self.lock:
             data, version = self._json(self._directory(identifier)/'config.json')
             no_secrets(data)
+            # Show the editable, canonical field while preserving the revision
+            # of the original file until the user actually saves it.
+            from wxbridge.config.compatibility import normalize_tool_rounds
+            data = normalize_tool_rounds(data)
             # Display existing configurations without requiring an enabled model.
             # Editing a disabled or incomplete configuration does not require an enabled model.
             from wxbridge.config.loader import _validated
@@ -175,7 +179,7 @@ class ConfigRepository:
             document = _validated(combined, self._directory(identifier)/'config.json', environment=False, validate_role_models=False)
             effective = instance_from_document(document)
             return dict(id=identifier, config=data, revision=version,
-                        effective={key:json_value(getattr(effective,key)) for key in ['models', 'model_clients', 'target', 'queue', 'reply_style', 'participation', 'memory', 'profile', 'search', 'vision', 'image_generation']})
+                        effective={key:json_value(getattr(effective,key)) for key in ['models', 'model_clients', 'target', 'queue', 'reply_style', 'participation', 'memory', 'profile', 'search', 'tools', 'vision', 'image_generation']})
 
     def save(self, identifier, data, expected, *, create=False):
         with self.lock:
@@ -187,6 +191,10 @@ class ConfigRepository:
                 raise ManagementError('revision_conflict', '配置已被其他窗口修改，请重新读取后再保存。', 409)
             if not create and self._json(path)[0].get('chat')!=data.get('chat'):
                 raise ManagementError('chat_identity_immutable','会话 ID 已绑定此实例；更换会话请新建实例。',409)
+            no_secrets(data)
+            from wxbridge.config.compatibility import normalize_tool_rounds
+            if isinstance(data, dict):
+                data = normalize_tool_rounds(data)
             self._validate(identifier, data)
             self._write(path, (json.dumps(data, ensure_ascii=False, indent=2)+'\n').encode())
             return dict(**self.get(identifier), activation='restart_required')

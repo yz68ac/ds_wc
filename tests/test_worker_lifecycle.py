@@ -15,6 +15,7 @@ from wechat_linux.errors import StoreError
 from wxbridge.app.execution.workers import WorkerLease, WorkerCleanupError, ProcessJob
 from wxbridge.app.sessions.conversation import ConversationSession
 from wxbridge.app.tasks.reply import ReplyController
+from tests.support.configuration import replace_config
 
 
 def fixture(case, cls):
@@ -25,6 +26,23 @@ def fixture(case, cls):
 
 
 class WorkerLifecycleTests(unittest.TestCase):
+    def test_reply_job_and_expiry_use_tool_timeout_independent_of_search(self):
+        for search_enabled in (False, True):
+            with self.subTest(search_enabled=search_enabled):
+                f = fixture(self, pipeline.PipelineFixture)
+                f.cfg = replace_config(f.cfg, 'tools.total_timeout_seconds', 150, owner=f)
+                f.cfg = replace_config(f.cfg, 'search.total_timeout_seconds', 15, owner=f)
+                f.cfg = replace_config(f.cfg, 'search.enabled', search_enabled, owner=f)
+                self.assertEqual(f.bot.participation._reply_deadline(f.now),
+                                 f.now + 150 + 30 + f.cfg.account.ui.send_confirm_timeout_seconds)
+                f.add(1)
+                f.bot.intake()
+                f.bot.participation.step(f.now)
+                with patch.object(f.bot, 'job_factory', wraps=f.bot.job_factory) as factory:
+                    self.assertEqual(f.bot.start_foreground(), 1)
+                self.assertEqual(factory.call_args.args[0], 'generate')
+                self.assertEqual(factory.call_args.kwargs['timeout'], 165)
+
     def test_spawned_generation_is_closed_if_registration_transaction_fails(self):
         f = fixture(self, pipeline.PipelineFixture)
         f.add(1)
