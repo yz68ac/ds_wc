@@ -1,5 +1,5 @@
 """Validate helper transport policy without enabling an external API."""
-from wechat_linux.native.protocol import CHAT_ID, NativeError
+from wechat_linux.native import CHAT_ID, NativeError
 from wxbridge.config.models import HelperTransportConfig
 
 

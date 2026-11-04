@@ -1,6 +1,6 @@
 """Translate bot authorization and configuration into native helper calls."""
-from wechat_linux.errors import SendError
-from wechat_linux.native.sender import NativeSender
+from wechat_linux import SendError
+from wechat_linux.native import NativeSender
 from wxbridge.native.settings import settings
 
 

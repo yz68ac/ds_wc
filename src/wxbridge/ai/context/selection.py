@@ -1,6 +1,6 @@
 """Bounded, source-anchored snapshots; no model or worker-side database I/O."""
 from copy import deepcopy
-from wechat_linux.messages.pats import is_pat
+from wechat_linux.messages import is_pat
 
 PAGE_SIZE = 200
 SCAN_LIMIT = 1000

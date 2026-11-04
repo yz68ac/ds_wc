@@ -192,7 +192,7 @@ class TargetConfig(Section):
     context_bot_messages: int = field(default=3, metadata={'range': (0, 10), 'error': 'invalid_config_range'})
     context_max_chars: int = field(default=15000, metadata={'range': (1, 100000), 'error': 'invalid_config_range'})
     context_budget_strategy: str = field(default='recent', metadata={'choices': ('strict', 'recent'), 'error': 'target.context_budget_strategy must be strict/recent'})
-    max_reply_chars: int = 1800
+    max_reply_chars: int = field(default=1800, metadata={'range': (1, 100000), 'error': 'invalid_config_range'})
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

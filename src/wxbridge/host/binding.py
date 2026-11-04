@@ -7,7 +7,7 @@ import time
 import uuid
 
 from wxbridge.host.layout import container
-from wxbridge.host.system import atomic_json, atomic_file, as_user, need_root, private_json, service_account
+from wxbridge.host.system import atomic_json, atomic_file, need_root, private_json, service_account
 from wxbridge.control import request as control_request
 
 
@@ -60,6 +60,28 @@ def restart_sender(state):
     raise ValueError('发送组件正在恢复，请检查 wxbridge status。')
 
 
+def configuration_lock(paths):
+    """Share the Web writer's lock, including ownership when root creates it."""
+    from wxbridge.management.locking import FileLock
+    directory = paths.app/'instance'
+    if directory.is_symlink():raise ValueError('unsafe_instance_directory')
+    directory.mkdir(mode=0o700, exist_ok=True)
+    if os.name == 'posix' and os.geteuid() == 0:
+        owner = (paths.app/'config.json').stat()
+        os.chown(directory, owner.st_uid, owner.st_gid)
+    return FileLock(directory/'.management.lock')
+
+
+def create_bound_instance(paths, identifier, template, account):
+    # Root holds the shared lock; a subprocess taking it again would deadlock.
+    from wxbridge.management.repository import ConfigRepository
+    ConfigRepository(paths.app).save(identifier, template, None, create=True)
+    directory = paths.app/'instance'/identifier
+    if os.name == 'posix':
+        for path in (directory, directory/'config.json'):
+            os.chown(path, account.pw_uid, account.pw_gid)
+
+
 def bind_account(paths, db_dir='auto', *, chat=None, identifier='default', current_state=None):
     need_root()
     from wxbridge.instances import CHAT_ID, INSTANCE_ID
@@ -73,55 +95,54 @@ def bind_account(paths, db_dir='auto', *, chat=None, identifier='default', curre
         raise ValueError('绑定前请先运行 wxbridge bot stop --wait，保留微信登录。')
     account = service_account()
     database = checked_database(discover_database(paths, account) if db_dir == 'auto' else db_dir, account)
-    config_path, helper_path = paths.app/'config.json', (Path('/etc/wxbridge/helper-config.json') if container() else paths.helper/'helper-config.json')
-    from wxbridge.config.compatibility import normalize_transport_config
-    config, helper = normalize_transport_config(private_json(config_path)), private_json(helper_path)
-    if helper.get('uid') != account.pw_uid:
-        raise ValueError('发送 helper 与服务用户绑定不一致。')
-    original = {p:p.read_bytes() for p in (config_path, helper_path, paths.boot_settings)}
-    settings = private_json(paths.boot_settings)
-    config['db_dir'], settings['db_dir'] = str(database), str(database)
-    instance_path = paths.app/'instance'/identifier
-    existing_instance = (instance_path/'config.json').exists()
-    if chat:
-        if existing_instance and private_json(instance_path/'config.json').get('chat') != chat:
-            raise ValueError('该实例已绑定其他会话，请使用新的实例 ID。')
-        for file in (paths.app/'instance').glob('*/config.json'):
-            if file.parent != instance_path and private_json(file).get('chat') == chat:
-                raise ValueError('该会话已绑定其他实例。')
-        for values in (config['helper_transport']['allowed_chat_ids'], helper['allowed_chat_ids']):
-            if chat not in values:
-                values.append(chat)
-            if len(values) > 16:
-                raise ValueError('发送授权清单最多支持16个会话。')
-    backup = paths.home/'setup-backups'/str(uuid.uuid4().hex)
-    backup.mkdir(parents=True, mode=0o700)
-    for index, (path, raw) in enumerate(original.items()):
-        atomic_file(backup/(str(index)+'.json'), raw)
-    atomic_json(backup/'manifest.json', {str(p):str(index)+'.json' for index,p in enumerate(original)})
-    try:
-        atomic_json(config_path, config, uid=account.pw_uid, gid=account.pw_gid)
-        atomic_json(paths.boot_settings, settings)
-        atomic_json(helper_path, helper)
-        if chat and not existing_instance:
-            template = dict(enabled=False, chat=chat, system_prompt_file='system.md',
-                            participation=dict(enabled=True), memory=dict(enabled=False, avatar=dict(enabled=False)),
-                            profile=dict(enabled=False), image_generation=dict(enabled=False),search=dict(enabled=False))
-            code = ("import json,sys; from wxbridge.management.repository import ConfigRepository; "
-                    "r=ConfigRepository(sys.argv[1]); r.save(sys.argv[2],json.loads(sys.argv[3]),None,create=True)")
-            result = as_user(paths, [str(paths.code/'.venv/bin/python'),'-c',code,str(paths.app),identifier,json.dumps(template)],
-                             capture=True, timeout=15)
-            if result.returncode:
-                raise ValueError('实例创建失败，账号绑定已回退。')
-            atomic_file(instance_path/'system.md', '你正在微信里和朋友聊天。自然、简洁地回应，保持身份清晰。\n'.encode(),
-                        uid=account.pw_uid, gid=account.pw_gid)
-        if helper != json.loads(original[helper_path]):
-            restart_sender(state)
-    except BaseException:
-        for path, raw in original.items():
-            owner = dict(uid=account.pw_uid, gid=account.pw_gid) if path == config_path else {}
-            atomic_file(path, raw, **owner)
-        raise
-    return dict(bound=True, db_dir=str(database), instance=identifier if chat else None,
-                instance_created=bool(chat and not existing_instance), bot_started=False,
-                next='在 provider .env 填写密钥；管理台选择回复模型（群聊还需参与模型）并启用实例，然后运行 wxbridge bot start。')
+    with configuration_lock(paths):
+        config_path, helper_path = paths.app/'config.json', (Path('/etc/wxbridge/helper-config.json') if container() else paths.helper/'helper-config.json')
+        from wxbridge.config.compatibility import normalize_transport_config
+        config, helper = normalize_transport_config(private_json(config_path)), private_json(helper_path)
+        if helper.get('uid') != account.pw_uid:
+            raise ValueError('发送 helper 与服务用户绑定不一致。')
+        original = {p:p.read_bytes() for p in (config_path, helper_path, paths.boot_settings)}
+        settings = private_json(paths.boot_settings)
+        config['db_dir'], settings['db_dir'] = str(database), str(database)
+        instance_path = paths.app/'instance'/identifier
+        existing_instance = (instance_path/'config.json').exists()
+        if chat:
+            if existing_instance and private_json(instance_path/'config.json').get('chat') != chat:
+                raise ValueError('该实例已绑定其他会话，请使用新的实例 ID。')
+            for file in (paths.app/'instance').glob('*/config.json'):
+                if file.parent != instance_path and private_json(file).get('chat') == chat:
+                    raise ValueError('该会话已绑定其他实例。')
+            for values in (config['helper_transport']['allowed_chat_ids'], helper['allowed_chat_ids']):
+                if chat not in values:
+                    values.append(chat)
+                if len(values) > 16:
+                    raise ValueError('发送授权清单最多支持16个会话。')
+        backup = paths.home/'setup-backups'/str(uuid.uuid4().hex)
+        backup.mkdir(parents=True, mode=0o700)
+        for index, (path, raw) in enumerate(original.items()):
+            atomic_file(backup/(str(index)+'.json'), raw)
+        atomic_json(backup/'manifest.json', {str(p):str(index)+'.json' for index,p in enumerate(original)})
+        try:
+            atomic_json(config_path, config, uid=account.pw_uid, gid=account.pw_gid)
+            atomic_json(paths.boot_settings, settings)
+            atomic_json(helper_path, helper)
+            if chat and not existing_instance:
+                template = dict(enabled=False, chat=chat, system_prompt_file='system.md',
+                                participation=dict(enabled=True), memory=dict(enabled=False, avatar=dict(enabled=False)),
+                                profile=dict(enabled=False), image_generation=dict(enabled=False),search=dict(enabled=False))
+                try:
+                    create_bound_instance(paths, identifier, template, account)
+                except Exception as exc:
+                    raise ValueError('实例创建失败，账号绑定已回退。') from exc
+                atomic_file(instance_path/'system.md', '你正在微信里和朋友聊天。自然、简洁地回应，保持身份清晰。\n'.encode(),
+                            uid=account.pw_uid, gid=account.pw_gid)
+            if helper != json.loads(original[helper_path]):
+                restart_sender(state)
+        except BaseException:
+            for path, raw in original.items():
+                owner = dict(uid=account.pw_uid, gid=account.pw_gid) if path == config_path else {}
+                atomic_file(path, raw, **owner)
+            raise
+        return dict(bound=True, db_dir=str(database), instance=identifier if chat else None,
+                    instance_created=bool(chat and not existing_instance), bot_started=False,
+                    next='在 provider .env 填写密钥；管理台选择回复模型（群聊还需参与模型）并启用实例，然后运行 wxbridge bot start。')

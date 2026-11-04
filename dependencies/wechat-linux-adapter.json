@@ -1,0 +1,11 @@
+{
+  "name": "wechat-linux-adapter",
+  "version": "0.3.3",
+  "wheel": "wechat_linux_adapter-0.3.3-py3-none-any.whl",
+  "sha256": "7c30c922ea5b17b71dcad7015ba7e8548817941f9e31532e9db69a5819670c5e",
+  "source": {
+    "repository": "../wechat-linux-adapter",
+    "commit": "b802d15b7e370ef89e401c62d7328fd3843404a7",
+    "tag": "v0.3.3"
+  }
+}

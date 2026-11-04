@@ -5,7 +5,11 @@ from pathlib import Path
 import tempfile
 import subprocess
 import unittest
+import hashlib
+import importlib.resources
+import json
 from unittest.mock import Mock, patch
+from tests.support.artifacts import adapter_artifact
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,6 +27,29 @@ installer = script('install-native-helper.py')
 
 
 class NativeImageDeploymentTests(unittest.TestCase):
+    def test_pinned_adapter_updates_require_an_environment_upgrade(self):
+        adapter=json.loads((ROOT/'dependencies/wechat-linux-adapter.json').read_text(encoding='utf-8'))
+        manifest=dict(files={'dependencies/wechat-linux-adapter.json':dict(sha256='a'*64),
+                             'dependencies/'+adapter['wheel']:dict(sha256='b'*64)})
+        self.assertEqual(deployment.helper_changes(manifest,copy.deepcopy(manifest)),[])
+        changed=copy.deepcopy(manifest)
+        changed['files']['dependencies/wechat-linux-adapter.json']['sha256']='c'*64
+        with self.assertRaisesRegex(ValueError,'package_update_requires_upgrade_installation'):
+            deployment.helper_changes(manifest,changed)
+        with self.assertRaisesRegex(ValueError,'package_update_requires_upgrade_installation'):
+            deployment.require_source_only_update(['dependencies/wechat-linux-adapter.json'])
+
+    def test_pinned_helper_assets_come_from_the_verified_wheel(self):
+        with tempfile.TemporaryDirectory(dir=ROOT/'.test-tmp') as folder:
+            stage=Path(folder);adapter_artifact(stage)
+            manifest=dict(files={p.relative_to(stage).as_posix():dict(sha256=hashlib.sha256(p.read_bytes()).hexdigest())
+                                 for p in (stage/'dependencies').iterdir()})
+            assets=importlib.resources.files('wechat_linux.native')
+            self.assertEqual(deployment.helper_body(stage,manifest,'agent.js'),assets.joinpath('agent.js').read_bytes())
+            installed=dict(files={name:hashlib.sha256(assets.joinpath(name).read_bytes()).hexdigest()
+                                  for name in deployment.IMAGE_ASSETS})
+            self.assertEqual(deployment.image_helper_changes(manifest,installed,stage=stage),[])
+
     def test_old_installations_are_rejected_before_service_control(self):
         with patch.object(deployment,'run',side_effect=subprocess.CalledProcessError(1,['metadata'])) as run:
             with self.assertRaisesRegex(ValueError,'application_environment_upgrade_required'):

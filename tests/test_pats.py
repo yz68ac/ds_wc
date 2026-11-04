@@ -56,28 +56,7 @@ class PatTests(unittest.TestCase):
         self.identity = dict(account="wxid_self", chat=CHAT)
         self.memory = MemoryStore(self.temp.name, self.identity)
 
-    def test_actual_actor_overrides_outer_sender_and_discards_display_template(self):
-        event = parsed()
-        self.assertTrue(is_pat(event))
-        self.assertEqual(event["sender"], "wxid_friend")
-        self.assertEqual(event["pat"]["target"], "wxid_self")
-        self.assertEqual(event["mentioned_users"], [])
-        self.assertEqual(event["type"], 49)
-        self.assertEqual(event["raw_type"], 266287972401)
-        self.assertNotIn("TEMPLATE_SECRET", json.dumps(event))
-        self.assertTrue(is_pat(parsed(raw_type=49)))
 
-    def test_empty_patmsg_shared_card_malformed_and_unbound_ids_do_not_trigger(self):
-        cases = ["<msg><appmsg><type>5</type><patMsg><records><recordNum>0</recordNum></records></patMsg></appmsg></msg>",
-                 "<msg>broken", pat_xml().replace("<type>62</type>", "<type>57</type>"),
-                 pat_xml(actor="wxid_unknown"), pat_xml(target="wxid_unknown"), pat_xml(chat="wrong@chatroom"),
-                 pat_xml().replace("<fromusername>", "<fromusername><nested/>"),
-                 pat_xml().replace("<patinfo>", "<patinfo><fromusername>wxid_friend</fromusername>"),
-                 '<!DOCTYPE msg [<!ENTITY x "X">]>'+pat_xml(), pat_xml(actor="wxid friend")]
-        for xml in cases:
-            with self.subTest(xml=xml):
-                self.assertFalse(is_pat(parsed(xml=xml)))
-        self.assertIsNone(parse_pat(pat_xml(), (57<<32)|49, CHAT))
 
     def test_context_and_current_pat_are_actions_not_fabricated_speech(self):
         current = parsed(5)

@@ -40,24 +40,26 @@ def bind_configured_account(supervisor):
     if supervisor.children[HELPER].stopping:
         raise ValueError('helper_restarting')
     paths=Paths(app=supervisor.root)
-    chats=set()
-    for file in (supervisor.root/'instance').glob('*/config.json'):
-        chat=private_json(file).get('chat')
-        if not isinstance(chat,str) or not CHAT_ID.fullmatch(chat):raise ValueError('invalid_chat')
-        chats.add(chat)
-    helper_path=Path('/etc/wxbridge/helper-config.json')
-    helper=private_json(helper_path)
-    allowed=sorted(set(helper['allowed_chat_ids'])|chats)
-    if len(allowed)>16:raise ValueError('too_many_authorized_chats')
-    result=bind_account(paths,current_state=supervisor.status())
-    from wxbridge.config.compatibility import normalize_transport_config
-    config=normalize_transport_config(private_json(supervisor.root/'config.json'))
-    config['helper_transport']['allowed_chat_ids']=allowed
-    atomic_json(supervisor.root/'config.json',config,uid=supervisor.account.pw_uid,gid=supervisor.account.pw_gid)
-    if helper['allowed_chat_ids']!=allowed:
-        helper['allowed_chat_ids']=allowed
-        atomic_json(helper_path,helper)
-        supervisor.children[HELPER].stop()
+    from .binding import configuration_lock
+    with configuration_lock(paths):
+        chats=set()
+        for file in (supervisor.root/'instance').glob('*/config.json'):
+            chat=private_json(file).get('chat')
+            if not isinstance(chat,str) or not CHAT_ID.fullmatch(chat):raise ValueError('invalid_chat')
+            chats.add(chat)
+        helper_path=Path('/etc/wxbridge/helper-config.json')
+        helper=private_json(helper_path)
+        allowed=sorted(set(helper['allowed_chat_ids'])|chats)
+        if len(allowed)>16:raise ValueError('too_many_authorized_chats')
+        result=bind_account(paths,current_state=supervisor.status())
+        from wxbridge.config.compatibility import normalize_transport_config
+        config=normalize_transport_config(private_json(supervisor.root/'config.json'))
+        config['helper_transport']['allowed_chat_ids']=allowed
+        atomic_json(supervisor.root/'config.json',config,uid=supervisor.account.pw_uid,gid=supervisor.account.pw_gid)
+        if helper['allowed_chat_ids']!=allowed:
+            helper['allowed_chat_ids']=allowed
+            atomic_json(helper_path,helper)
+            supervisor.children[HELPER].stop()
     # A fresh account must be searchable before its first business instance exists.
     supervisor.children[RECOVERY].command[-1]='directory'
     supervisor.start(RECOVERY,capture=True)

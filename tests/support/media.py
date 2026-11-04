@@ -11,9 +11,10 @@ import tempfile
 import unittest
 from unittest.mock import Mock
 import zlib
-from wechat_linux.storage.crypto import AES
+from wechat_linux.storage import AES
 from wxbridge.ai.reply.prompt import build_prompt
-from wxbridge.ai.reply.images import V1, V2, prepare_multimodal
+from wxbridge.ai.reply.images import prepare_multimodal
+from wechat_linux.media import V1, V2
 from wxbridge.wechat.store import WeChatStore
 from tests.support.synthetic import NOW, msg
 from tests.support.paths import ROOT

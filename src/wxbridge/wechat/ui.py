@@ -2,7 +2,7 @@
 import logging
 from wxbridge.config import json_value
 
-from wechat_linux.desktop.ui import (
+from wechat_linux.desktop import (
     A11y, Clipboard, Sender as DesktopSender, UIError, WrongChatError, X11, chat_label_matches,
 )
 

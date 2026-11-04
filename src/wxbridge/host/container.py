@@ -72,7 +72,8 @@ def prepare():
     private_directory(Path('/run/wxbridge-control'), 0, account.pw_gid)
     Path('/run/wxbridge-control').chmod(0o750)
     private_directory(Path('/run/wechat-linux-images'), 0, 0)
-    profile = json.loads((code_root()/'src/wechat_linux/native/profile.json').read_text())
+    from importlib.resources import files
+    profile = json.loads(files('wechat_linux.native').joinpath('profile.json').read_text(encoding='utf-8'))
     import hashlib
     with open('/opt/wechat/wechat', 'rb') as stream:
         if hashlib.file_digest(stream, 'sha256').hexdigest() != profile['sha256']:

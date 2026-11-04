@@ -14,7 +14,7 @@ classifiers = [
 ]
 dependencies = [
   "model-provider>=0.3.1,<0.4",
-  "wechat-linux-adapter>=0.2,<0.3",
+  "wechat-linux-adapter==0.3.3",
   "Pillow>=11,<14",
   "fastapi>=0.115,<1",
   "uvicorn>=0.30,<1",
@@ -41,7 +41,7 @@ default-groups = []
 
 [tool.uv.sources]
 model-provider = { path = "src/provider", editable = true }
-wechat-linux-adapter = { path = "src/wechat_linux", editable = true }
+wechat-linux-adapter = { path = "dependencies/wechat_linux_adapter-0.3.3-py3-none-any.whl" }
 
 [tool.setuptools]
 include-package-data = false

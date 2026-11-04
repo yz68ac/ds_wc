@@ -56,7 +56,7 @@ def main(argv: list[str] | None = None) -> int:
 def execute(args):
     from wxbridge_cli import diagnostics
     from wxbridge.config import load_config, AppConfig, prepare_runtime
-    from wechat_linux.storage.keyscan import extract_keys
+    from wechat_linux.storage import extract_keys
     from wxbridge.app.runtime import run_bot
     from wxbridge.storage.journal import read_status
     from wxbridge.wechat.store import discover_db_dir

@@ -10,7 +10,7 @@ import uuid
 from typing import Any, Callable
 
 from wxbridge.storage.memoryfs import require_runtime_directory as require_memory_directory
-from wechat_linux.messages.pats import is_pat
+from wechat_linux.messages import is_pat
 from wxbridge.submission_api.protocol import NativeError, REQUEST_ID, task_status
 from wxbridge.storage.task_state import validate_task, validate_task_states
 from wxbridge.storage.participation import ParticipationJournal

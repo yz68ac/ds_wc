@@ -24,4 +24,4 @@ wxbridge 组合 provider 和 wechat_linux，负责账号资源、群聊与私聊
 
 `helper_transport.enabled` 控制 helper 发送，`submission_api.enabled` 控制本地提交 API。旧 `native_api` 文档在读取时转换，保留旧开关同时控制发送和提交的行为；与新字段混写会被拒绝。新安装默认只启用 helper，提交 API 按需开启。
 
-[模型调用用法](../../docs/PROVIDER.md) · [微信适配状态](../../docs/WECHAT_LINUX.md) · [历史参考](../../docs/reference/README.md)
+[模型调用用法](../../docs/PROVIDER.md) · [微信适配状态](../../docs/WECHAT_LINUX.md)

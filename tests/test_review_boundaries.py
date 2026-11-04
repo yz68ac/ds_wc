@@ -12,7 +12,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from wxbridge.ai.reply.images import read_local_image
+from wechat_linux.media import read_local_image
 from wxbridge.config import load_config
 from wxbridge.config import default_document
 from wxbridge.ai.background.participation import evaluate

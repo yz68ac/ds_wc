@@ -5,6 +5,8 @@ import re
 
 
 def chunk_text(text: str, limit: int) -> list[str]:
+    if type(limit) is not int or limit < 1:
+        raise ValueError('invalid_chunk_limit')
     text = text.strip()
     if not text:
         return []

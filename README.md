@@ -118,6 +118,10 @@ ssh -L 8730:127.0.0.1:8730 用户名@服务器地址
 
 机器人生成的图片在确认发出后会按上下文窗口有限保留，供后续识图或引用修改；这不是长期图片记忆，重建账号容器会清空临时索引。图片输入的用量不包含在 `target.context_max_chars` 文本字符预算中，同一图片在后续请求中再次附带也会产生输入用量，实际以模型服务返回的 usage 为准。
 
+### 独立微信适配库
+
+`wechat_linux` 已提取到独立的本地 Git 仓库 `../wechat-linux-adapter`。机器人通过 `dependencies/` 中固定版本的 wheel 依赖它，不使用该仓库的未发布工作区源码。业务代码从适配库顶层及 `storage`、`messages`、`media`、`native`、`desktop`、`runtime` 的公共包入口导入；接口范围和版本更新、校验、helper 部署边界见 [微信适配库依赖](docs/WECHAT_LINUX.md)。
+
 ### 配置与开发资料
 
 `data/config/` 保存账号与实例配置，`data/home/` 保存微信登录、原始数据库和记忆，根目录 `provider.env` 保存 Provider 配置与密钥，`data/settings/` 保存管理台及 helper 设置，`data/service/` 保存启停状态，`data/catalog/` 保存模型目录缓存。

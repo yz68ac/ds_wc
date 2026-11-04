@@ -100,13 +100,17 @@ class ApplicationCLITests(unittest.TestCase):
             self.assertEqual(main(['--root','/synthetic','debug','--config','custom.json','explain-config']),0)
         self.assertEqual(debug.call_args.args[0].config,'custom.json')
 
-    def test_internal_worker_requires_explicit_send_flag(self):
-        for flags,sending in (([],False),(['--send'],True)):
-            from wxbridge.config import AppConfig
-            cfg=AppConfig()
-            with self.subTest(flags=flags), patch('wxbridge.config.load_config',return_value=cfg), patch.object(runtime,'run_bot',return_value=0) as run:
-                self.assertEqual(runtime.main(['--config','synthetic.json',*flags]),0)
-                self.assertEqual(run.call_args.args[0].account.ui.dry_run,not sending)
+    def test_internal_worker_respects_saved_dry_run_and_explicit_overrides(self):
+        from dataclasses import replace
+        from wxbridge.config import AppConfig
+        for saved in (True,False):
+            base=AppConfig()
+            cfg=replace(base,account=replace(base.account,ui=replace(base.account.ui,dry_run=saved)))
+            for flags,expected in (([],saved),(['--send'],False),(['--dry-run'],True)):
+                with self.subTest(saved=saved,flags=flags), patch('wxbridge.config.load_config',return_value=cfg), patch.object(runtime,'run_bot',return_value=0) as run:
+                    self.assertEqual(runtime.main(['--config','synthetic.json',*flags]),0)
+                    self.assertIs(run.call_args.args[0].account.ui.dry_run,expected)
+                    self.assertIs(cfg.account.ui.dry_run,saved)
 
     def test_empty_account_status_and_explanation_need_no_instance(self):
         from contextlib import redirect_stdout

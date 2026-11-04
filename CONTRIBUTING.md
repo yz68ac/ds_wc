@@ -1,13 +1,13 @@
 # 参与开发
 
-目前用于受邀协作，许可证暂未选定。现行接口见 [provider 用法](docs/PROVIDER.md) 和 [wechat_linux 状态](docs/WECHAT_LINUX.md)，实验与运维记录见 [历史参考](docs/reference/README.md)。
+目前用于受邀协作，许可证暂未选定。现行接口见 [provider 用法](docs/PROVIDER.md) 和 [wechat_linux 状态](docs/WECHAT_LINUX.md)，适配器版本维护见 [微信依赖](docs/WECHAT_LINUX.md)，运维以 [README](README.md) 为准。
 
 ## 模块职责
 
 - provider 处理模型协议和 SDK 调用；使用方持有 client 并负责并发、排队和重试。
 - wechat_linux 处理数据库、消息、媒体与原生提交；通用库不持有机器人配置或业务队列。
 - wxbridge 处理实例、授权、Journal、发送确认、记忆和学习。模型线程返回结果，由主循环应用变更。
-- helper 安装资产与源码分离，修改原生调用时成套核对 helper、agent 和 profile。
+- helper 安装资产与独立适配器分离，修改原生调用时成套核对 helper、agent 和 profile。
 - 未知提交结果保留意图，不盲目重发或切换后端。
 - 版本指纹、静态分析、合成测试和真实收发验证分别说明，不混称为已验证。
 

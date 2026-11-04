@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 import zipfile
+from tests.support.artifacts import adapter_artifact
 
 ROOT = Path(__file__).resolve().parents[1]
 release = runpy.run_path(str(ROOT/'scripts'/'release.py'))
@@ -25,10 +26,11 @@ class ReleaseTests(unittest.TestCase):
         self.bundle = Path(self.temp.name)/'release.zip'
         self.git('init', '-q')
         for name in ('config.defaults.json', 'src/wxbridge/__main__.py', 'src/provider/__init__.py',
-                     'src/wechat_linux/__init__.py', 'scripts/test-offline.py', 'prompts/system.md'):
+                     'pyproject.toml', 'uv.lock', 'scripts/test-offline.py', 'prompts/system.md'):
             path = self.root/name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text('{}' if name.endswith('.json') else 'synthetic', encoding='utf-8')
+        adapter_artifact(self.root)
         self.commit()
 
     def git(self, *args):

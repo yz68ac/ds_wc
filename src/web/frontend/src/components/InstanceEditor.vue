@@ -212,14 +212,14 @@ defineExpose({open: editInstance});
                 :min="1"
                 :max="128000"
                 controls-position="right" /></el-form-item
-            ><el-form-item label="自动回复 / 参与"
+            ><el-form-item label="自动回复"
               ><el-switch
                 v-model="editor.participation.enabled"
                 active-text="启用"
             /></el-form-item>
           </div>
           <small class="field-hint"
-            >私聊直接回复，无需参与判断；群聊由参与模型决策。列表来自当前连接的模型目录，也可手动输入模型
+            >自动回复开启后，私聊直接回复，群聊由参与模型决策；关闭后不再接收新的自动回复消息。列表来自当前连接的模型目录，也可手动输入模型
             ID。</small
           >
           <div class="catalog-toolbar">

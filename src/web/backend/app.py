@@ -7,6 +7,7 @@ from pathlib import Path
 import secrets
 import threading
 import time
+from starlette.requests import ClientDisconnect
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -160,6 +161,17 @@ def create_app(root, password, *, services=None, demo=False, static_dir=None, al
             if request.method in {'POST','PUT','DELETE','PATCH'} and request.url.path!='/api/login':
                 if not session or not secrets.compare_digest(request.headers.get('x-csrf-token',''),session['csrf']):
                     return JSONResponse(dict(error='csrf_denied',message='会话校验失败，请刷新页面。'),status_code=403)
+            if request.method in {'POST','PUT','DELETE','PATCH'}:
+                chunks, size = [], 0
+                try:
+                    async for chunk in request.stream():
+                        size += len(chunk)
+                        if size > 256*1024:
+                            return JSONResponse(dict(error='body_too_large',message='请求超过大小上限。'),status_code=413)
+                        chunks.append(chunk)
+                except ClientDisconnect:
+                    return JSONResponse(dict(error='request_disconnected'),status_code=400)
+                request._body = b''.join(chunks)
         response = await call_next(request)
         response.headers['Cache-Control'] = 'no-store'
         response.headers['X-Content-Type-Options'] = 'nosniff'

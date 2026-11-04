@@ -26,7 +26,7 @@ FRIDA_URL = ('https://files.pythonhosted.org/packages/52/0d/68f5453d9baa0ae5e003
              'frida-17.24.3-cp37-abi3-manylinux_2_5_x86_64.whl')
 ROOT_FILES = frozenset(('.env.example','.gitignore','pyproject.toml','uv.lock','requirements.txt',
     'requirements-test.txt','config.defaults.json','MANIFEST.in','README.md','release-manifest.json'))
-ROOT_DIRS = frozenset(('src','scripts','examples','prompts','resources','tests','docs'))
+ROOT_DIRS = frozenset(('src','scripts','examples','prompts','resources','tests','docs','dependencies'))
 
 
 def sha(path):
@@ -116,7 +116,8 @@ def validate_host(web_host):
 
 
 def verify_media(source, deb=None, wheel=None):
-    profile = json.loads((source/'src/wechat_linux/native/profile.json').read_text())
+    adapter = runpy.run_path(str(source/'scripts/upgrade-installation.py'))['adapter_members'](source)
+    profile = json.loads(adapter['wechat_linux/native/profile.json'])
     manifest = json.loads((source/'resources/wechat/linux-x86_64/4.1.13.26/manifest.json').read_text())
     executable = Path('/opt/wechat/wechat')
     if executable.exists():
@@ -272,7 +273,8 @@ def doctor(paths):
         capture_output=True,timeout=10)
     add('系统 GI / AT-SPI / Gdk',gui.returncode == 0)
     try:
-        profile = json.loads((paths.code/'src/wechat_linux/native/profile.json').read_text())
+        from importlib.resources import files
+        profile = json.loads(files('wechat_linux.native').joinpath('profile.json').read_text(encoding='utf-8'))
         add('微信版本校验',sha('/opt/wechat/wechat') == profile['sha256'])
     except OSError:
         add('微信版本校验',False)
@@ -378,16 +380,20 @@ def install(source, args, *, run=subprocess.run):
     pip = [str(python),'-m','pip','--isolated','install','--index-url','https://pypi.org/simple']
     if args.package_proxy:
         pip += ['--proxy',args.package_proxy]
-    run([*pip,'-r',str(paths.app/'requirements.txt'),'-e',str(paths.app)+'[database,login]',
-         '-e',str(paths.app/'src/provider'),'-e',str(paths.app/'src/wechat_linux')],check=True)
+    dependency = runpy.run_path(str(paths.app/'scripts/upgrade-installation.py'))
+    adapter = dependency['adapter_wheel'](paths.app)
+    run([*pip,'-r',str(paths.app/'requirements.txt'),str(adapter),'-e',str(paths.app)+'[database,login]',
+         '-e',str(paths.app/'src/provider')],check=True)
     scanner = Path('/usr/local/lib/wxbridge-recovery')
     scanner.mkdir(parents=True,mode=0o755)
-    for name in ('wxbridge','wechat_linux'):
+    for name in ('wxbridge',):
         for path in (paths.app/'src'/name).rglob('*'):
             if path.is_file() and path.suffix in ('.py','.json','.js','.c') and '__pycache__' not in path.parts:
                 target = scanner/name/path.relative_to(paths.app/'src'/name)
                 target.parent.mkdir(parents=True,exist_ok=True,mode=0o755)
                 atomic_file(target,path.read_bytes(),mode=0o644)
+    for name, body in dependency['adapter_members'](paths.app).items():
+        atomic_file(scanner/name,body,mode=0o644)
     atomic_json(paths.app/'config.json',initial_config(paths),uid=account.pw_uid,gid=account.pw_gid)
     atomic_json(paths.settings,{'db_dir':''})
     atomic_file(paths.app/'src/provider/.env',credential_free_template((source/'.env.example').read_bytes()),uid=account.pw_uid,gid=account.pw_gid)

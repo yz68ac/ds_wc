@@ -331,6 +331,41 @@ class InstallerTests(unittest.TestCase):
 
 
 class BindingTests(unittest.TestCase):
+    def test_concurrent_web_save_waits_for_binding_and_rollback(self):
+        from threading import Event,Thread
+        from web.backend.demo import seed
+        from wxbridge.management.repository import ConfigRepository
+        from wxbridge.management.settings import account_settings,save_account_settings
+        seed(self.paths.app);repo=ConfigRepository(self.paths.app)
+        for fail in (False,True):
+            with self.subTest(rollback=fail):
+                started,done=Event(),Event();errors=[];threads=[];blocked=[]
+                target=self.paths.app/'config.json'
+                helper=self.paths.helper/'helper-config.json'
+                def save():
+                    started.set()
+                    try:
+                        current=account_settings(repo)
+                        save_account_settings(repo,{'poll_interval_seconds':9},current['revision'])
+                    except Exception as exc:errors.append(exc)
+                    finally:done.set()
+                def write(path,value,**kwargs):
+                    if path==target and not threads:
+                        thread=Thread(target=save);threads.append(thread);thread.start()
+                        started.wait(2);blocked.append(not done.wait(.05))
+                    if path==helper and fail:raise ValueError('synthetic_binding_failure')
+                    Path(path).write_text(json.dumps(value),encoding='utf-8')
+                try:
+                    with self.binding_patches(),patch.object(setup,'atomic_json',side_effect=write):
+                        if fail:
+                            with self.assertRaisesRegex(ValueError,'synthetic_binding_failure'):
+                                setup.bind_account(self.paths,'/synthetic/db_storage')
+                        else:setup.bind_account(self.paths,'/synthetic/db_storage')
+                finally:
+                    for thread in threads:thread.join(5)
+                self.assertEqual(blocked,[True]);self.assertTrue(done.is_set());self.assertEqual(errors,[])
+                self.assertEqual(account_settings(repo)['values']['poll_interval_seconds'],9)
+
     def setUp(self):
         temporary=tempfile.TemporaryDirectory(dir=ROOT/'.test-tmp')
         self.addCleanup(temporary.cleanup)
@@ -371,7 +406,7 @@ class BindingTests(unittest.TestCase):
 
     def test_binding_updates_account_paths_but_keeps_provider_credentials_and_pause(self):
         private=self.paths.app/'provider.env';private.write_text('SYNTHETIC_PRIVATE_VALUE')
-        with self.binding_patches(), patch.object(setup,'as_user') as child:
+        with self.binding_patches(), patch.object(setup,'create_bound_instance') as child:
             result=setup.bind_account(self.paths,'/synthetic/db_storage')
         self.assertTrue(result['bound']);self.assertFalse(result['bot_started'])
         self.assertEqual(json.loads((self.paths.app/'config.json').read_text())['db_dir'],str(self.paths.home/'account/db_storage'))
@@ -381,17 +416,17 @@ class BindingTests(unittest.TestCase):
     def test_failed_instance_creation_restores_all_binding_and_allowlist_files(self):
         paths=[self.paths.app/'config.json',self.paths.helper/'helper-config.json',self.paths.settings]
         before={p:p.read_bytes() for p in paths}
-        with self.binding_patches(), patch.object(setup,'as_user',return_value=SimpleNamespace(returncode=1)):
+        with self.binding_patches(), patch.object(setup,'create_bound_instance',side_effect=ValueError('synthetic_failure')):
             with self.assertRaisesRegex(ValueError,'回退'):
                 setup.bind_account(self.paths,'/synthetic/db_storage',chat='12345@chatroom',identifier='alpha')
         self.assertEqual({p:p.read_bytes() for p in paths},before)
 
     def test_created_instance_is_disabled_but_ready_for_explicit_model_selection(self):
-        def child(paths,args,**kwargs):
+        def child(paths,identifier,template,account):
             directory=self.paths.app/'instance/alpha';directory.mkdir(parents=True)
-            (directory/'config.json').write_text(args[-1])
+            (directory/'config.json').write_text(json.dumps(template))
             return SimpleNamespace(returncode=0)
-        with self.binding_patches(), patch.object(setup,'as_user',side_effect=child), patch.object(setup,'restart_sender'):
+        with self.binding_patches(), patch.object(setup,'create_bound_instance',side_effect=child), patch.object(setup,'restart_sender'):
             result=setup.bind_account(self.paths,'/synthetic/db_storage',chat='12345@chatroom',identifier='alpha')
         value=json.loads((self.paths.app/'instance/alpha/config.json').read_text())
         self.assertTrue(result['instance_created']);self.assertFalse(value['enabled'])

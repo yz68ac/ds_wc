@@ -43,11 +43,14 @@ def main(argv=None):
     from wxbridge.config import load_config
     parser = argparse.ArgumentParser(description='WXBridge foreground worker')
     parser.add_argument('--config', type=Path, required=True)
-    parser.add_argument('--send', action='store_true')
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--send', dest='dry_run', action='store_false')
+    mode.add_argument('--dry-run', dest='dry_run', action='store_true')
+    parser.set_defaults(dry_run=None)
     args = parser.parse_args(argv)
     cfg = load_config(args.config)
     from wxbridge.config import prepare_runtime
-    return run_bot(prepare_runtime(cfg, dry_run=not args.send))
+    return run_bot(prepare_runtime(cfg, dry_run=args.dry_run))
 
 
 if __name__ == '__main__':

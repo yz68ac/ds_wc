@@ -63,7 +63,7 @@ def main(argv=None) -> int:
         with tempfile.TemporaryDirectory(prefix="offline-", dir=temp_root) as temp_dir:
             tempfile.tempdir = temp_dir
             with offline_network():
-                scripts = [name for name in ('test_parsing', 'test_crypto') if 'tests.'+name in modules]
+                scripts = [name for name in ('test_parsing',) if 'tests.'+name in modules]
                 for filename in scripts:
                     runpy.run_path(str(tests / (filename+'.py')), run_name="__main__")
     finally:

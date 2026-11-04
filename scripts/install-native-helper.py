@@ -10,6 +10,7 @@ import base64
 import csv
 import hashlib
 import io
+from importlib.resources import files
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -56,7 +57,7 @@ def install(wheel,user,allowed,*,enable_images=False,image_account=None,image_ac
     with wheel.open('rb') as stream:
         if hashlib.file_digest(stream,'sha256').hexdigest()!=WHEEL_SHA256:
             raise ValueError('frida_wheel_hash_mismatch')
-    source=Path(__file__).resolve().parents[1]/'src'/'wechat_linux'/'native'
+    source=Path(str(files('wechat_linux.native')))
     assets=TEXT_ASSETS+(IMAGE_ASSETS if image else ())
     if any(not (source/name).is_file() or (source/name).is_symlink() for name in assets):
         raise ValueError('helper_source_assets_missing')

@@ -43,7 +43,7 @@ def require_runtime_directory(value: str) -> None:
     from wxbridge.host.layout import container
     if not container():
         return require_memory_directory(value)
-    from wechat_linux.runtime.paths import require_private_directory
+    from wechat_linux.runtime import require_private_directory
     path = Path(value).resolve()
     path.mkdir(mode=0o700, parents=True, exist_ok=True)
     require_private_directory(path)

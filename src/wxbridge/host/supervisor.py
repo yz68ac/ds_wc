@@ -160,7 +160,7 @@ class Supervisor:
         self.children = {
             SESSION: Child(SESSION, ['/usr/bin/python3', str(self.code/'scripts/boot-session.py')], **identity),
             HELPER: Child(HELPER, [str(helper/'venv/bin/python'), '-I', str(helper/'helper.py'), '--serve', str(Path('/etc/wxbridge/helper-config.json') if self.container else helper/'helper-config.json')], cwd=str(helper), timeout=None),
-            BOT: Child(BOT, [python, '-m', 'wxbridge.app.runtime', '--config', str(self.root/'config.json'), '--send'], timeout=330, **identity),
+            BOT: Child(BOT, [python, '-m', 'wxbridge.app.runtime', '--config', str(self.root/'config.json')], timeout=330, **identity),
             WEB: Child(WEB, [python, '-m', 'web.backend', '--root', str(self.root),
                 '--host', DEFAULT_WEB.host, '--port', str(DEFAULT_WEB.port), '--password-file', str(WEB_PASSWORD),
                 '--allow-service-control', '--control-socket', str(self.control_path),
@@ -420,10 +420,13 @@ class Supervisor:
                     self.error = '' if self.ready else 'waiting_for_login_or_repair'
                     self.next_prepare = time.monotonic() + (0 if self.ready else 30)
                 if child.command[-1]=='directory':
-                    child.command[-1]='prepare'
                     self.ready=False
-                    self.next_prepare=time.monotonic()
-                    if code==0:self.error=''
+                    if code==0 or intentional:
+                        child.command[-1]='prepare'
+                        self.next_prepare=time.monotonic()
+                        if code==0:self.error=''
+                    else:
+                        self.next_prepare=time.monotonic()+30
         bot = self.children[BOT]
         if not self.enabled or self.stopping:
             bot.stop(signal.SIGINT)
@@ -452,6 +455,10 @@ class Supervisor:
             self.start(HELPER)
         else:
             self.ready = False
+        if (desktop_ready and self.children[HELPER].running and bot.process is None
+                and self.children[RECOVERY].command[-1]=='directory'
+                and self.children[RECOVERY].process is None and time.monotonic() >= self.next_prepare):
+            self.start(RECOVERY, capture=True)
         if self.enabled and desktop_ready and self.children[HELPER].running and bot.process is None and not self.checkpoint_needed and self.children['checkpoint'].process is None:
             if self.ready:
                 self.start(BOT)

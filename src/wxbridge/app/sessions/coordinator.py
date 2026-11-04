@@ -11,7 +11,7 @@ from pathlib import Path
 import time
 
 from wxbridge.submission_api.protocol import settings as submission_settings
-from wechat_linux.storage.store import StoreError
+from wechat_linux.storage import StoreError
 from wxbridge.app.sessions.account import AccountRuntime
 from wxbridge.app.sessions.conversation import ConversationSession
 from wxbridge.instances import enabled_instances

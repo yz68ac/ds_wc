@@ -7,7 +7,7 @@ import logging
 import time
 import uuid
 from wxbridge.app.delivery.confirmation import scan_confirmation
-from wechat_linux.native.protocol import NativeError, text_parts
+from wechat_linux.native import NativeError, text_parts
 from wxbridge.app.tasks.policy import submission_failure
 from wxbridge.wechat.transport import native as native_transport
 

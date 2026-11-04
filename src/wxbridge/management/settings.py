@@ -15,9 +15,9 @@ LABELS = {
     'target.max_message_age_seconds':'可处理消息最大年龄 / 秒',
     'target.context_recent_messages':'上下文最近消息数', 'target.context_max_age_seconds':'上下文时间范围 / 秒',
     'target.context_bot_messages':'上下文机器人消息数', 'target.context_max_chars':'上下文字符预算',
-    'target.context_budget_strategy':'上下文裁剪策略', 'target.max_reply_chars':'回复最大字符数',
+    'target.context_budget_strategy':'上下文裁剪策略', 'target.max_reply_chars':'每条发送消息字符上限',
     'reply_style.wechat_emoticons_enabled':'微信表情文字', 'reply_style.omit_trailing_period':'省略回复末尾句号',
-    'participation.enabled':'群聊参与判断', 'participation.debounce_seconds':'合并消息等待 / 秒',
+    'participation.enabled':'自动回复', 'participation.debounce_seconds':'合并消息等待 / 秒',
     'participation.max_wait_seconds':'最长合并等待 / 秒', 'participation.max_batch_messages':'每批消息上限',
     'participation.address_names':'被称呼时识别的名字', 'participation.pat_enabled':'响应拍一拍',
     'memory.enabled':'会话记忆', 'memory.context_window_seconds':'记忆上下文窗口 / 秒',
@@ -48,8 +48,8 @@ LABELS = {
     'queue.completed_retention':'保留已完成任务数',
 }
 GROUPS = (
-    ('reply','回复与上下文',('target','reply_style'),'控制回复节奏、长度与上下文。recent 优先保留最近内容，strict 严格检查预算。'),
-    ('participation','群聊参与',('participation',),'仅影响群聊参与判断。最长合并等待不能小于合并消息等待。'),
+    ('reply','回复与上下文',('target','reply_style'),'控制回复节奏、发送分片与上下文。超过每条消息字符上限时分条发送，保留完整回复。微信表情文字开关不限制 Unicode emoji，也不改写代码、引用和链接。recent 优先保留最近内容，strict 严格检查预算。'),
+    ('participation','自动回复与参与',('participation',),'自动回复开关同时控制群聊与私聊。开启后，私聊直接回复，群聊由参与模型判断；关闭后不再接收新的自动回复消息。最长合并等待不能小于合并消息等待。'),
     ('memory','记忆与学习',('memory',),'记忆整理、被动关系学习和头像分类。相关模型在基本配置中选择。'),
     ('profile','群资料',('profile',),'群资料分析的采样与频率。触发消息数不能大于批次大小。'),
     ('tools','工具调用',('tools',),'限制单次回复与工具调用的总时长和调用轮数。'),
@@ -108,8 +108,6 @@ ACCOUNT_FIELDS = [
     dict(path='poll_interval_seconds',label='消息轮询间隔 / 秒',type='number',min=0.1,step=0.1),
     dict(path='account.send_interval_seconds',label='账号发送间隔 / 秒',type='number',min=0,max=60,step=0.1),
     dict(path='ui.send_confirm_timeout_seconds',label='发送确认超时 / 秒',type='number',min=1,integer=True),
-    dict(path='ui.post_send_wait',label='发送后等待 / 秒',type='number',min=0,step=0.1),
-    dict(path='ui.chat_open_wait',label='切换会话后等待 / 秒',type='number',min=0,integer=True),
     dict(path='ui.dry_run',label='演练模式（不实际发送）',type='boolean'),
 ]
 

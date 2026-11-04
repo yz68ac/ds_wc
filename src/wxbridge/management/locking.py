@@ -29,8 +29,17 @@ class FileLock:
                              | getattr(os, 'O_NONBLOCK', 0), 0o600)
                 try:
                     info = os.fstat(fd)
+                    if not stat.S_ISREG(info.st_mode):
+                        raise ValueError('unsafe_management_lock')
+                    owner = os.geteuid() if os.name == 'posix' else None
+                    if owner == 0:
+                        parent = self.path.parent.stat()
+                        owner = parent.st_uid
+                        if info.st_uid == 0 and owner != 0:
+                            os.fchown(fd, owner, parent.st_gid)
+                            info = os.fstat(fd)
                     if not stat.S_ISREG(info.st_mode) or (os.name == 'posix' and
-                            (info.st_uid != os.geteuid() or info.st_mode & 0o077)):
+                            (info.st_uid != owner or info.st_mode & 0o077)):
                         raise ValueError('unsafe_management_lock')
                     if os.name == 'posix':
                         import fcntl

@@ -1,7 +1,6 @@
 """Bot deployment policy and message presentation around the WeChat adapter."""
-from wechat_linux.errors import StoreError
-from wechat_linux.storage.store import (
-    WeChatStore as AdapterStore, HistoryPage, discover_db_dir, format_time, parse_mentioned_users,
+from wechat_linux.storage import (
+    StoreError, WeChatStore as AdapterStore, HistoryPage, discover_db_dir, format_time, parse_mentioned_users,
 )
 from wxbridge.storage.memoryfs import require_memory_directory
 from wxbridge.wechat.messages import display_message

@@ -1,12 +1,21 @@
 """纯文本兜底覆盖真实常见格式，避免破坏网址、代码或原人格。"""
 import copy
+from dataclasses import replace
 import unittest
 
-from wxbridge.ai.reply.output import plain_text, response_prompt
+from wxbridge.ai.reply.output import format_reply, plain_text, reply_rules, response_prompt
+from wxbridge.config import InstanceConfig, ReplyStyleConfig
+from wxbridge.emoticons import tokens
 from wxbridge.wechat.messages import reply_chunks
 
 
 class OutputTests(unittest.TestCase):
+    def test_invalid_chunk_limits_are_rejected_even_for_empty_text(self):
+        for limit in (0, -1, True, 1.5):
+            for text in ('', 'abc'):
+                with self.subTest(limit=limit,text=text), self.assertRaisesRegex(ValueError,'invalid_chunk_limit'):
+                    reply_chunks(text,limit)
+
     def test_markdown_report_becomes_plain_readable_text(self):
         text = '# 更新\n\n> 我查过了，**重点**是这个。\n- *速度更快*\n1. 价格不变\n\n| 型号 | 结论 |\n| --- | --- |\n| A | 能用 |\n\n---'
         self.assertEqual(plain_text(text), '更新\n\n我查过了，重点是这个。\n速度更快\n价格不变\n\n型号，结论\nA，能用')
@@ -50,3 +59,53 @@ class OutputTests(unittest.TestCase):
         self.assertNotIn('尽量不超过30字', prompt[0]['content'])
         self.assertEqual(prompt[1], messages[1])
         self.assertEqual(messages, saved)
+
+
+class ReplyStyleTests(unittest.TestCase):
+    def config(self, *, emoticons=False, omit_period=False):
+        return replace(InstanceConfig(), reply_style=ReplyStyleConfig(
+            wechat_emoticons_enabled=emoticons, omit_trailing_period=omit_period))
+
+    def test_prompt_applies_explicit_preferences_without_changing_the_persona(self):
+        messages = [dict(role='system', content='原有角色允许使用表情。'), dict(role='user', content='你好')]
+        cfg = self.config(omit_period=True)
+        prompt = response_prompt(messages, cfg)
+        self.assertTrue(prompt[0]['content'].startswith(messages[0]['content']))
+        self.assertIn('微信文字表情已关闭', prompt[0]['content'])
+        self.assertIn('Unicode emoji 不受', prompt[0]['content'])
+        self.assertIn('省略回复正文末尾', prompt[0]['content'])
+        self.assertNotIn('已关闭', reply_rules(self.config(emoticons=True)))
+        self.assertEqual(response_prompt(prompt, cfg), prompt)
+
+    def test_disabled_emoticons_remove_catalog_codes_and_aliases_but_keep_unicode(self):
+        text = '收到'+''.join(sorted(tokens()))+'🙂👨‍👩‍👧‍👦👍🏽[备注]。'
+        self.assertEqual(format_reply(text, self.config()), '收到🙂👨‍👩‍👧‍👦👍🏽[备注]。')
+        self.assertEqual(format_reply(text, self.config(emoticons=True)), text)
+
+    def test_preferences_preserve_quoted_literals_code_commands_and_urls(self):
+        text = ('引用“[微笑]。”，字面量 `[Facepalm]`，普通回复[捂脸]。\n'
+                '```python\nvalue = "[微笑]。"\n```\n'
+                'echo [微笑].\nhttps://example.com/[微笑].')
+        expected = ('引用“[微笑]。”，字面量 [Facepalm]，普通回复。\n'
+                    'value = "[微笑]。"\necho [微笑].\nhttps://example.com/[微笑].')
+        self.assertEqual(format_reply(text, self.config(omit_period=True)), expected)
+
+    def test_omit_period_only_changes_the_final_prose_sentence(self):
+        cfg = self.config(omit_period=True)
+        self.assertEqual(format_reply('第一句。\n第二句[微笑]。', cfg), '第一句。\n第二句')
+        self.assertEqual(format_reply('Okay.', cfg), 'Okay')
+        self.assertEqual(format_reply('收到🙂。', cfg), '收到🙂')
+        self.assertEqual(format_reply('收到。\n\n---', cfg), '收到')
+        self.assertEqual(format_reply('收到。\n[捂脸]', cfg), '收到')
+        for text in ('等等...', '等等。。。', '等等……', '版本 1.2.3', '地址 127.0.0.1', '真的？', '好！', '“原话。”', '`value.`', '```text\nvalue.\n```'):
+            with self.subTest(text=text):
+                self.assertEqual(format_reply(text, cfg), plain_text(text))
+
+    def test_period_preference_is_independent_of_the_emoticon_switch(self):
+        self.assertEqual(format_reply('收到[微笑]。', self.config(emoticons=True, omit_period=True)), '收到[微笑]')
+        self.assertEqual(format_reply('收到[微笑]。', self.config(emoticons=True)), '收到[微笑]。')
+
+    def test_per_message_character_limit_preserves_the_complete_reply(self):
+        chunks = reply_chunks('abcdefghij', 4)
+        self.assertEqual(chunks, ['abcd', 'efgh', 'ij'])
+        self.assertEqual(''.join(chunks), 'abcdefghij')

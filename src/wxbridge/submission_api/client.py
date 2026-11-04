@@ -1,7 +1,7 @@
 """Client of the bot's local submission and queue-status API."""
 from __future__ import annotations
 
-from wechat_linux.native.protocol import NativeError, request, validate_send
+from wechat_linux.native import NativeError, request, validate_send
 
 
 class SubmissionClient:

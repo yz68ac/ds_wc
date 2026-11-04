@@ -1,12 +1,13 @@
 """Synthetic management data only; never reads an account database or contacts a model."""
 from copy import deepcopy
 from pathlib import Path
+from types import SimpleNamespace
 import json
 import tempfile
 import subprocess
 import sys
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from web.backend.demo import DEMO_PASSWORD, DemoServices, seed
 from wxbridge.management.repository import ConfigRepository, ManagementError
@@ -15,6 +16,14 @@ from web.backend.status import overview
 
 
 class RepositoryTests(unittest.TestCase):
+    def test_invalid_reply_chunk_limit_cannot_be_saved(self):
+        for limit in (0,-1,True,100001):
+            item=self.repository.get('private_demo')
+            item['config'].setdefault('target',{})['max_reply_chars']=limit
+            with self.subTest(limit=limit),self.assertRaises(ManagementError):
+                self.repository.save('private_demo',item['config'],item['revision'])
+            self.assertEqual(self.repository.get('private_demo')['revision'],item['revision'])
+
     def test_contact_search_normalizes_and_tolerates_mistyped_names(self):
         from wxbridge.management.contacts import match_score
         self.assertGreater(match_score('开 发', ['开发讨论群']),0)
@@ -58,6 +67,58 @@ class RepositoryTests(unittest.TestCase):
         with self.assertRaises(ManagementError) as stale:
             save_account_settings(self.repository,{'poll_interval_seconds':4},current['revision'])
         self.assertEqual(stale.exception.status,409)
+
+    def test_saved_dry_run_reaches_the_worker_through_the_service_command(self):
+        from wxbridge.app import runtime
+        from wxbridge.control import BOT
+        from wxbridge.host.settings import WebConfig
+        from wxbridge.host.supervisor import Supervisor
+        from wxbridge.management.settings import account_settings, save_account_settings
+        state, models = MagicMock(), MagicMock()
+        for directory in (state,models):
+            directory.is_symlink.return_value=False
+            directory.stat.return_value=SimpleNamespace(st_uid=0,st_mode=0o40700)
+        state.__truediv__.return_value.is_symlink.return_value=False
+        state.__truediv__.return_value.exists.return_value=False
+        account=SimpleNamespace(pw_uid=10001,pw_gid=10001,pw_name='wxbridge')
+        def path(value):
+            if str(value)=='/synthetic-state':return state
+            if str(value)=='/var/lib/wxbridge-web':return models
+            return Path(value)
+        with patch.dict(sys.modules,{'pwd':SimpleNamespace(getpwnam=lambda name:account)}), \
+             patch('wxbridge.host.layout.container',return_value=False), \
+             patch('wxbridge.host.supervisor.Path',side_effect=path), \
+             patch('wxbridge.host.supervisor.os.getgrouplist',return_value=[],create=True), \
+             patch('wxbridge.host.supervisor.os.chown',create=True), \
+             patch('wxbridge.host.supervisor.os.chmod'), \
+             patch('wxbridge.host.supervisor.read_web',return_value=WebConfig()), \
+             patch.object(Supervisor,'persist'):
+            supervisor=Supervisor(self.root,state_dir='/synthetic-state',run_dir=self.root/'runtime')
+        command=supervisor.children[BOT].command
+        argv=command[command.index('wxbridge.app.runtime')+1:]
+        for saved in (True,False):
+            current=account_settings(self.repository)
+            save_account_settings(self.repository,{'ui.dry_run':saved},current['revision'])
+            with self.subTest(saved=saved),patch.object(runtime,'run_bot',return_value=0) as run:
+                self.assertEqual(runtime.main(argv),0)
+                active=run.call_args.args[0]
+                self.assertIs(active.account.ui.dry_run,saved)
+                self.assertTrue(all(c.account.ui.dry_run is saved for c in active.instances.values()))
+
+    def test_native_account_settings_do_not_offer_desktop_delays_or_erase_them(self):
+        from wxbridge.management.settings import account_settings, instance_schema, save_account_settings
+        fields={item['path'] for item in instance_schema()['account_fields']}
+        before=json.loads((self.root/'config.json').read_text())
+        for key in ('post_send_wait','chat_open_wait'):
+            self.assertNotIn('ui.'+key,fields)
+            current=account_settings(self.repository)
+            with self.assertRaises(ManagementError):
+                save_account_settings(self.repository,{'ui.'+key:2},current['revision'])
+        current=account_settings(self.repository)
+        save_account_settings(self.repository,{'poll_interval_seconds':3},current['revision'])
+        after=json.loads((self.root/'config.json').read_text())
+        for key in ('post_send_wait','chat_open_wait'):
+            self.assertEqual(after.get('ui',{}).get(key),before.get('ui',{}).get(key))
 
     def test_account_setting_rejects_resource_overrides_and_invalid_values(self):
         from wxbridge.management.settings import account_settings,save_account_settings

@@ -9,7 +9,7 @@ import stat
 import tempfile
 import time
 
-from wechat_linux.desktop.login import LoginController, LoginError, LoginStatus
+from wechat_linux.desktop import LoginController, LoginError, LoginStatus
 
 GUI_ENVIRONMENT = frozenset({
     'DISPLAY', 'XAUTHORITY', 'XDG_RUNTIME_DIR', 'DBUS_SESSION_BUS_ADDRESS',

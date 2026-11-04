@@ -55,9 +55,15 @@ def verify(path):
             if hashlib.sha256(body).hexdigest() != expected.get('sha256'):
                 raise ValueError('release_hash_mismatch')
         required = {'config.defaults.json', 'src/wxbridge/__main__.py', 'src/provider/__init__.py',
-                    'src/wechat_linux/__init__.py', 'scripts/test-offline.py', 'prompts/system.md'}
+                    'dependencies/wechat-linux-adapter.json', 'scripts/test-offline.py', 'prompts/system.md'}
         if not required.issubset(manifest['files']):
             raise ValueError('incomplete_release')
+        dependency=json.loads(bundle.read('dependencies/wechat-linux-adapter.json'))
+        wheel=dependency.get('wheel','')
+        if (not isinstance(wheel,str) or '/' in wheel or '\\' in wheel
+                or not wheel.endswith('.whl') or 'dependencies/'+wheel not in manifest['files']
+                or hashlib.sha256(bundle.read('dependencies/'+wheel)).hexdigest()!=dependency.get('sha256')):
+            raise ValueError('invalid_release_dependency')
         return manifest
 
 

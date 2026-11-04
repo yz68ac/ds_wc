@@ -12,7 +12,7 @@ import time
 from wxbridge.ai.context.selection import message_time
 from wxbridge.storage.journal import Journal
 from wxbridge.wechat.store import StoreError, WeChatStore
-from wechat_linux.messages.pats import is_pat
+from wechat_linux.messages import is_pat
 from wxbridge.app.execution.workers import ProcessJob
 from wxbridge.app.sessions.phases import SessionPhases
 from wxbridge.app.tasks.participation import ParticipationController

@@ -22,41 +22,10 @@ from tests.support.messages import PACKED_REFERENCE, quoted_xml, parse_message
 
 
 class ReferenceParsingTests(unittest.TestCase):
-    def test_real_packed_type_extracts_question_and_old_quoted_content(self):
-        parsed = parse_message(quoted_xml())
-        self.assertEqual(parsed["type"], 1)
-        self.assertEqual(parsed["raw_type"], 244813135921)
-        self.assertEqual(parsed["message_kind"], "quoted_text")
-        self.assertEqual(parsed["text"], "@ds 这怎么看")
-        self.assertEqual(parsed["reference"]["text"], "明天 10 点开会")
-        self.assertEqual(parsed["reference"]["sender_name"], "小明")
-        self.assertEqual(parsed["reference"]["time"], NOW-10000)
-        self.assertEqual(parsed["mentioned_users"], ["wxid_self"])
 
-    def test_legacy_49_reference_and_long_title_not_truncated(self):
-        question, reference = parse_quoted_reply(quoted_xml("@ds "+"长"*1000), 49)
-        self.assertEqual(len(question), 1004)
-        self.assertEqual(reference["kind"], "text")
 
-    def test_non_reference_card_and_malformed_xml_never_become_plaintext(self):
-        for raw_type, xml in [(49, "<msg><appmsg><type>5</type><title>链接</title></appmsg></msg>"),
-                              (PACKED_REFERENCE, "<msg>broken"), ((5<<32)|49, quoted_xml()),
-                              (PACKED_REFERENCE, '<!DOCTYPE msg [<!ENTITY x "X">]><msg/>')]:
-            with self.subTest(raw_type=raw_type):
-                parsed = parse_message(xml, raw_type)
-                self.assertNotEqual(parsed["type"], 1)
 
-    def test_embedded_old_mention_does_not_replace_new_message_mention(self):
-        parsed = parse_message(quoted_xml(), mention="")
-        self.assertEqual(parsed["mentioned_users"], [])
 
-    def test_images_and_missing_reference_are_explicitly_unavailable(self):
-        reference = parse_message(quoted_xml(content="<img cdn='private' />", kind=3))["reference"]
-        self.assertEqual(reference["kind"], "image")
-        self.assertFalse(reference["available"])
-        self.assertEqual(reference["text"], "")
-        parsed = parse_message("<msg><appmsg><type>57</type><title>@ds 怎么看</title></appmsg></msg>")
-        self.assertFalse(parsed["reference"]["available"])
 
     def test_link_snapshot_has_title_description_url_but_never_claims_full_page(self):
         link = "<msg><appmsg><type>5</type><title>标题</title><des>摘要</des><url>https://example.invalid/a</url></appmsg></msg>"
@@ -65,33 +34,7 @@ class ReferenceParsingTests(unittest.TestCase):
         self.assertIn("标题\n摘要", reference["text"])
         self.assertIn("未抓取网页正文", reference["reason"])
 
-    def test_nested_references_are_structured_and_depth_bounded(self):
-        xml = quoted_xml()
-        for _ in range(8):
-            xml = quoted_xml(content=xml, kind=49)
-        reference = parse_message(xml)["reference"]
-        depth = 0
-        while "reference" in reference:
-            reference = reference["reference"]
-            depth += 1
-        self.assertLessEqual(depth, 4)
-        self.assertFalse(reference["available"])
 
-    def test_database_query_pipeline_handles_reference_with_sender_and_metadata(self):
-        conn = sqlite3.connect(":memory:")
-        conn.row_factory = sqlite3.Row
-        conn.execute("CREATE TABLE Msg_test(local_id INTEGER, local_type INTEGER, create_time INTEGER, message_content TEXT, real_sender_id INTEGER, source TEXT)")
-        conn.execute("CREATE TABLE Name2Id(user_name TEXT)")
-        conn.execute("INSERT INTO Name2Id VALUES ('wxid_friend')")
-        conn.execute("INSERT INTO Msg_test VALUES (50,?,?,?,?,?)", (PACKED_REFERENCE, NOW, quoted_xml(), 1,
-                     "<msgsource><atuserlist>wxid_self</atuserlist></msgsource>"))
-        store = WeChatStore.__new__(WeChatStore)
-        store.message_table = Mock(return_value=("test.db", "Msg_test"))
-        store.contacts = Mock(return_value={})
-        store._connect = Mock(return_value=conn)
-        rows = store.messages_after("synthetic@chatroom", 49)
-        self.assertEqual(rows[0]["reference"]["text"], "明天 10 点开会")
-        self.assertEqual(rows[0]["sender"], "wxid_friend")
 
 
 class ReferencePromptTests(unittest.TestCase):

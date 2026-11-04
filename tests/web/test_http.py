@@ -10,6 +10,18 @@ from web.backend.demo import DEMO_PASSWORD,DemoServices,seed
 
 
 class HTTPTests(unittest.TestCase):
+    def test_chunked_login_has_the_same_body_limit_as_fixed_length(self):
+        import json
+        payload=json.dumps({'password':DEMO_PASSWORD}).encode()
+        for size,status in ((256*1024,200),(256*1024+1,413)):
+            body=payload+b' '*(size-len(payload))
+            with self.subTest(size=size):
+                fixed=self.client.post('/api/login',content=body,headers={'content-type':'application/json'})
+                chunked=self.client.post('/api/login',content=iter((body[:100],body[100:])),headers={'content-type':'application/json'})
+                self.assertEqual(fixed.status_code,status)
+                self.assertEqual(chunked.status_code,status)
+                self.assertNotIn('content-length',chunked.request.headers)
+
     def test_contacts_search_supports_remarks_groups_and_existing_bindings(self):
         self.assertEqual(self.client.get('/api/contacts').status_code,401)
         self.login()

@@ -14,6 +14,7 @@ from unittest.mock import patch
 import zipfile
 
 from tests.support.paths import ROOT
+from tests.support.artifacts import adapter_artifact
 
 spec = importlib.util.spec_from_file_location('upgrade_installation', ROOT/'scripts/upgrade-installation.py')
 upgrade = importlib.util.module_from_spec(spec)
@@ -114,9 +115,14 @@ class UpgradeTests(unittest.TestCase):
         name='src/wxbridge/__main__.py';source=stage/name;source.parent.mkdir(parents=True);source.write_bytes(b'new')
         manifest=dict(format=1,commit='a'*40,files={name:dict(sha256=upgrade.digest(source),mode='100644')})
         for relative in upgrade.RECOVERY_MODULES:
+            if relative.startswith('wechat_linux/'):
+                continue
             target=stage/'src'/relative;target.parent.mkdir(parents=True,exist_ok=True)
             shutil.copyfile(ROOT/'src'/relative,target)
             manifest['files']['src/'+relative]=dict(sha256=upgrade.digest(target),mode='100644')
+        adapter_artifact(stage)
+        for artifact in (stage/'dependencies').iterdir():
+            manifest['files'][artifact.relative_to(stage).as_posix()]=dict(sha256=upgrade.digest(artifact),mode='100644')
         (stage/'release-manifest.json').write_text(json.dumps(manifest))
         return app,stage,name
 
@@ -142,7 +148,9 @@ class UpgradeTests(unittest.TestCase):
 
     def test_missing_or_tampered_wheel_is_rejected(self):
         stage,wheels=self.root/'stage',self.root/'wheels';stage.mkdir();wheels.mkdir()
-        for project,prefix in [('wxbridge','wxbridge'),('model_provider','provider'),('wechat_linux_adapter','wechat_linux')]:
+        adapter=adapter_artifact(stage)
+        shutil.copyfile(adapter,wheels/adapter.name)
+        for project,prefix in [('wxbridge','wxbridge'),('model_provider','provider')]:
             source=stage/'src'/prefix/'__init__.py';source.parent.mkdir(parents=True);source.write_bytes(b'synthetic')
             with zipfile.ZipFile(wheels/(project+'-1-py3-none-any.whl'),'w') as archive:
                 archive.writestr(prefix+'/__init__.py',b'synthetic')

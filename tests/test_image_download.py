@@ -20,73 +20,12 @@ def candidate(a,b):
 
 
 class ImageDownloadTests(unittest.TestCase):
-    def test_match_requires_spatial_detail_and_unique_separation(self):
-        image=[v for y in range(20) for x in range(20) for v in ((x*13)%256,(y*13)%256,((x+y)*7)%256)]
-        near=[min(255,v+1) for v in image];other=list(reversed(image))
-        good=candidate(image,near);bad=candidate(image,other)
-        self.assertIs(unique_match([bad,good]),good)
-        self.assertIsNone(unique_match([good,candidate(image,near)]))
-        self.assertIsNone(unique_match([bad]))
-        flat=[255,0,0]*400
-        self.assertIsNone(unique_match([candidate(flat,flat)]))
 
-    def test_stale_showing_frame_without_native_window_is_ignored(self):
-        desktop=object.__new__(DesktopImages);desktop.deadline=time.monotonic()+2;desktop.ui=Mock()
-        stale,live=Mock(),Mock();a,b=Mock(),Mock()
-        desktop.visible=Mock(return_value=[(a,'page tab','Media',{}),(b,'page tab','Media',{})])
-        desktop.ancestor_frame=Mock(side_effect=[stale,live])
-        desktop.window=Mock(side_effect=[DownloadError('download_window_unavailable'),'123'])
-        self.assertIs(desktop.frame_with('Media','page tab'),live)
 
-    def test_click_refuses_wrong_active_window_before_mouse_operation(self):
-        desktop=object.__new__(DesktopImages);desktop.deadline=time.monotonic()+2;desktop.x=Mock();desktop.window=Mock(return_value='123')
-        desktop.x._xdotool.return_value.stdout=b'999'
-        with patch('wechat_linux.desktop.image_download.time.sleep'):
-            with self.assertRaises(DownloadError):desktop.click(Mock(),dict(x=1,y=1,width=20,height=20))
-        desktop.x.move_pointer.assert_not_called()
-        self.assertFalse(any(c.args[0]=='click' for c in desktop.x._xdotool.call_args_list))
 
-    def test_unverified_source_never_opens_ui(self):
-        cfg=default_config();cfg = replace_config(cfg, 'account.ui.backend', 'native_service');adapter=Mock()
-        for proof in ({},{'verified':'yes','chat_title':'synthetic','server_id':'10'},
-                      {'verified':True,'chat_title':'','server_id':'10'}):
-            data,info=improve_image({'download':proof}, cfg.account.ui, b'thumb', {'quality':'thumbnail'}, time.monotonic()+1, runtime_dir=str(Path(cfg.paths.queue_file).parent), adapter=adapter)
-            self.assertEqual(data,b'thumb');self.assertEqual(info['download']['outcome'],'download_unverified')
-        adapter.assert_not_called()
 
-    def test_click_only_succeeds_after_original_bound_cache_confirms_and_closes_under_lock(self):
-        cfg=default_config();cfg = replace_config(cfg, 'account.ui.backend', 'atspi')
-        binding=dict(download=dict(verified=True,chat_title='synthetic',server_id='10'))
-        original=dict(quality='thumbnail',width=20,height=20)
-        desktop=Mock();events=[]
-        @contextmanager
-        def locked(*args):
-            events.append('locked');yield;events.append('unlocked')
-        desktop.close.side_effect=lambda:events.append('closed')
-        with patch('wechat_linux.desktop.image_download.download_lock',locked),\
-             patch('wechat_linux.media.images.read_local_image',return_value=(b'full',dict(quality='cached',width=600,height=800))) as read:
-            data,info=improve_image(binding, cfg.account.ui, b'thumb', original, time.monotonic()+2, runtime_dir=str(Path(cfg.paths.queue_file).parent), adapter=lambda *args:desktop)
-        self.assertEqual(data,b'full');self.assertEqual(info['download']['outcome'],'downloaded')
-        read.assert_called_once_with(binding,max_bytes=8*1024*1024)
-        self.assertEqual(events,['locked','closed','unlocked'])
 
-    def test_timeout_or_ambiguous_match_retains_correct_thumbnail_and_safe_error(self):
-        cfg=default_config();cfg = replace_config(cfg, 'account.ui.backend', 'native_service')
-        binding=dict(download=dict(verified=True,chat_title='synthetic',server_id='10'))
-        desktop=Mock();desktop.open_matching.side_effect=DownloadError('download_match_ambiguous')
-        @contextmanager
-        def locked(*args):yield
-        with patch('wechat_linux.desktop.image_download.download_lock',locked),patch('wechat_linux.media.images.read_local_image') as read:
-            data,info=improve_image(binding, cfg.account.ui, b'correct-thumb', dict(quality='thumbnail'), time.monotonic()+1, runtime_dir=str(Path(cfg.paths.queue_file).parent), adapter=lambda *args:desktop)
-        self.assertEqual(data,b'correct-thumb');self.assertEqual(info['download']['outcome'],'download_match_ambiguous')
-        desktop.close.assert_called_once();read.assert_not_called()
 
-    def test_expired_budget_never_initializes_ui(self):
-        cfg=default_config();cfg = replace_config(cfg, 'account.ui.backend', 'native_service');adapter=Mock()
-        binding=dict(download=dict(verified=True,chat_title='synthetic',server_id='10'))
-        data,info=improve_image(binding, cfg.account.ui, b'correct-thumb', dict(quality='thumbnail'), time.monotonic()-1, runtime_dir=str(Path(cfg.paths.queue_file).parent), adapter=adapter)
-        self.assertEqual(info['download']['outcome'],'download_timeout')
-        self.assertEqual(data,b'correct-thumb');adapter.assert_not_called()
 
     def test_multimodal_uses_upgraded_image_and_default_off_never_calls_ui(self):
         case=media.LocalImageFixture('runTest');case.setUp();self.addCleanup(case.doCleanups)

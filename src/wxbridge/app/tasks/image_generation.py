@@ -43,7 +43,7 @@ def checked_image(image):
         if len(data) > MAX_BYTES:
             raise ModelError('image_size_limit')
         # NativeSender applies this same structural contract before IPC.
-        from wechat_linux.media.images import validate_image
+        from wechat_linux.media import validate_image
         validate_image(data, MAX_BYTES)
         return data, dict(mime=mime, width=width, height=height, bytes=len(data),
                           sha256=hashlib.sha256(data).hexdigest(), md5=hashlib.md5(data, usedforsecurity=False).hexdigest())

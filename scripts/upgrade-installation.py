@@ -7,7 +7,11 @@ after read-only acceptance. rollback restores code/configuration, never queues.
 """
 from copy import deepcopy
 import argparse
+import base64
+import csv
+from email.parser import BytesParser
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -36,6 +40,53 @@ RECOVERY_MODULES = (
     'wechat_linux/__init__.py', 'wechat_linux/models.py', 'wechat_linux/errors.py',
     'wechat_linux/storage/__init__.py', 'wechat_linux/storage/crypto.py', 'wechat_linux/storage/keyscan.py',
 )
+
+
+def adapter_wheel(source):
+    """Verify the independently released adapter before consuming its assets."""
+    source = Path(source).resolve()
+    manifest = json.loads((source/'dependencies/wechat-linux-adapter.json').read_text(encoding='utf-8'))
+    version, filename = manifest.get('version'), manifest.get('wheel')
+    if (manifest.get('name') != 'wechat-linux-adapter' or not isinstance(version,str)
+            or not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+',version)
+            or filename != f'wechat_linux_adapter-{version}-py3-none-any.whl'
+            or not re.fullmatch(r'[a-f0-9]{64}',manifest.get('sha256',''))):
+        raise ValueError('invalid_adapter_manifest')
+    path = source/'dependencies'/filename
+    if path.is_symlink() or digest(path) != manifest['sha256']:
+        raise ValueError('adapter_wheel_hash_mismatch')
+    prefix = f'wechat_linux_adapter-{version}.dist-info/'
+    with zipfile.ZipFile(path) as archive:
+        names = archive.namelist()
+        if (len(names) != len(set(names)) or len(names)>500 or sum(i.file_size for i in archive.infolist())>16*1024*1024
+                or any(n.startswith('/') or '\\' in n or ':' in n or '..' in Path(n).parts
+                       or not n.startswith(('wechat_linux/',prefix)) for n in names)):
+            raise ValueError('invalid_adapter_inventory')
+        metadata = BytesParser().parsebytes(archive.read(prefix+'METADATA'))
+        if metadata['Name'] != manifest['name'] or metadata['Version'] != version:
+            raise ValueError('adapter_metadata_mismatch')
+        rows = list(csv.reader(io.StringIO(archive.read(prefix+'RECORD').decode('utf-8'))))
+        if len(rows)!=len(names) or {r[0] for r in rows if len(r)==3}!=set(names):
+            raise ValueError('invalid_adapter_record')
+        for name, checksum, size in rows:
+            if name == prefix+'RECORD':
+                if checksum or size:raise ValueError('invalid_adapter_record')
+                continue
+            body=archive.read(name)
+            encoded=base64.urlsafe_b64encode(hashlib.sha256(body).digest()).rstrip(b'=').decode()
+            if checksum!='sha256='+encoded or size!=str(len(body)):
+                raise ValueError('adapter_record_mismatch')
+        required={'__init__.py','models.py','errors.py','storage/keyscan.py','storage/crypto.py',
+                  'native/helper.py','native/agent.js','native/profile.json','native/image_worker.py',
+                  'native/image_contract.py','native/image_agent.js','native/image_adapter.c','native/image_profile.json'}
+        if not {'wechat_linux/'+name for name in required}<=set(names):
+            raise ValueError('adapter_assets_missing')
+    return path
+
+
+def adapter_members(source):
+    with zipfile.ZipFile(adapter_wheel(source)) as archive:
+        return {name:archive.read(name) for name in archive.namelist() if name.startswith('wechat_linux/')}
 
 
 def digest(path):
@@ -208,15 +259,20 @@ def verify_wheels(stage, wheels):
     expected = {'wxbridge', 'model_provider', 'wechat_linux_adapter'}
     found, result = set(), {}
     mappings = {'wxbridge/':'src/wxbridge/', 'wxbridge_cli/':'src/wxbridge_cli/',
-                'web/':'src/web/', 'provider/':'src/provider/',
-                'wechat_linux/':'src/wechat_linux/'}
+                'web/':'src/web/', 'provider/':'src/provider/'}
     owners = {'wxbridge': ('wxbridge/', 'wxbridge_cli/', 'web/'),
-              'model_provider': ('provider/',), 'wechat_linux_adapter': ('wechat_linux/',)}
+              'model_provider': ('provider/',)}
     for wheel in sorted(wheels.glob('*.whl')):
         name = wheel.name.split('-', 1)[0]
         if name not in expected or name in found:
             raise ValueError('unexpected_upgrade_wheel')
         found.add(name)
+        if name == 'wechat_linux_adapter':
+            pinned = adapter_wheel(stage)
+            if wheel.name != pinned.name or digest(wheel) != digest(pinned):
+                raise ValueError('adapter_wheel_hash_mismatch')
+            result[str(wheel)] = digest(wheel)
+            continue
         with zipfile.ZipFile(wheel) as archive:
             expected_files = set()
             for prefix in owners[name]:
@@ -226,7 +282,7 @@ def verify_wheels(stage, wheels):
                             part in ('frontend', 'build', '__pycache__') or part.endswith('.egg-info')
                             for part in source.relative_to(directory).parts):
                         expected_files.add(prefix+source.relative_to(directory).as_posix())
-            packaged = {entry for entry in archive.namelist() if entry.startswith(tuple(mappings))}
+            packaged = {entry for entry in archive.namelist() if entry.startswith((*mappings,'wechat_linux/'))}
             if packaged != expected_files:
                 raise ValueError('wheel_inventory_mismatch')
             count = 0
@@ -258,11 +314,16 @@ def verify_wheels(stage, wheels):
 def recovery_updates(stage):
     manifest = json.loads((stage/'release-manifest.json').read_text())
     updates = {}
+    adapter = adapter_members(stage)
     for name in RECOVERY_MODULES:
-        source = plain_path(stage/'src'/name)
-        if digest(source) != manifest['files']['src/'+name]['sha256']:
-            raise ValueError('staged_recovery_hash_mismatch')
-        updates[plain_path(SCANNER/name)] = (source.read_bytes(), 0o644)
+        if name.startswith('wechat_linux/'):
+            data=adapter[name]
+        else:
+            source = plain_path(stage/'src'/name)
+            if digest(source) != manifest['files']['src/'+name]['sha256']:
+                raise ValueError('staged_recovery_hash_mismatch')
+            data=source.read_bytes()
+        updates[plain_path(SCANNER/name)] = (data, 0o644)
     return updates
 
 
@@ -273,8 +334,7 @@ def check_recovery_projection(stage):
         for destination, (data, mode) in recovery_updates(stage).items():
             atomic(root/destination.relative_to(SCANNER), data, mode)
         code = ('import sys;sys.path.insert(0,sys.argv[1]);'
-                'from wechat_linux.storage.keyscan import extract_keys;'
-                'from wechat_linux.storage.crypto import AES;'
+                'from wechat_linux.storage import extract_keys, AES;'
                 'from wxbridge.storage.memoryfs import is_noswap_tmpfs;'
                 'assert AES is not None;'
                 'assert not any(n in sys.modules for n in ("provider","gi","frida"))')
@@ -344,7 +404,7 @@ def prepare(stage, wheels, backup, baseline, max_chars):
     run(python, '-I', '-c', 'from wxbridge_cli.install import dependency_health;'
         'failures=dependency_health();raise SystemExit(bool(failures))')
     run(python, '-I', '-c', 'from wxbridge.app.sessions.conversation import ConversationSession;'
-        'from wechat_linux.desktop.login import LoginController;from provider import create_client')
+        'from wechat_linux.desktop import LoginController;from provider import create_client')
     check_installed_release(python, stage)
     sys.path.insert(0, str(stage/'src'))
     configurations = {}
@@ -368,6 +428,15 @@ def check_installed_release(python, stage):
         'm=json.load(open(sys.argv[1],encoding="utf-8"));'
         'raise SystemExit(bool(installed_mismatches(m["files"])))',
         stage/'release-manifest.json')
+    run(python, '-I', '-c',
+        'import hashlib,importlib.metadata,json,runpy,sys;from importlib.util import find_spec;'
+        'from pathlib import Path;root=Path(sys.argv[1]);'
+        'm=json.loads((root/"dependencies/wechat-linux-adapter.json").read_text());'
+        'assert importlib.metadata.version("wechat-linux-adapter")==m["version"];'
+        'expected=runpy.run_path(str(root/"scripts/upgrade-installation.py"))["adapter_members"](root);'
+        'package=Path(find_spec("wechat_linux").origin).parent;'
+        'assert all((package/Path(n).relative_to("wechat_linux")).read_bytes()==body for n,body in expected.items())',
+        stage)
 
 
 def wait_stopped(deadline=360):

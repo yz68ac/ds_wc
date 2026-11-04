@@ -1,5 +1,5 @@
 """Application configuration and queue-facing submission API records."""
-from wechat_linux.native.protocol import (
+from wechat_linux.native import (
     CHAT_ID, MAX_FRAME, REQUEST_ID, NativeError, decode, encode, receive, request,
     text_parts, validate_send,
 )

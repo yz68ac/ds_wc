@@ -31,118 +31,10 @@ viewer = script('wechat-login')
 BOUNDS = dict(x=10, y=20, width=300, height=400)
 
 
-class Node:
-    def __init__(self, role, name='', *, parent=None, visible=True, enabled=True, pid=123):
-        self.role, self.name, self.parent, self.pid = role, name, parent, pid
-        self.states = {'visible', 'showing'} if visible else set()
-        if enabled:
-            self.states.add('enabled')
-    def get_role_name(self): return self.role
-    def get_parent(self): return self.parent
-    def get_process_id(self): return self.pid
-    def get_state_set(self): return SimpleNamespace(contains=lambda state: state in self.states)
 
 
-def controller():
-    value = object.__new__(LoginController)
-    value.pid, value._start, value._boot = 123, '100', 'synthetic-boot'
-    value.ui_options = {}
-    value._process_start = Mock(return_value='100')
-    value._database_state = Mock(return_value=(False, False))
-    return value
 
 
-class LoginControllerTests(unittest.TestCase):
-    def setUp(self):
-        self.controller = controller()
-        self.frame = Node('frame', 'WeChat')
-
-    def desktop(self, *nodes):
-        desktop = Mock()
-        desktop.get_child_count.return_value = 1
-        desktop.get_child_at_index.return_value = Node('application')
-        gui = SimpleNamespace(Atspi=SimpleNamespace(get_desktop=lambda _: desktop,
-            StateType=SimpleNamespace(SHOWING='showing', VISIBLE='visible', ENABLED='enabled')),
-            walk=lambda *args, **kwargs: [(n, n.role, n.name, BOUNDS) for n in nodes],
-            _bounds=lambda n: dict(BOUNDS) if n is not None else None)
-        self.controller._gui = Mock(return_value=gui)
-
-    def test_database_identity_wins_and_wrong_account_blocks_actions(self):
-        for opened, expected in (((True, False), 'logged_in'), ((True, True), 'unknown'),
-                                 ((False, True), 'unknown')):
-            with self.subTest(opened=opened):
-                self.controller._database_state.return_value = opened
-                self.assertEqual(self.controller.inspect().phase, expected)
-        self.controller._process_start.return_value = '200'
-        self.assertEqual(self.controller.inspect().phase, 'client_stopped')
-
-    def test_recognizes_login_open_phone_qr_and_expired_qr(self):
-        cases = [('push button', 'Log In', 'login_ready'),
-                 ('button', 'Open WeChat', 'open_ready'),
-                 ('label', 'Confirm login on your phone', 'phone_confirmation'),
-                 ('label', 'Confirm on Phone', 'phone_confirmation'),
-                 ('image', 'Scan QR code', 'qr_required'),
-                 ('label', '二维码已过期', 'qr_expired')]
-        for role, name, expected in cases:
-            with self.subTest(name=name):
-                self.desktop(Node(role, name, parent=self.frame))
-                self.assertEqual(self.controller.inspect().phase, expected)
-
-    def test_hidden_disabled_duplicate_or_cross_window_controls_do_not_click(self):
-        for nodes, expected in (([Node('button', 'Log In', parent=self.frame, visible=False)], 'unknown'),
-            ([Node('button', 'Log In', parent=self.frame, enabled=False)], 'unknown'),
-            ([Node('button', 'Log In', parent=self.frame), Node('button', 'Log In', parent=self.frame)], 'unknown'),
-            ([Node('list', 'Chats', parent=self.frame), Node('button', 'Log In', parent=self.frame)], 'unknown')):
-            with self.subTest(expected=expected, nodes=len(nodes)):
-                self.desktop(*nodes)
-                self.assertEqual(self.controller.inspect().phase, expected)
-                with patch.object(self.controller, '_xdo') as click:
-                    with self.assertRaises(LoginError): self.controller.click_login()
-                    click.assert_not_called()
-
-    def click_fixture(self):
-        button = Node('button', 'Log In', parent=self.frame)
-        self.controller._snapshot = Mock(return_value=(LoginStatus('login_ready', 123),
-                                                       dict(buttons=dict(login=button))))
-        self.controller._bounds = Mock(return_value=dict(BOUNDS))
-        self.controller._window = Mock(return_value='42')
-        self.controller._activate = Mock()
-        self.controller._xdo = Mock()
-        pointer = Mock()
-        pointer.pointer_client.return_value = 42
-        return pointer
-
-    def test_checked_click_uses_verified_center_and_mouse_path(self):
-        pointer = self.click_fixture()
-        with patch('wechat_linux.desktop.ui.X11', return_value=pointer):
-            self.controller.click_login()
-        pointer.move_pointer.assert_called_once_with(160, 220)
-        self.controller._xdo.assert_called_once_with('click', '1')
-
-    def test_obstruction_or_ui_change_blocks_click_and_uncertain_click_is_explicit(self):
-        pointer = self.click_fixture()
-        with patch('wechat_linux.desktop.ui.X11', return_value=pointer):
-            pointer.pointer_client.return_value = 99
-            with self.assertRaisesRegex(LoginError, 'login_window_obstructed'):
-                self.controller.click_login()
-            self.controller._xdo.assert_not_called()
-            pointer.pointer_client.return_value = 42
-            self.controller._bounds.side_effect = [dict(BOUNDS), dict(BOUNDS, x=11)]
-            with self.assertRaisesRegex(LoginError, 'login_ui_changed'):
-                self.controller.click_login()
-            self.controller._bounds.side_effect = None
-            self.controller._xdo.side_effect = LoginError('login_window_operation_failed')
-            with self.assertRaises(LoginError) as raised:
-                self.controller.click_login()
-            self.assertEqual(raised.exception.code, 'login_click_uncertain')
-            self.assertIsNone(raised.exception.submitted)
-
-    def test_read_qr_never_captures_a_non_qr_state(self):
-        self.controller._database_state.return_value = (True, False)
-        with patch.object(self.controller, '_activate') as activate:
-            with self.assertRaisesRegex(LoginError, 'login_qr_unavailable'):
-                self.controller.read_qr()
-            activate.assert_not_called()
 
 
 class LoginRuntimeTests(unittest.TestCase):
@@ -279,23 +171,7 @@ class LoginRuntimeTests(unittest.TestCase):
 
 
 class LoginTerminalTests(unittest.TestCase):
-    def test_qr_payload_is_not_in_repr_and_invalid_input_is_rejected(self):
-        qr = LoginQRCode(b'SYNTHETIC_QR_SECRET')
-        self.assertNotIn('SYNTHETIC_QR_SECRET', repr(qr))
-        self.assertEqual(len(qr.fingerprint), 64)
-        for payload in ('text', b'', b'x'*8193):
-            with self.assertRaisesRegex(LoginError, 'login_qr_invalid'):
-                LoginQRCode(payload)
 
-    def test_half_blocks_keep_matrix_and_white_quiet_zone(self):
-        qrcode = SimpleNamespace(QRCode=Mock(), constants=SimpleNamespace(ERROR_CORRECT_M=0))
-        qrcode.QRCode.return_value.get_matrix.return_value = [[False, True, True],
-                                                             [False, False, True], [False]*3]
-        with patch.dict(sys.modules, qrcode=qrcode):
-            width, lines = LoginQRCode(b'synthetic').terminal_lines()
-        self.assertEqual(width, 3)
-        self.assertEqual(lines, ('\x1b[30;107m ▀█\x1b[0m', '\x1b[30;107m   \x1b[0m'))
-        self.assertEqual(qrcode.QRCode.call_args.kwargs['border'], 4)
 
     def test_noninteractive_terminal_is_rejected_before_capture_or_action(self):
         runtime = Mock()

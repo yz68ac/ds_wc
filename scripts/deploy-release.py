@@ -63,8 +63,20 @@ def helper_asset(manifest, name):
 
 
 def helper_changes(old, new):
+    if any('dependencies/wechat-linux-adapter.json' in m['files'] for m in (old,new)):
+        dependencies=lambda m:{k:v for k,v in m['files'].items() if k.startswith('dependencies/')}
+        if dependencies(old)!=dependencies(new):
+            raise ValueError('package_update_requires_upgrade_installation')
+        return []
     return [name for name in ASSETS if old['files'][helper_asset(old, name)]['sha256']
             != new['files'][helper_asset(new, name)]['sha256']]
+
+
+def helper_body(stage, manifest, name):
+    if 'dependencies/wechat-linux-adapter.json' in manifest['files']:
+        adapter=runpy.run_path(str(Path(__file__).with_name('upgrade-installation.py')))['adapter_members'](stage)
+        return adapter['wechat_linux/native/'+name]
+    return (stage/helper_asset(manifest,name)).read_bytes()
 
 
 def image_configuration(config, *, enable=False, account=None, account_root=None):
@@ -83,9 +95,13 @@ def image_configuration(config, *, enable=False, account=None, account_root=None
     return result
 
 
-def image_helper_changes(new, installation):
+def image_helper_changes(new, installation, *, stage=None):
     """The app manifest alone cannot prove optional assets were installed."""
     files = installation.get('files', {})
+    if 'dependencies/wechat-linux-adapter.json' in new['files']:
+        if stage is None:raise ValueError('package_update_requires_upgrade_installation')
+        return [name for name in IMAGE_ASSETS
+                if files.get(name)!=hashlib.sha256(helper_body(stage,new,name)).hexdigest()]
     return [name for name in IMAGE_ASSETS
             if files.get(name) != new['files'][helper_asset(new, name)]['sha256']]
 
@@ -181,7 +197,7 @@ def listener_idle(snapshot, live, *, allow_pending_memory=False):
 
 def require_source_only_update(names):
     if any(name.startswith(('src/wxbridge/', 'src/wxbridge_cli/', 'src/wxbridge_service/', 'src/web/',
-                            'src/provider/', 'src/wechat_linux/'))
+                            'src/provider/', 'src/wechat_linux/', 'dependencies/'))
            or name in ('config.defaults.json', 'pyproject.toml', 'uv.lock', 'requirements.txt', 'requirements-test.txt')
            for name in names):
         raise ValueError('package_update_requires_upgrade_installation')
@@ -220,7 +236,7 @@ def deploy(stage, backup, *, apply=False, update_helper=False, allow_pending_mem
     images_after = updated_config.get('image_download', {}).get('enabled', False)
     installation = json.loads((HELPER/'installation.json').read_text())
     if images_after:
-        helper_changed += image_helper_changes(new, installation)
+        helper_changed += image_helper_changes(new, installation, stage=stage)
         if enable_images:
             # Existing installs may have only text assets even when the app
             # manifest already lists the experimental image source files.
@@ -313,7 +329,7 @@ def deploy(stage, backup, *, apply=False, update_helper=False, allow_pending_mem
             updates[APP/'release-manifest.json'] = ((stage/'release-manifest.json').read_bytes(), 0o644, 0, 0)
             if helper_update:
                 for name in helper_changed:
-                    data = (stage/helper_asset(new, name)).read_bytes()
+                    data = helper_body(stage,new,name)
                     updates[HELPER/name] = (data, 0o644, 0, 0)
                     installation['files'][name] = hashlib.sha256(data).hexdigest()
                 installation['review_release'] = new['commit']

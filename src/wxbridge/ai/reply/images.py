@@ -5,13 +5,13 @@ from wxbridge.contracts.image_jobs import QuotedImageInput
 import time
 from pathlib import Path
 from wxbridge.config import json_value
-from wechat_linux.media import images as _media
-from wechat_linux.media.images import (MediaError, V1, V2, HEX32, image_format, validate_image, decode_dat, key_candidates, read_local_image)
+import wechat_linux.media as _media
+from wechat_linux.media import MediaError, validate_image
 
 
 def _native_image(binding, cfg, account, deadline):
-    from wechat_linux import NativeImageDownloader, ImageDownloadError
-    from wechat_linux.native.image_contract import ERRORS
+    from wechat_linux import ImageDownloadError
+    from wechat_linux.native import NativeImageDownloader, IMAGE_DOWNLOAD_ERRORS
     source, intent = binding.get('download') or {}, binding.get('native_request') or {}
     options = cfg.account.helper_transport
     remaining = min(int(deadline-time.monotonic()), cfg.vision.download_timeout_seconds)
@@ -35,7 +35,7 @@ def _native_image(binding, cfg, account, deadline):
             data, info = _media.read_local_image(binding, max_bytes=cfg.vision.max_image_bytes)
         except MediaError:
             raise exc
-        safe = exc.code if exc.code in ERRORS else 'native_image_failed'
+        safe = exc.code if exc.code in IMAGE_DOWNLOAD_ERRORS else 'native_image_failed'
         return data, dict(info, download=dict(backend='native', outcome=safe, requested=exc.requested,
                                              elapsed_ms=round((time.monotonic()-started)*1000)))
 
@@ -96,7 +96,7 @@ def prepare_multimodal(cfg: InstanceConfig, base_prompt, generation):
                             raise
                         time.sleep(.2)
                 if settings.download_enabled and info['quality'] in ('thumbnail', 'preview'):
-                    from wechat_linux.desktop.image_download import improve_image
+                    from wechat_linux.desktop import improve_image
                     data, info = improve_image(binding, json_value(cfg.account.ui), data, info, download_deadline,
                         runtime_dir=str(Path(cfg.paths.queue_file).parent), max_bytes=settings.max_image_bytes)
             quality = {"original": "本地原图", "cached": "本地微信缓存图（不保证原图）", "preview": "本地预览图", "thumbnail": "本地缩略图"}[info["quality"]]

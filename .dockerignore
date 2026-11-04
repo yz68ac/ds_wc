@@ -19,6 +19,9 @@
 !resources/wechat/linux-x86_64/4.1.13.26/manifest.json
 !resources/wechat/linux-x86_64/4.1.13.26/installer/
 !resources/wechat/linux-x86_64/4.1.13.26/installer/WeChatLinux_x86_64.deb
+!dependencies/
+!dependencies/*.whl
+!dependencies/*.json
 **/.env
 **/.env.*
 **/node_modules

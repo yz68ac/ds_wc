@@ -1,5 +1,5 @@
 """Bounded outbound-record reconciliation, independent of bot queues or AI tasks."""
-from wechat_linux.errors import StoreError
+from wechat_linux import StoreError
 
 
 def scan_confirmation(store,chat_id,account,text,intent,now,*,blocked=False,image=None):

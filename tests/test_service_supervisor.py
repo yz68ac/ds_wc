@@ -165,6 +165,21 @@ class SupervisorTests(unittest.TestCase):
         s.tick()
         self.assertTrue(child.stopping)
 
+    def test_failed_directory_preparation_retries_while_paused_then_stops_after_success(self):
+        self.desktop();s=self.supervisor;s.enabled=False
+        child=s.children[RECOVERY];child.command[-1]='directory';child.process=object()
+        child.event=(1,b'{}',False)
+        s.tick()
+        self.assertEqual(child.command[-1],'directory')
+        self.assertNotIn(RECOVERY,self.started)
+        with patch('wxbridge.host.supervisor.time.monotonic',return_value=s.next_prepare+1):s.tick()
+        self.assertIn(RECOVERY,self.started)
+        self.assertNotIn(BOT,self.started)
+        child.event=(0,b'{"ready":false}',False)
+        s.tick();self.started.clear();s.tick()
+        self.assertEqual(child.command[-1],'prepare')
+        self.assertNotIn(RECOVERY,self.started)
+
     def test_apply_does_not_resume_a_paused_bot(self):
         s=self.supervisor;s.enabled=False
         self.assertFalse(s.action('apply')['applied'])

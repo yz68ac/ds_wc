@@ -44,7 +44,7 @@ class ConfigurationTests(unittest.TestCase):
         return directory/'config.json'
 
     def test_reference_matches_class_defaults_and_returns_detached_documents(self):
-        expected=json.loads((ROOT/'config.defaults.json').read_text())
+        expected=json.loads((ROOT/'config.defaults.json').read_text(encoding='utf-8'))
         self.assertEqual(default_document(),expected)
         self.assertFalse(expected['vision']['context_images_enabled'])
         changed=default_document();changed['participation']['address_names'].append('changed')

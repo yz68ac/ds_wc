@@ -1,4 +1,4 @@
-"""Build the three release wheels from a fresh public-source snapshot."""
+"""Build app/provider wheels and include the pinned, independent adapter wheel."""
 import argparse
 import hashlib
 import json
@@ -58,11 +58,13 @@ def build(source, output, *, offline=False):
     with tempfile.TemporaryDirectory(prefix='wheel-source-', dir=temporary) as directory:
         stage = Path(directory)
         stage_source(source, stage)
-        for relative in ('.', 'src/provider', 'src/wechat_linux'):
+        for relative in ('.', 'src/provider'):
             subprocess.run(['uv', 'build', str(stage/relative), '--wheel', '--python', sys.executable,
                             '--out-dir', str(output), *(['--offline'] if offline else [])], check=True)
-        verify = runpy.run_path(str(ROOT/'scripts/upgrade-installation.py'))['verify_wheels']
-        verify(stage, output)
+        upgrade = runpy.run_path(str(ROOT/'scripts/upgrade-installation.py'))
+        adapter = upgrade['adapter_wheel'](stage)
+        shutil.copyfile(adapter, output/adapter.name)
+        upgrade['verify_wheels'](stage, output)
     return sorted(output.glob('*.whl'))
 
 

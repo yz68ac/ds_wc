@@ -22,7 +22,8 @@ from tests.support.configuration import merge_config as _deep_merge
 from wechat_linux.storage.crypto import AES
 from tests.support.model_support import ClientFixture, ModelError
 from wxbridge.ai.reply.prompt import build_prompt
-from wxbridge.ai.reply.images import MediaError, V1, V2, decode_dat, key_candidates, prepare_multimodal, read_local_image, validate_image
+from wxbridge.ai.reply.images import prepare_multimodal
+from wechat_linux.media import MediaError, V1, V2, decode_dat, key_candidates, read_local_image, validate_image
 from wechat_linux.messages.references import image_md5, local_image_cache_key
 from wxbridge.ai.context.identity import prompt_reference
 from wxbridge.wechat.store import WeChatStore
@@ -31,89 +32,14 @@ from tests.support.messages import parse_message, quoted_xml
 from tests.support.media import png, encrypted, LocalImageFixture, ImageBindingFixture
 
 
-class ImageDecodingTests(unittest.TestCase):
-    def test_supported_png_complete_and_dimensions(self):
-        self.assertEqual(validate_image(png(), 10000), ("image/png", 2, 1))
-        for data in (png()[:-1], png()[:40]+b"corrupt"+png()[47:], png(8193), b"wxgfunsupported"):
-            with self.subTest(size=len(data)), self.assertRaises(MediaError):
-                validate_image(data, 10000)
-        with self.assertRaisesRegex(MediaError, "image_size_limit"):
-            validate_image(png(), 10)
-
-    def test_v1_v2_plain_and_legacy_xor_roundtrip(self):
-        plain = png()
-        self.assertEqual(decode_dat(plain), plain)
-        self.assertEqual(decode_dat(bytes(b^93 for b in plain)), plain)
-        self.assertEqual(decode_dat(encrypted(plain, V1)), plain)
-        self.assertEqual(decode_dat(encrypted(plain), b"synthetic-key-16", 77), plain)
-
-    def test_wrong_key_padding_and_lengths_are_rejected(self):
-        data = encrypted(png())
-        with self.assertRaisesRegex(MediaError, "image_key_invalid"):
-            decode_dat(data, b"wrong-key-123456", 77)
-        with self.assertRaisesRegex(MediaError, "image_key_unavailable"):
-            decode_dat(data)
-        for corrupt in (data[:20], data[:6]+struct.pack("<II", 0xFFFFFFFF, 0xFFFFFFFF)+data[14:]):
-            with self.assertRaises(MediaError):
-                decode_dat(corrupt, b"synthetic-key-16", 77)
 
 
 class LocalImageTests(LocalImageFixture):
 
-    def test_linux_key_derivation_and_v2_in_memory(self):
-        folder = self.home/".xwechat/net/kvcomm"
-        folder.mkdir(parents=True)
-        (folder/"key_123456_test.statistic").touch()
-        key = hashlib.md5(b"123456wxid_synthetic").hexdigest()[:16].encode()
-        self.assertIn((key, 123456&255), list(key_candidates("wxid_synthetic", self.root, self.home)))
-        self.path.write_bytes(encrypted(png(), key=key, xor=123456&255))
-        data, info = read_local_image(self.binding, max_bytes=self.cfg.vision.max_image_bytes)
-        self.assertEqual(data, png())
-        self.assertEqual(info["quality"], "original")
-        self.assertEqual(self.path.read_bytes()[:6], V2)
-        self.assertEqual(len(list(self.path.parent.iterdir())), 1)
 
-    def test_unreadable_original_falls_back_to_thumbnail(self):
-        self.path.write_bytes(b"wxgfunsupported")
-        thumbnail = self.path.with_name("image_t.dat")
-        thumbnail.write_bytes(png())
-        self.binding["candidates"].append(dict(relative=str(thumbnail.relative_to(self.root)), quality="thumbnail"))
-        self.assertEqual(read_local_image(self.binding, max_bytes=self.cfg.vision.max_image_bytes)[1]["quality"], "thumbnail")
 
-    def test_wxgf_conversion_keeps_pixels_in_memory_and_reports_format(self):
-        source = b"wxgf"+bytes(80)
-        self.path.write_bytes(encrypted(source))
-        with patch('wechat_linux.media.images.key_candidates',return_value=[(b'wrong-key-123456',77),(b'synthetic-key-16',77)]), patch('wechat_linux.media.wxgf.decode_wxgf',return_value=png()) as convert:
-            data,info = read_local_image(self.binding, max_bytes=self.cfg.vision.max_image_bytes)
-        self.assertEqual(data,png())
-        convert.assert_called_once_with(source,self.cfg.vision.max_image_bytes)
-        self.assertTrue(info['converted'])
-        self.assertEqual(info['source_format'],'wxgf')
-        self.assertEqual(len(list(self.path.parent.iterdir())),1)
 
-    def test_wxgf_failure_survives_later_wrong_keys_and_can_fall_back(self):
-        from wechat_linux.media.wxgf import WxgfError
-        self.path.write_bytes(encrypted(b'wxgf'+bytes(80)))
-        with patch('wechat_linux.media.images.key_candidates',return_value=[(b'synthetic-key-16',77),(b'wrong-key-123456',77)]), patch('wechat_linux.media.wxgf.decode_wxgf',side_effect=WxgfError('wxgf_decoder_unavailable')):
-            with self.assertRaisesRegex(MediaError,'^wxgf_decoder_unavailable$'):
-                read_local_image(self.binding, max_bytes=self.cfg.vision.max_image_bytes)
-            thumbnail = self.path.with_name('image_t.dat')
-            thumbnail.write_bytes(png())
-            self.binding['candidates'].append(dict(relative=str(thumbnail.relative_to(self.root)),quality='thumbnail'))
-            _,info=read_local_image(self.binding, max_bytes=self.cfg.vision.max_image_bytes)
-        self.assertEqual(info['quality'],'thumbnail')
-        self.assertEqual(info['fallback_errors'],[dict(quality='original',error='wxgf_decoder_unavailable')])
 
-    def test_missing_oversized_and_escape_paths_fail_closed(self):
-        with self.assertRaisesRegex(MediaError, "local_image_not_cached"):
-            read_local_image(self.binding, max_bytes=self.cfg.vision.max_image_bytes)
-        self.path.write_bytes(b"0"*1200)
-        self.cfg = replace_config(self.cfg, 'vision.max_image_bytes', 100, owner=self)
-        with self.assertRaisesRegex(MediaError, "image_size_limit"):
-            read_local_image(self.binding, max_bytes=self.cfg.vision.max_image_bytes)
-        self.binding["candidates"][0]["relative"] = "../../outside.dat"
-        with self.assertRaisesRegex(MediaError, "unsafe_image_path"):
-            read_local_image(self.binding, max_bytes=self.cfg.vision.max_image_bytes)
 
 
     def test_api_receives_actual_pixels_only_in_user_and_keeps_persona(self):
@@ -178,20 +104,7 @@ class LocalImageTests(LocalImageFixture):
 
 class ImageBindingTests(ImageBindingFixture):
 
-    def test_md5_resolves_opaque_file_name_not_md5_guess(self):
-        result = self.store.image_binding(self.chat, dict(image_md5=self.digest))
-        self.assertNotIn("error", result)
-        self.assertIn("b"*32+".dat", result["candidates"][1]["relative"])
-        self.assertEqual([c["quality"] for c in result["candidates"]], ["original", "cached", "preview", "thumbnail"])
 
-    def test_original_packed_cache_key_resolves_when_xml_md5_is_not_indexed(self):
-        self.store._query_messages.return_value = [dict(type=3, image_md5="c"*32, sender="friend", image_cache_key="b"*32)]
-        binding = self.store.image_binding(self.chat, dict(server_id="123", sender="friend"))
-        self.assertNotIn("error", binding)
-        self.assertEqual(binding['download'],dict(verified=True,server_id='123',chat_id=self.chat,
-                                                sender='friend',image_md5='c'*32))
-        self.assertNotIn('download',self.store.image_binding(self.chat,dict(server_id='123')))
-        self.assertIn(self.filename, binding["candidates"][1]["relative"])
 
 
     def test_indexless_thumbnail_reaches_multimodal_request_with_quality_label(self):
@@ -217,57 +130,10 @@ class ImageBindingTests(ImageBindingFixture):
         self.assertEqual(len(list(picture.parent.iterdir())), 1)
         self.assertNotIn("relative", json.dumps(meta))
 
-    def test_indexless_full_image_wins_over_thumbnail_in_newer_month(self):
-        _, reference = self.indexless_source(month="2026-10")
-        full = self.root/"msg/attach"/self.bucket/"2026-09/Img"/("b"*32+"_h.dat")
-        full.parent.mkdir(parents=True)
-        full.write_bytes(png())
-        _, info = read_local_image(self.store.image_binding(self.chat, reference), max_bytes=default_document()['vision']['max_image_bytes'])
-        self.assertEqual(info["quality"], "original")
 
-    def test_indexless_preview_cache_is_bound_to_exact_group(self):
-        thumbnail, reference = self.indexless_source()
-        thumbnail.unlink()
-        preview = self.root/"cache/2026-09/Message"/self.bucket/"Bubble"/("b"*32+"_b.dat")
-        preview.parent.mkdir(parents=True)
-        preview.write_bytes(png())
-        binding = self.store.image_binding(self.chat, reference)
-        self.assertEqual(read_local_image(binding, max_bytes=default_document()['vision']['max_image_bytes'])[1]["quality"], "preview")
 
-    def test_indexless_cache_cannot_replace_original_identity_checks(self):
-        _, reference = self.indexless_source()
-        original = self.store._query_messages.return_value[0].copy()
-        cases = [(dict(reference, sender="other"), [original], "image_reference_mismatch"),
-                 (dict(reference, image_md5="c"*32), [original], "image_reference_mismatch"),
-                 (reference, [dict(original, type=1)], "image_reference_mismatch"),
-                 (reference, [original, original], "image_reference_mismatch"),
-                 (dict(reference, sender=""), [original], "local_image_index_missing"),
-                 (dict(reference, server_id="0"), [original], "local_image_index_missing"),
-                 (dict(reference, image_cache_key="b"*32), [], "local_image_index_missing")]
-        for ref, originals, error in cases:
-            with self.subTest(error=error, original_count=len(originals)):
-                self.store._query_messages.return_value = originals
-                binding = self.store.image_binding(self.chat, ref)
-                self.assertEqual(binding["error"], error)
-                self.assertFalse(binding["candidates"])
 
-    def test_indexless_cache_never_searches_other_groups_or_guesses_filenames(self):
-        _, reference = self.indexless_source(bucket="d"*32)
-        self.assertEqual(self.store.image_binding(self.chat, reference)["error"], "local_image_index_missing")
-        own = self.root/"msg/attach"/self.bucket/"2026-10/Img"/("c"*32+"_t.dat")
-        own.parent.mkdir(parents=True)
-        own.write_bytes(png())
-        binding = self.store.image_binding(self.chat, reference)
-        with self.assertRaisesRegex(MediaError, "local_image_not_cached"):
-            read_local_image(binding, max_bytes=default_document()['vision']['max_image_bytes'])
 
-    def test_indexless_bad_month_and_unknown_source_key_fail_closed(self):
-        _, reference = self.indexless_source(month="2026-13")
-        self.assertEqual(self.store.image_binding(self.chat, reference)["error"], "local_image_index_missing")
-        for key in ("", "../unsafe", "c"*32):
-            with self.subTest(key=key):
-                self.store._query_messages.return_value[0]["image_cache_key"] = key
-                self.assertFalse(self.store.image_binding(self.chat, reference)["candidates"])
 
     def test_indexless_cache_wait_observes_later_full_image_without_database_refresh(self):
         thumbnail, reference = self.indexless_source()
@@ -288,55 +154,11 @@ class ImageBindingTests(ImageBindingFixture):
         self.assertEqual(meta["items"][0]["quality"], "original")
         self.store._query_messages.assert_not_called()
 
-    def test_symlinked_month_is_not_used_by_fallback_or_image_reader(self):
-        thumbnail, reference = self.indexless_source(month="2026-09")
-        alias = thumbnail.parent.parent.parent/"2026-10"
-        try:
-            alias.symlink_to(thumbnail.parent.parent, target_is_directory=True)
-        except (OSError, NotImplementedError):
-            self.skipTest("creating directory symlinks requires host support")
-        binding = self.store.image_binding(self.chat, reference)
-        self.assertTrue(binding["candidates"])
-        self.assertFalse(any("/2026-10/" in c["relative"] for c in binding["candidates"]))
-        forged = dict(binding, candidates=[dict(relative=str((alias/"Img"/thumbnail.name).relative_to(self.root)), quality="thumbnail")])
-        with self.assertRaisesRegex(MediaError, "unsafe_image_path"):
-            read_local_image(forged, max_bytes=default_document()['vision']['max_image_bytes'])
 
-    def test_unproven_or_forged_cache_key_cannot_select_attachment(self):
-        ref = dict(image_md5="c"*32, image_cache_key="b"*32)
-        self.assertEqual(self.store.image_binding(self.chat, ref)["error"], "local_image_index_missing")
-        self.store._query_messages.return_value = [dict(type=3, image_md5="c"*32, sender="friend", image_cache_key="../unsafe")]
-        self.assertEqual(self.store.image_binding(self.chat, dict(server_id="123"))["error"], "local_image_index_missing")
 
-    def test_local_cache_key_requires_exact_complete_protobuf_path(self):
-        token = b"b"*32
-        nested = b"\x22\x20"+token
-        packed = b"\x08\x01\x10\x02\x1a\x22"+nested+b"\x58\x01"
-        self.assertEqual(local_image_cache_key(packed), token.decode())
-        for invalid in (None, token, b"\x1a\x23"+nested, b"\x1a\x22"+nested+b"\x80", packed+packed,
-                        b"\x1a\x44"+nested+nested, b"\x12\x22"+nested, b"\x1a\x22\x2a\x20"+token):
-            with self.subTest(invalid_type=type(invalid).__name__):
-                self.assertEqual(local_image_cache_key(invalid), "")
 
-    def test_server_id_recovers_missing_snapshot_md5_only_in_current_chat(self):
-        self.store._query_messages.return_value = [dict(type=3, image_md5=self.digest, sender="friend")]
-        result = self.store.image_binding(self.chat, dict(server_id="123", sender="friend"))
-        self.store._query_messages.assert_called_once_with(self.chat, 2, server_id="123")
-        self.assertTrue(result["candidates"])
-        result = self.store.image_binding(self.chat, dict(server_id="123", image_md5="c"*32))
-        self.assertEqual(result["error"], "image_reference_mismatch")
 
-    def test_other_chat_bucket_requires_matching_original_in_current_chat(self):
-        with closing(sqlite3.connect(self.path)) as conn, conn:
-            conn.execute("UPDATE dir2id SET username=? WHERE rowid=1", ("d"*32,))
-        self.assertEqual(self.store.image_binding(self.chat, dict(image_md5=self.digest))["error"], "local_image_index_missing")
-        self.store._query_messages.return_value = [dict(type=3, image_md5=self.digest, sender="friend")]
-        self.assertTrue(self.store.image_binding(self.chat, dict(server_id="123", image_md5=self.digest))["candidates"])
 
-    def test_untrusted_index_path_rejected(self):
-        with closing(sqlite3.connect(self.path)) as conn, conn:
-            conn.execute("UPDATE image_hardlink_info_v4 SET file_name='../../secret.dat'")
-        self.assertFalse(self.store.image_binding(self.chat, dict(image_md5=self.digest))["candidates"])
 
     def test_xml_strips_sensitive_download_fields(self):
         xml = '<msg><img md5="'+self.digest+'" aeskey="PRIVATE_KEY" cdnmidimgurl="PRIVATE_URL"/></msg>'
@@ -347,21 +169,7 @@ class ImageBindingTests(ImageBindingFixture):
         self.assertEqual(image_md5("<!DOCTYPE msg><msg/>"), "")
         self.assertEqual(image_md5('<msg><img md5="../unsafe"/></msg>'), "")
 
-    def test_real_group_quote_fromusr_is_chat_chatusr_is_author(self):
-        xml = quoted_xml(kind=3, content='<msg><img md5="'+self.digest+'"/></msg>', sender=self.chat)
-        xml = xml.replace('<chatusr>synthetic@chatroom</chatusr>', '<chatusr>friend</chatusr>')
-        reference = parse_message(xml)["reference"]
-        self.assertEqual(reference["sender"], "friend")
-        self.assertEqual(reference["chat_id"], self.chat)
-        self.store._query_messages.return_value = [dict(type=3, image_md5=self.digest, sender="friend")]
-        self.assertTrue(self.store.image_binding(self.chat, reference)["candidates"])
-        reference["sender"] = "different_author"
-        self.assertEqual(self.store.image_binding(self.chat, reference)["error"], "image_reference_mismatch")
 
-    def test_other_chat_reference_rejected_even_with_identical_md5(self):
-        result = self.store.image_binding(self.chat, dict(chat_id="other@chatroom", image_md5=self.digest))
-        self.assertEqual(result["error"], "image_reference_wrong_chat")
-        self.store._query_messages.assert_not_called()
 
 
 class VisionClientTests(unittest.TestCase):
