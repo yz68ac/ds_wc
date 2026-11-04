@@ -158,7 +158,9 @@ class HistoryImageTests(unittest.TestCase):
         generation['account'] = self.binding['account']
         data = media.png()
         filename = 'a'*32+'.png'
-        (artifact_directory(self.cfg.paths.queue_file)/filename).write_bytes(data)
+        artifact = artifact_directory(self.cfg.paths.queue_file)/filename
+        artifact.write_bytes(data)
+        artifact.chmod(0o600)
         image = dict(file=filename, bytes=len(data), sha256=hashlib.sha256(data).hexdigest())
         base = self.base(generation)
         candidate = image_candidates(self.cfg, generation['context'], generation['triggers'], base)[0]
@@ -166,7 +168,7 @@ class HistoryImageTests(unittest.TestCase):
         with patch('wechat_linux.media.images.read_local_image', side_effect=AssertionError('cache not needed')):
             prompt, info = prepare_multimodal(self.cfg, base, generation)
         self.assertEqual(info['images'], 1)
-        (artifact_directory(self.cfg.paths.queue_file)/filename).write_bytes(b'changed')
+        artifact.write_bytes(b'changed')
         _, info = prepare_multimodal(self.cfg, base, generation)
         self.assertEqual(info['images'], 0)
         self.assertEqual(info['items'][0]['error'], 'image_artifact_changed')
