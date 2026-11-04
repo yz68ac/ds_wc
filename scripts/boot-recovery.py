@@ -279,7 +279,7 @@ def prepare(*, verify=False, metadata_only=False):
             destination = SENSITIVE/'keys.json'
         if metadata_only:
             return safe_status('contacts_prepared',ready=False,no_api=True,no_message_sent=True)
-        args = ['/usr/bin/python3',str(CODE/'scripts/boot-recovery.py'),'probe','--keys',str(destination)]
+        args = [str(CODE/'.venv/bin/python'),str(CODE/'scripts/boot-recovery.py'),'probe','--keys',str(destination)]
         if verify:
             args += ['--verify']
         result = as_user(args)

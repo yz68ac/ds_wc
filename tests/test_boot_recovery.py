@@ -12,6 +12,29 @@ from tests.support.boot import boot
 
 
 class BootRecoveryTests(unittest.TestCase):
+    def test_probe_uses_packaged_python_after_adapter_extraction(self):
+        from contextlib import nullcontext
+
+        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[1]/'.test-tmp') as name:
+            root = Path(name)
+            settings = root/'settings.json'
+            settings.write_text('{}')
+            (root/'keys.json').write_text('{"message/message_0.db":{}}')
+            (root/'keyscan-session.json').write_text('{"pid":123}')
+            with patch.object(boot, 'CODE', root), patch.object(boot, 'RUN', root), \
+                 patch.object(boot, 'SENSITIVE', root), patch.object(boot, 'SETTINGS', settings), \
+                 patch.object(boot, 'validate_runtime'), \
+                 patch.object(boot, 'process_token', return_value={'pid': 123}), \
+                 patch.object(boot, 'database_locks', return_value=nullcontext()), \
+                 patch.object(boot, 'as_user', return_value=SimpleNamespace(returncode=0, stdout='{"ready":true}')) as execute, \
+                 patch.object(boot, 'atomic_json'), patch.object(boot, 'owner'), \
+                 patch.object(boot, 'safe_status', side_effect=lambda phase, **kw: dict(phase=phase, **kw)), \
+                 patch.object(boot.subprocess, 'run') as scanner:
+                result = boot.prepare()
+            scanner.assert_not_called()
+            self.assertTrue(result['ready'])
+            self.assertEqual(execute.call_args.args[0][0], str(root/'.venv/bin/python'))
+
     def test_directory_preparation_needs_no_instance_or_message_probe(self):
         from contextlib import nullcontext
         with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[1]/'.test-tmp') as name:
