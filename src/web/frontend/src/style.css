@@ -793,6 +793,16 @@ button.text-link:hover {
   margin-bottom: 20px;
 }
 
+/* Grid cells stretch to equal height; keep footnotes pinned to the bottom instead of floating mid-panel. */
+.overview-grid > .panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.overview-grid > .panel > .panel-footnote {
+  margin-top: auto;
+}
+
 .instance-row {
   width: 100%;
   display: flex;
@@ -995,10 +1005,10 @@ button.text-link:hover {
   gap: 14px;
   margin: 0 0 20px;
   padding: 12px 16px;
-  border: 1px solid #bfdbfe;
-  background: #eff6ff;
+  border: 1px solid var(--ui-warning-border);
+  background: var(--ui-warning-soft);
   border-radius: 8px;
-  color: #1e40af;
+  color: #92400e;
   font-size: 12px;
 }
 
@@ -1008,9 +1018,13 @@ button.text-link:hover {
   gap: 8px;
 }
 
+.pending-strip > div > span {
+  font-weight: 600;
+}
+
 .pending-strip small {
   font-size: 11px;
-  color: #3b82f6;
+  color: #b45309;
 }
 
 .empty-state {
@@ -1529,6 +1543,19 @@ button.text-link:hover {
   background: #1e293b;
   border-color: #1e293b;
   color: #ffffff;
+}
+
+/* Disabled primary buttons stay in the same neutral family instead of turning light indigo. */
+.el-button--primary.is-disabled:not(.is-link),
+.el-button--primary.is-disabled:not(.is-link):hover {
+  background: #cbd5e1;
+  border-color: #cbd5e1;
+  color: #ffffff;
+  box-shadow: none;
+}
+
+.el-button.is-disabled {
+  box-shadow: none;
 }
 
 .el-button.is-link {

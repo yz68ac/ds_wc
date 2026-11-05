@@ -65,6 +65,7 @@ defineExpose({dirty,canLeave});
 </template>
 
 <style scoped>
+.account-settings { margin-bottom: 20px; }
 .account-settings-body { padding: 0 24px 20px; }
 .account-settings-body>.el-alert { margin-bottom: 16px; }
 .account-settings-footer { display: flex; justify-content: space-between; align-items: center; gap: 15px; margin-top: 18px; }

@@ -22,6 +22,7 @@ import AccountSetup from "./components/AccountSetup.vue";
 import AccountSettings from "./components/AccountSettings.vue";
 
 const componentLabel: Record<string, string> = { bot: "机器人", wechat: "微信会话", sender: "发送组件", recovery: "自动恢复", web: "管理台" };
+const channelLabel: Record<string, string> = { reply: "回复", image: "图片", background: "后台" };
 
 function contextSummary(value: any) {
   if (!value) return "暂无请求";
@@ -446,7 +447,7 @@ onBeforeUnmount(() => window.removeEventListener("beforeunload", beforeUnload));
               </div>
               <small>{{
                 running
-                  ? "心跳 " + snapshot.runtime.heartbeat_age_seconds + " 秒前"
+                  ? "心跳 " + (snapshot.runtime.heartbeat_age_seconds ?? "—") + " 秒前"
                   : "网页服务独立运行，可继续管理配置"
               }}</small>
             </article>
@@ -815,7 +816,7 @@ onBeforeUnmount(() => window.removeEventListener("beforeunload", beforeUnload));
                 ><el-icon><Connection /></el-icon
               ></span>
               <div>
-                <b>{{ componentLabel[String(name)] || name }}</b>
+                <b>{{ componentLabel[String(name)] || name }}</b
                 ><small>PID {{ service.pid || "—" }}</small>
               </div>
               <span
@@ -947,7 +948,7 @@ onBeforeUnmount(() => window.removeEventListener("beforeunload", beforeUnload));
         :key="name"
         class="channel-status"
       >
-        <b>{{ componentLabel[String(name)] || name }}</b>
+        <b>{{ channelLabel[String(name)] || name }}</b
         ><span
           >{{ channel.running ? "执行中" : "空闲" }} · 排队
           {{ channel.queued }}</span

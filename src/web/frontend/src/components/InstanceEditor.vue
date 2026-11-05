@@ -28,7 +28,7 @@ const imageConnections = computed(() => props.catalog.providers.filter((p: any) 
 const imageProvider = computed(() => props.catalog.providers.find((p: any) => p.id === editor.value.model_clients?.image));
 const imageIsGemini = computed(() => imageProvider.value?.image_protocol === 'gemini');
 function changeImageConnection() {
-  const timeout = editor.value.models.image.options.timeout_seconds || 180;
+  const timeout = editor.value.models.image?.options?.timeout_seconds || 180;
   editor.value.models.image = {model: '', options: imageIsGemini.value
     ? {aspect_ratio: '1:1', timeout_seconds: timeout}
     : {size: '1024x1024', quality: 'low', timeout_seconds: timeout}};
@@ -80,7 +80,7 @@ function changeEditorTab(name: string | number) {
   const next=String(name);
   if(next==='json') editorJson.value=JSON.stringify(editor.value,null,2);
   else if(previousEditorTab==='json') {
-    try { prepareEditor(JSON.parse(editorJson.value)); }
+    try { prepareEditor(JSON.parse(editorJson.value), editorEffective.value); }
     catch { editorTab.value='json'; ElMessage.error('JSON 格式有误，请先修正。'); return; }
   }
   previousEditorTab=next;
@@ -102,6 +102,8 @@ async function saveInstance(apply = false) {
       ),
     });
     editorRevision.value = saved.revision;
+    // The instance now exists: if applying fails, a retry must update it instead of creating it again.
+    creating.value = false;
     if (apply) {
       const result = await api(
         `/instances/${encodeURIComponent(editorId.value)}/actions/apply`,
@@ -128,7 +130,7 @@ defineExpose({open: editInstance});
 <el-dialog
     v-model="editorOpen"
     :title="creating ? '新建会话实例' : '编辑实例 · ' + editorId"
-    width="800px"
+    width="min(800px, calc(100vw - 24px))"
     top="5vh"
     class="instance-config-dialog"
     :close-on-click-modal="false"

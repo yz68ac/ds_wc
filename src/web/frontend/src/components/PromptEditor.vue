@@ -76,12 +76,14 @@ async function savePrompt() {
 async function restorePrompt(id: string) {
   try {
     await ElMessageBox.confirm(
-      "当前版本会先备份，再恢复所选版本。",
+      promptDirty.value
+        ? "当前已保存版本会先备份，再恢复所选版本；编辑框中尚未保存的修改将被丢弃。"
+        : "当前版本会先备份，再恢复所选版本。",
       "恢复提示词",
       { confirmButtonText: "恢复", cancelButtonText: "取消", type: "warning" },
     );
     const data = await api(
-      `/instances/${encodeURIComponent(promptId.value)}/prompt/restore/${id}`,
+      `/instances/${encodeURIComponent(promptId.value)}/prompt/restore/${encodeURIComponent(id)}`,
       {
         method: "POST",
         body: JSON.stringify({
@@ -93,6 +95,7 @@ async function restorePrompt(id: string) {
     promptData.value = data;
     promptText.value = data.text;
     ElMessage.success("已恢复，下一次新请求读取。");
+    emit('saved');
   } catch (e: any) {
     if (e !== "cancel" && e !== "close") fail(e);
   }
@@ -195,7 +198,7 @@ defineExpose({canLeave: discardPrompt, reload, dirty: promptDirty});
             </div>
           </section>
         </div>
-<el-dialog v-model="compareOpen" title="提示词修改对比" width="900px"
+<el-dialog v-model="compareOpen" title="提示词修改对比" width="min(900px, calc(100vw - 24px))"
     ><div class="diff-grid">
       <div>
         <h3>当前已保存</h3>

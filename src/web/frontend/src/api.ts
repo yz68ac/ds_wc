@@ -16,7 +16,20 @@ export async function api<T = any>(
       ...options.headers,
     },
   });
-  const data = await response.json();
+  // Proxies and gateways may answer with HTML or an empty body; never surface a raw SyntaxError.
+  const text = await response.text();
+  let data: any = {};
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      const error = new Error(
+        response.ok ? "管理服务返回了无法解析的响应。" : `请求失败（HTTP ${response.status}），请稍后重试。`,
+      );
+      Object.assign(error, { status: response.status });
+      throw error;
+    }
+  }
   if (!response.ok) {
     const error = new Error(
       data.message ||
