@@ -25,6 +25,8 @@ class ReleaseTests(unittest.TestCase):
         self.root.mkdir()
         self.bundle = Path(self.temp.name)/'release.zip'
         self.git('init', '-q')
+        # Keep archive bytes independent of a host-wide core.autocrlf (e.g. Git for Windows).
+        self.git('config', 'core.autocrlf', 'false')
         for name in ('config.defaults.json', 'src/wxbridge/__main__.py', 'src/provider/__init__.py',
                      'pyproject.toml', 'uv.lock', 'scripts/test-offline.py', 'prompts/system.md'):
             path = self.root/name
