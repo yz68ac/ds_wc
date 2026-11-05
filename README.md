@@ -6,11 +6,35 @@ wxbridge 是运行在 Linux 微信上的 AI 机器人，支持群聊、私聊、
 
 一个微信账号对应一个容器，内部可创建多个独立会话实例。Docker 固定程序和依赖版本，账号登录、配置及长期数据保存在外部目录，方便在其他主机部署和升级。
 
-默认直连模型服务，不要求代理或 CPA。容器功能当前位于 `feat/account-container-runtime` 分支，尚未迁移现网。
+默认直连模型服务，不要求代理或 CPA。容器功能已合并到 `main` 分支，现网尚未迁移。
 
 ## 快速开始
 
-需要 **Linux amd64、Docker Engine 和 Compose 插件**，内核须支持 `tmpfs,noswap`（已在 Debian 13 / Linux 6.12 验收）。宿主机无需安装 Python、Node 或微信。
+需要 **Linux amd64、Docker Engine 和 Compose 插件**，内核须支持 `tmpfs,noswap`（已在 Debian 13 / Linux 6.12 验收）。宿主机无需安装 Python、Node 或微信。Windows 和 macOS 不能运行机器人，只能用于[本地开发](#本地开发)。
+
+### 0. 准备代码
+
+已有本地仓库时无需重新克隆，先切到 `main` 并同步：
+
+```bash
+cd wechat-group-bot
+git status                 # 确认没有未提交的修改
+git checkout main
+git pull --ff-only
+```
+
+还没有仓库时再克隆：`git clone https://github.com/yz68ac/ds_wc.git wechat-group-bot`。
+
+微信安装包不进入 Git（已被 `.gitignore` 排除），每台构建主机都需单独放置，并用仓库内的校验和核对：
+
+```bash
+cd resources/wechat/linux-x86_64/4.1.13.26
+# 将 WeChatLinux_x86_64.deb 放入 installer/ 后执行：
+sha256sum -c --ignore-missing SHA256SUMS
+cd -
+```
+
+若本地仓库在 Windows 上，需把仓库复制到 Linux 主机（或在主机上克隆），并一并复制 `installer/WeChatLinux_x86_64.deb`。不要复制 `.venv/`、`node_modules/`、`provider.env`、`data/` 等本机文件；迁移已有账号时才复制后两者，见下文“日常使用”。
 
 ### 1. 启动
 
@@ -20,15 +44,11 @@ wxbridge 是运行在 Linux 微信上的 AI 机器人，支持群聊、私聊、
 docker compose up -d --build
 ```
 
-首次构建需要联网，并准备仓库兼容的微信安装包：
-
-```text
-resources/wechat/linux-x86_64/4.1.13.26/installer/WeChatLinux_x86_64.deb
-```
+首次构建需要联网，并需要第 0 步放置的微信安装包 `resources/wechat/linux-x86_64/4.1.13.26/installer/WeChatLinux_x86_64.deb`。
 
 镜像会校验安装资源并构建依赖。已有镜像可用 `docker save` / `docker load` 分发到其他同架构主机，再执行 `docker compose up -d --no-build`。当前尚未提供公开镜像。
 
-Compose 自动创建 `data/`，设置初始目录权限并生成管理台密码。短暂运行的 `init` 服务完成后退出，长期运行的是 `account` 容器。若 Docker 要求管理员权限，在命令前加 `sudo`。
+Compose 自动创建 `data/` 和 `provider.env`，设置初始目录权限并生成管理台密码。短暂运行的 `init` 服务完成后退出，长期运行的是 `account` 容器。若 Docker 要求管理员权限，在命令前加 `sudo`。
 
 ### 2. 填写模型密钥
 
@@ -79,6 +99,7 @@ ssh -L 8730:127.0.0.1:8730 用户名@服务器地址
 | 停止整套环境 | `docker compose stop` |
 | 重启整套环境 | `docker compose restart account` |
 | 升级镜像 | 换用新镜像后执行 `docker compose up -d` |
+| 更新代码后重建 | `git pull --ff-only` 后执行 `docker compose up -d --build` |
 
 完整重启或重建容器会清空队列、游标和未完成任务，以最新消息重新建立基线，不补回复旧消息。仅应用配置或重启内部机器人会保留内存队列和游标。微信登录与长期数据保留，微信要求手机确认时按提示操作。
 
@@ -130,6 +151,46 @@ ssh -L 8730:127.0.0.1:8730 用户名@服务器地址
 
 进一步参考：[Provider 用法](docs/PROVIDER.md) · [微信适配](docs/WECHAT_LINUX.md) · [代码地图](src/wxbridge/README.md) · [实例配置示例](examples/instance/config.example.jsonc) · [开发约定](CONTRIBUTING.md) · [安全与隐私](SECURITY.md)。
 
-后端开发检查入口为 `python -X utf8 scripts/test-offline.py` 和 `python scripts/check-repository.py`；前端检查使用 `npm --prefix src/web/frontend test` 和 `npm --prefix src/web/frontend run build`。离线测试不调用真实模型、不发送微信消息。
+## 本地开发
+
+开发和离线测试可在 Linux、Windows 或 macOS 上进行，不需要 Docker 或微信。需要 Git、Python 3.11+、[uv](https://docs.astral.sh/uv/) 和 Node.js（含 npm）。
+
+### 1. 安装依赖
+
+在已有的本地仓库根目录执行（同步代码见“准备代码”）：
+
+```bash
+uv sync --locked --extra database --extra login --group test
+npm --prefix src/web/frontend ci
+```
+
+`uv` 会在 `.venv/` 中创建虚拟环境，并从 `dependencies/` 中的固定 wheel 安装微信适配库，不需要同级的 `../wechat-linux-adapter` 源码仓库。下文的 `python` 均指该虚拟环境中的解释器：可先激活（Linux/macOS `source .venv/bin/activate`，Windows Git Bash `source .venv/Scripts/activate`），或改用 `uv run python`。
+
+### 2. 运行检查
+
+```bash
+python -X utf8 scripts/test-offline.py         # 后端离线测试
+python scripts/check-repository.py             # 仓库约定检查
+npm --prefix src/web/frontend test             # 前端测试
+npm --prefix src/web/frontend run build        # 前端类型检查与构建
+git diff --check
+```
+
+离线测试不读取真实配置、不联网、不调用真实模型、不发送微信消息。提交前的其他约定见[开发约定](CONTRIBUTING.md)。
+
+### 3. 更新微信适配库（可选）
+
+只有修改适配库本身时才需要同级仓库 `../wechat-linux-adapter`。在该仓库完成修改、测试、创建干净的版本标签并构建 wheel 后，回到本仓库执行：
+
+```bash
+python scripts/update-wechat-adapter.py ../wechat-linux-adapter/dist/wechat_linux_adapter-<版本号>-py3-none-any.whl --source-repo ../wechat-linux-adapter
+python scripts/dependencies.py
+uv sync --locked --extra database --extra login --group test
+python -X utf8 scripts/test-offline.py
+```
+
+脚本要求 wheel 与指向的干净标签一致，并拒绝同一版本号对应不同内容。若新版本修改了 `agent.js`、`image_agent.js`、C 适配器或 profile，还需同步更新已安装的 helper，详见[微信适配库依赖](docs/WECHAT_LINUX.md)。
+
+## 许可证与隐私
 
 许可证暂未选定，目前用于受邀协作。密钥、私有配置、账号数据、聊天记录和记忆不随源码发布。
