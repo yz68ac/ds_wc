@@ -25,7 +25,13 @@ class ContainerTests(unittest.TestCase):
             web=Path(temporary)/'web.json'
             web.write_text('{"host":"0.0.0.0","port":8730}')
             web.chmod(0o600)
-            with patch.dict(os.environ,{'WXBRIDGE_RUNTIME':'container','WXBRIDGE_NETWORK':'host','WXBRIDGE_WEB_PORT':'18730'}),patch('os.fchown',create=True):
+            # The container writes web.json as root; ownership policy itself is covered in test_host_management.
+            original_stat=Path.stat
+            def root_owned(current,*args,**kwargs):
+                info=original_stat(current,*args,**kwargs)
+                return SimpleNamespace(st_uid=0,st_mode=info.st_mode) if current==web else info
+            with patch.dict(os.environ,{'WXBRIDGE_RUNTIME':'container','WXBRIDGE_NETWORK':'host','WXBRIDGE_WEB_PORT':'18730'}),patch('os.fchown',create=True), \
+                    patch.object(Path,'stat',root_owned):
                 prepare_web(web)
                 self.assertEqual(json.loads(web.read_text()),{'host':'127.0.0.1','port':18730})
                 with patch.dict(os.environ,{'WXBRIDGE_WEB_PORT':'70000'}):
